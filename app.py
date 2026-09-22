@@ -60,15 +60,16 @@ def _render_navigation_system(module: str, channel: str) -> None:
         '<a class="header-brand" href="?module=media">HAHA</a>'
         '<nav class="global-links" aria-label="全局导航">'
         f'{page_link("media", "首页")}<a href="?module=media">非遗影像</a>'
-        f"{page_link('gift', '非遗礼遇')}{page_link('map', '文化地图')}"
+        f"{page_link('gift', '非遗礼遇')}"
         f"{page_link('learn', 'AI 学习')}</nav>"
         '<form class="header-search" method="get"><input type="hidden" name="module" value="media">'
         '<input name="q" aria-label="搜索视频、非遗项目、传承人或地区" '
         'placeholder="搜一搜：竹编、蓝染、手艺人的一天"><button type="submit">⌕</button></form>'
-        '<nav class="user-links" aria-label="用户功能"><span>消息</span><span>动态</span>'
-        '<span>收藏</span><span>历史</span><a href="?module=profile">文化档案</a>'
-        '<a href="?space=script">AI 脚本</a></nav>'
-        '<a class="publish-button" href="?space=publish">＋ 投稿</a></div>'
+        '<nav class="user-links" aria-label="用户功能"><span>消息</span><span>收藏</span>'
+        '<span>历史</span><a href="?module=profile">用户</a></nav>'
+        '<nav class="creator-actions" aria-label="创作功能">'
+        '<a class="script-button" href="?space=script">AI 脚本</a>'
+        '<a class="publish-button" href="?space=publish">＋ 投稿</a></nav></div>'
         '<div class="header-visual" aria-label="HAHA 非遗影像品牌视觉">'
         '<div class="visual-brand"><b>HAHA</b><span>HERITAGE IN MOTION</span></div>'
         '<div class="visual-copy"><strong>让手艺被看见，让故事继续发生</strong>'
