@@ -5,6 +5,7 @@ from __future__ import annotations
 from html import escape
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from haha_media.feed import STORIES
 from haha_media.script_writer import ContentBrief, ContentScript, generate_content_script
@@ -14,13 +15,13 @@ CATEGORY_LABELS = {
     "all": "首页",
     "hot": "热门",
     "embroidery": "刺绣",
-    "dyeing": "蓝染",
-    "pottery": "陶艺",
-    "wood": "木雕",
-    "paper": "剪纸",
+    "textile": "染织",
+    "ceramics": "陶瓷",
+    "woodcraft": "木作",
+    "bamboo": "竹编",
+    "papercut": "剪纸",
     "opera": "戏曲",
-    "folk": "民俗",
-    "craft": "传统工艺",
+    "folk-custom": "民俗",
 }
 
 
@@ -36,6 +37,8 @@ def main() -> None:
     _render_navigation_system(module, channel)
     if module == "media":
         render_media_home()
+    elif module == "map":
+        _render_culture_map()
     else:
         _render_module_placeholder(module)
 
@@ -49,17 +52,15 @@ def _render_navigation_system(module: str, channel: str) -> None:
         current = ' class="active" aria-current="page"' if channel == key else ""
         return f'<a{current} href="?module=media&channel={key}">{icon}{label}</a>'
 
-    primary_channels = tuple(CATEGORY_LABELS.items())[2:7]
-    extra_channels = tuple(CATEGORY_LABELS.items())[7:]
-    primary_markup = "".join(channel_link(key, label) for key, label in primary_channels)
-    extra_markup = "".join(channel_link(key, label) for key, label in extra_channels)
+    home_channels = tuple(CATEGORY_LABELS.items())[2:]
+    channel_markup = "".join(channel_link(key, label) for key, label in home_channels)
     st.markdown(
         '<header class="header-system">'
         '<div class="global-header">'
         '<a class="header-brand" href="?module=media">HAHA</a>'
         '<nav class="global-links" aria-label="全局导航">'
         f'{page_link("media", "首页")}<a href="?module=media">非遗影像</a>'
-        f'{page_link("gift", "非遗礼遇")}<a href="?module=media&channel=folk">文化地图</a>'
+        f"{page_link('gift', '非遗礼遇')}{page_link('map', '文化地图')}"
         f"{page_link('learn', 'AI 学习')}</nav>"
         '<form class="header-search" method="get"><input type="hidden" name="module" value="media">'
         '<input name="q" aria-label="搜索视频、非遗项目、传承人或地区" '
@@ -73,25 +74,52 @@ def _render_navigation_system(module: str, channel: str) -> None:
         '<div class="visual-copy"><strong>让手艺被看见，让故事继续发生</strong>'
         "<span>非遗影像 · 文化故事 · 青年共创</span></div>"
         '<i class="visual-seal">哈</i></div>'
-        '<div class="channel-nav"><nav class="channel-main" aria-label="内容频道">'
+        '<div class="channel-nav"><nav class="channel-featured" aria-label="推荐频道">'
         f"{channel_link('all', '动态', icon='◎ ')}{channel_link('hot', '热门', icon='🔥 ')}"
-        f'<span class="channel-divider" aria-hidden="true"></span>{primary_markup}'
+        '</nav><nav class="channel-grid" aria-label="内容频道">'
+        f"{channel_markup}"
         '<details class="more-menu"><summary aria-label="展开更多非遗分类">更多⌄</summary>'
-        '<div class="mega-menu"><section><strong>工艺</strong><a href="?module=media&channel=embroidery">刺绣</a>'
-        '<a href="?module=media&channel=dyeing">蓝染</a><a href="?module=media&channel=wood">木雕</a>'
-        '<a href="?module=media&channel=pottery">陶艺</a><a href="?module=media&channel=paper">剪纸</a></section>'
-        '<section><strong>表演</strong><a href="?module=media&channel=opera">戏曲</a><span>舞蹈</span>'
-        "<span>音乐</span><span>曲艺</span></section><section><strong>生活</strong><span>饮食</span>"
-        '<span>节庆</span><a href="?module=media&channel=folk">民俗</a><span>服饰</span></section>'
-        "<section><strong>探索</strong><span>文化地图</span><span>传承人</span><span>项目</span>"
-        "<span>专题</span></section></div></details></nav>"
-        '<nav class="channel-expanded" aria-label="扩展频道">'
-        f'{extra_markup}<a href="?module=media">舞蹈</a><a href="?module=media">音乐</a>'
-        '<a href="?module=media">饮食</a><a href="?module=media">节庆</a>'
-        '<span class="channel-divider" aria-hidden="true"></span><a href="?module=media">专栏</a>'
-        '<a href="?module=media">活动</a><a href="?module=media&channel=folk">文化地图</a>'
-        '<a href="?module=learn">课堂</a></nav></div></header>',
+        '<div class="mega-menu"><section><strong>传统美术</strong><a href="?module=media&channel=embroidery">刺绣</a>'
+        '<a href="?module=media&channel=papercut">剪纸</a><span>年画</span><span>雕刻</span><span>漆艺</span></section>'
+        '<section><strong>传统技艺</strong><a href="?module=media&channel=textile">染织</a>'
+        '<a href="?module=media&channel=ceramics">陶瓷</a><a href="?module=media&channel=woodcraft">木作</a>'
+        '<a href="?module=media&channel=bamboo">竹编</a><span>金工</span><span>制茶</span></section>'
+        '<section><strong>传统表演</strong><a href="?module=media&channel=opera">戏曲</a><span>曲艺</span>'
+        "<span>传统音乐</span><span>传统舞蹈</span><span>杂技</span></section>"
+        '<section><strong>民俗生活</strong><a href="?module=media&channel=folk-custom">民俗</a>'
+        "<span>节庆</span><span>礼俗</span><span>饮食技艺</span><span>服饰</span><span>传统医药</span>"
+        "</section></div></details></nav></div></header>",
         unsafe_allow_html=True,
+    )
+    _install_scroll_navigation()
+
+
+def _install_scroll_navigation() -> None:
+    components.html(
+        """
+        <script>
+        (() => {
+          const host = window.parent;
+          const doc = host.document;
+          if (host.__hahaNavCleanup) host.__hahaNavCleanup();
+          const scroller = doc.querySelector('[data-testid="stMain"]');
+          const header = doc.querySelector('.header-system');
+          if (!scroller || !header) return;
+          let compact = scroller.scrollTop > 120;
+          const render = () => {
+            const y = scroller.scrollTop;
+            if (!compact && y > 120) compact = true;
+            if (compact && y < 60) compact = false;
+            header.classList.toggle('is-scrolled', compact);
+          };
+          scroller.addEventListener('scroll', render, {passive: true});
+          render();
+          host.__hahaNavCleanup = () => scroller.removeEventListener('scroll', render);
+        })();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
     )
 
 
@@ -104,6 +132,34 @@ def _render_module_placeholder(module: str) -> None:
     title, copy = content.get(module, content["gift"])
     st.markdown(f"## {title}")
     st.info(f"{copy} 该板块当前为预留入口。")
+
+
+def _render_culture_map() -> None:
+    region = str(st.query_params.get("region", "all"))
+    regions = {
+        "all": "全国",
+        "yunnan": "云南",
+        "guizhou": "贵州",
+        "sichuan": "四川",
+        "zhejiang": "浙江",
+        "jiangsu": "江苏",
+        "fujian": "福建",
+        "guangdong": "广东",
+        "xinjiang": "新疆",
+    }
+    region_links = "".join(
+        f'<a class="{"active" if key == region else ""}" href="?module=map&region={key}">{label}</a>'
+        for key, label in regions.items()
+    )
+    st.markdown("## 文化地图")
+    st.caption("先选择一个地方，再发现当地的手艺、表演与生活传统。")
+    st.markdown(
+        f'<nav class="filter-row region-first"><b>地域</b>{region_links}</nav>'
+        '<nav class="filter-row"><b>内容类型</b><span>刺绣</span><span>染织</span>'
+        "<span>陶瓷</span><span>木作</span><span>竹编</span><span>戏曲</span><span>民俗</span></nav>",
+        unsafe_allow_html=True,
+    )
+    _render_region_discovery()
 
 
 def render_media_home() -> None:
@@ -156,12 +212,14 @@ def _render_community_feed() -> None:
     if category_key != "all" or search.strip():
         category = CATEGORY_LABELS.get(category_key, "首页")
         st.markdown(f"## {category if not search.strip() else '搜索结果'}")
+        if category_key not in {"all", "hot"}:
+            _render_channel_filters(category_key)
         _render_card_row(_filter_stories(category, search), prefix="filtered")
         return
     _render_daily_feature()
     _render_channel_section("🔥 正在热门", STORIES, "hot")
     _render_channel_section("刺绣 · 一针一线里的故事", STORIES, "embroidery")
-    _render_channel_section("陶艺 · 泥土与火的相遇", tuple(reversed(STORIES)), "pottery")
+    _render_channel_section("陶瓷 · 泥土与火的相遇", tuple(reversed(STORIES)), "ceramics")
     _render_region_discovery()
     _render_special_topics()
     _render_ai_learning()
@@ -169,6 +227,54 @@ def _render_community_feed() -> None:
     if response := st.session_state.get("media_response"):
         st.markdown("### HAHA 正在为你展开")
         st.info(response)
+
+
+def _render_channel_filters(channel: str) -> None:
+    selected = {
+        "region": str(st.query_params.get("region", "all")),
+        "content": str(st.query_params.get("content", "all")),
+        "level": str(st.query_params.get("level", "all")),
+    }
+
+    def links(name: str, options: tuple[tuple[str, str], ...]) -> str:
+        return "".join(
+            f'<a class="{"active" if key == selected[name] else ""}" '
+            f'href="?module=media&channel={channel}&{name}={key}">{label}</a>'
+            for key, label in options
+        )
+
+    region_links = links(
+        "region",
+        (
+            ("all", "全国"),
+            ("jiangsu", "江苏"),
+            ("zhejiang", "浙江"),
+            ("hunan", "湖南"),
+            ("guizhou", "贵州"),
+            ("yunnan", "云南"),
+            ("sichuan", "四川"),
+            ("more", "更多"),
+        ),
+    )
+    content_links = links(
+        "content",
+        (
+            ("all", "全部"),
+            ("video", "视频"),
+            ("project", "项目"),
+            ("inheritor", "传承人"),
+            ("topic", "专题"),
+        ),
+    )
+    level_links = links(
+        "level",
+        (("all", "全部"), ("national", "国家级"), ("provincial", "省级"), ("city", "市级")),
+    )
+    st.markdown(
+        f'<section class="channel-filters"><div><b>地域</b>{region_links}</div>'
+        f"<div><b>内容</b>{content_links}</div><div><b>级别</b>{level_links}</div></section>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_daily_feature() -> None:
