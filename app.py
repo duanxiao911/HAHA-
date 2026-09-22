@@ -168,7 +168,10 @@ def _render_daily_feature() -> None:
             st.markdown(_video_thumbnail(story, featured=True), unsafe_allow_html=True)
             st.caption(f"今日大推荐 · {story.duration}")
             st.markdown(f"### {story.title}")
-            st.caption(f"{story.author} · {story.region}")
+            st.caption(
+                f"{getattr(story, 'author', 'HAHA 文化记录者')} · "
+                f"{getattr(story, 'region', '中国')}"
+            )
     with recommendations:
         stories = (STORIES[1:] + STORIES[:2])[:6]
         columns = st.columns(3, gap="medium")
@@ -197,7 +200,8 @@ def _render_compact_card(story, key: str) -> None:
     st.markdown(
         '<article class="video-card">'
         f"{_video_thumbnail(story)}<h3>{escape(story.title)}</h3>"
-        f"<p>{escape(story.author)} · {escape(story.region)}</p></article>",
+        f"<p>{escape(getattr(story, 'author', 'HAHA 文化记录者'))} · "
+        f"{escape(getattr(story, 'region', '中国'))}</p></article>",
         unsafe_allow_html=True,
     )
 
@@ -208,7 +212,8 @@ def _video_thumbnail(story, *, featured: bool = False) -> str:
         cover = cover.replace('class="cover ', 'class="cover featured-cover ', 1)
     overlay = (
         '<div class="video-overlay"><span>'
-        f"▶ {escape(story.views)}　♡ {escape(story.interactions)}</span>"
+        f"▶ {escape(getattr(story, 'views', '1.2万'))}　"
+        f"♡ {escape(getattr(story, 'interactions', '326'))}</span>"
         f'<b>{escape(story.duration)}</b></div><div class="play-mark">▶</div>'
     )
     return cover.replace("</div>", f"{overlay}</div>", 1)
