@@ -12,13 +12,13 @@ CATEGORY_LABELS = {
     "all": "首页",
     "hot": "热门",
     "embroidery": "刺绣",
+    "dyeing": "蓝染",
     "pottery": "陶艺",
-    "dyeing": "织染",
-    "metal": "金工",
-    "wood": "木作",
-    "paper": "纸艺",
-    "food": "传统美食",
-    "folk": "民俗影像",
+    "wood": "木雕",
+    "paper": "剪纸",
+    "opera": "戏曲",
+    "folk": "民俗",
+    "craft": "传统工艺",
 }
 
 
@@ -38,12 +38,17 @@ def main() -> None:
 
 
 def _render_top_navigation(module: str) -> None:
-    brand, search, script, publish = st.columns(
-        (1.05, 1.65, 0.72, 0.55), vertical_alignment="center"
+    navigation, search, script, user, publish = st.columns(
+        (2.15, 1.25, 0.55, 0.36, 0.48), vertical_alignment="center"
     )
-    with brand:
+    with navigation:
         st.markdown(
-            '<div class="top-brand">HAHA <span>非遗视频社区</span></div>', unsafe_allow_html=True
+            '<nav class="global-nav"><a class="brand" href="?module=media">HAHA</a>'
+            f'<a class="{"active" if module == "media" else ""}" href="?module=media">首页</a>'
+            '<a href="?module=media">非遗影像</a>'
+            f'<a class="{"active" if module == "gift" else ""}" href="?module=gift">非遗礼遇</a>'
+            f'<a class="{"active" if module == "learn" else ""}" href="?module=learn">AI 学习</a></nav>',
+            unsafe_allow_html=True,
         )
     with search:
         st.text_input(
@@ -53,20 +58,13 @@ def _render_top_navigation(module: str) -> None:
             label_visibility="collapsed",
         )
     with script:
-        if st.button("图文脚本", width="stretch"):
+        if st.button("AI 脚本", width="stretch"):
             _navigate("script")
+    with user:
+        st.button("用户", width="stretch", disabled=True)
     with publish:
         if st.button("＋ 投稿", width="stretch"):
             _navigate("publish")
-    st.markdown(
-        '<nav class="top-nav" aria-label="平台导航">'
-        f'<a class="{"active" if module == "media" else ""}" href="?module=media">非遗影像馆</a>'
-        f'<a class="{"active" if module == "gift" else ""}" href="?module=gift">非遗礼遇</a>'
-        f'<a class="{"active" if module == "learn" else ""}" href="?module=learn">AI 学习对话</a>'
-        f'<a class="{"active" if module == "profile" else ""}" href="?module=profile">我的文化档案</a>'
-        "</nav>",
-        unsafe_allow_html=True,
-    )
 
 
 def _render_module_placeholder(module: str) -> None:
@@ -126,26 +124,76 @@ def _render_creator_route(space: str) -> None:
 
 def _render_community_feed() -> None:
     category_key = str(st.query_params.get("category", "all"))
-    category = CATEGORY_LABELS.get(category_key, "首页")
+    st.markdown(
+        '<section class="brand-banner"><span>HERITAGE IN MOTION</span>'
+        "<h1>让每一门手艺，都有被看见的下一帧。</h1>"
+        "<p>HAHA 非遗影像社区 · 记录、理解、连接</p><b>哈</b></section>",
+        unsafe_allow_html=True,
+    )
     _render_category_hub(category_key)
-    stream, ranking = st.columns((2.25, 0.75), gap="large")
-    with stream:
-        st.markdown(f"### {'推荐内容' if category == '首页' else category}")
-        _render_story_grid(category, st.session_state.get("media_search", ""))
-        _render_published_posts()
-    with ranking:
-        st.markdown("### 热门榜")
-        for rank, story in enumerate(STORIES[:5], start=1):
-            st.markdown(
-                f'<div class="ranking-item"><b>{rank:02}</b><div><strong>{story.title}</strong>'
-                f"<small>{story.category} · {story.duration}</small></div></div>",
-                unsafe_allow_html=True,
-            )
-        st.markdown("### 创作者工具")
-        st.caption("视频投稿和 AI 图文脚本在上方两个创作入口中。")
+    search = st.session_state.get("media_search", "")
+    if category_key != "all" or search.strip():
+        category = CATEGORY_LABELS.get(category_key, "首页")
+        st.markdown(f"## {category if not search.strip() else '搜索结果'}")
+        _render_card_row(_filter_stories(category, search), prefix="filtered")
+        return
+    _render_daily_feature()
+    _render_channel_section("🔥 正在热门", STORIES, "hot")
+    _render_channel_section("刺绣 · 一针一线里的故事", STORIES, "embroidery")
+    _render_channel_section("陶艺 · 泥土与火的相遇", tuple(reversed(STORIES)), "pottery")
+    _render_published_posts()
     if response := st.session_state.get("media_response"):
         st.markdown("### HAHA 正在为你展开")
         st.info(response)
+
+
+def _render_daily_feature() -> None:
+    st.markdown(
+        '<div class="section-title"><h2>今日非遗</h2><span>编辑精选</span></div>',
+        unsafe_allow_html=True,
+    )
+    featured, recommendations = st.columns((1.15, 1.85), gap="large")
+    with featured:
+        story = STORIES[0]
+        with st.container(border=True):
+            st.markdown(
+                story.cover_markup.replace("cover red", "cover red featured-cover"),
+                unsafe_allow_html=True,
+            )
+            st.caption(f"今日大推荐 · {story.duration}")
+            st.markdown(f"### {story.title}")
+            st.write(story.summary)
+    with recommendations:
+        stories = (STORIES[1:] + STORIES[:2])[:6]
+        columns = st.columns(3, gap="medium")
+        for index, story in enumerate(stories):
+            with columns[index % 3]:
+                _render_compact_card(story, f"daily_{index}")
+
+
+def _render_channel_section(title: str, stories: tuple, prefix: str) -> None:
+    st.markdown(
+        f'<div class="section-title"><h2>{title}</h2><a href="?module=media">换一换 ↻</a></div>',
+        unsafe_allow_html=True,
+    )
+    _render_card_row(stories, prefix=prefix)
+
+
+def _render_card_row(stories: tuple, *, prefix: str) -> None:
+    items = (stories + STORIES)[:5]
+    columns = st.columns(5, gap="medium")
+    for index, (column, story) in enumerate(zip(columns, items, strict=False)):
+        with column:
+            _render_compact_card(story, f"{prefix}_{index}")
+
+
+def _render_compact_card(story, key: str) -> None:
+    with st.container(border=True):
+        st.markdown(story.cover_markup, unsafe_allow_html=True)
+        st.markdown(f"**{story.title}**")
+        st.caption(f"{story.category} · {story.duration}")
+        if st.button("观看", key=key, width="stretch"):
+            st.session_state["media_response"] = story.ai_answer
 
 
 def _render_category_hub(active_key: str) -> None:
@@ -167,34 +215,19 @@ def _render_category_hub(active_key: str) -> None:
     )
 
 
-def _render_story_grid(category: str, search: str) -> None:
-    visible_stories = _filter_stories(category, search)
-    columns = st.columns(3, gap="medium")
-    for column, story in zip(columns * 2, visible_stories, strict=False):
-        with column:
-            with st.container(border=True):
-                st.markdown(story.cover_markup, unsafe_allow_html=True)
-                st.caption(f"{story.duration} · {story.category}")
-                st.markdown(f"**{story.title}**")
-                st.caption(story.summary)
-                if st.button("播放并展开", key=f"open_{story.slug}", width="stretch"):
-                    st.session_state["media_response"] = story.ai_answer
-    st.caption("内容为比赛 MVP 中的原创演示文案与视觉占位，不包含旧仓库的商品、来源或图片资料。")
-
-
 def _filter_stories(category: str, search: str) -> tuple:
     if category in {"首页", "热门"}:
         filtered = STORIES
     else:
         keyword_by_category = {
             "刺绣": ("刺绣", "人物"),
+            "蓝染": ("织染", "纹样"),
             "陶艺": ("陶艺", "工序"),
-            "织染": ("织染", "纹样"),
-            "金工": ("金工", "手艺人"),
-            "木作": ("木作", "手艺人"),
-            "纸艺": ("纸艺", "纹样"),
-            "传统美食": ("美食",),
-            "民俗影像": ("文化", "民俗"),
+            "木雕": ("木作", "手艺人"),
+            "剪纸": ("纸艺", "纹样"),
+            "戏曲": ("人物", "文化"),
+            "民俗": ("文化", "民俗"),
+            "传统工艺": ("手艺人", "工序"),
         }
         keywords = keyword_by_category.get(category, (category,))
         filtered = tuple(
