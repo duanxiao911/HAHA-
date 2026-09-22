@@ -89,7 +89,11 @@ def _render_navigation_system(module: str, channel: str) -> None:
         "<span>传统音乐</span><span>传统舞蹈</span><span>杂技</span></section>"
         '<section><strong>民俗生活</strong><a href="?module=media&channel=folk-custom">民俗</a>'
         "<span>节庆</span><span>礼俗</span><span>饮食技艺</span><span>服饰</span><span>传统医药</span>"
-        "</section></div></details></nav></div></header>",
+        '</section></div></details></nav><nav class="channel-utilities" aria-label="社区服务">'
+        '<a href="?module=media">▤ 专栏</a><a href="?module=media">⚑ 活动</a>'
+        '<a href="?module=map">▣ 文化地图</a><a href="?module=media">▶ 直播</a>'
+        '<a href="?module=learn">✦ 课堂</a><a href="?module=media&channel=hot">♪ 非遗热榜</a>'
+        "</nav></div></header>",
         unsafe_allow_html=True,
     )
     _install_scroll_navigation()
