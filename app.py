@@ -32,45 +32,62 @@ def main() -> None:
         _render_creator_route(space)
         return
     module = str(st.query_params.get("module", "media"))
-    _render_top_navigation(module)
+    channel = str(st.query_params.get("channel", "all"))
+    _render_navigation_system(module, channel)
     if module == "media":
         render_media_home()
     else:
         _render_module_placeholder(module)
 
 
-def _render_top_navigation(module: str) -> None:
-    navigation, search, script, user, publish = st.columns(
-        (2.05, 1.2, 0.5, 0.82, 0.43), vertical_alignment="center"
+def _render_navigation_system(module: str, channel: str) -> None:
+    def page_link(key: str, label: str) -> str:
+        current = ' class="active" aria-current="page"' if module == key else ""
+        return f'<a{current} href="?module={key}">{label}</a>'
+
+    def channel_link(key: str, label: str, *, icon: str = "") -> str:
+        current = ' class="active" aria-current="page"' if channel == key else ""
+        return f'<a{current} href="?module=media&channel={key}">{icon}{label}</a>'
+
+    primary_channels = tuple(CATEGORY_LABELS.items())[2:7]
+    extra_channels = tuple(CATEGORY_LABELS.items())[7:]
+    primary_markup = "".join(channel_link(key, label) for key, label in primary_channels)
+    extra_markup = "".join(channel_link(key, label) for key, label in extra_channels)
+    st.markdown(
+        '<header class="header-system">'
+        '<div class="global-header">'
+        '<a class="header-brand" href="?module=media">HAHA</a>'
+        '<nav class="global-links" aria-label="全局导航">'
+        f'{page_link("media", "首页")}<a href="?module=media">非遗影像</a>'
+        f'{page_link("gift", "非遗礼遇")}<a href="?module=media&channel=folk">文化地图</a>'
+        f"{page_link('learn', 'AI 学习')}</nav>"
+        '<form class="header-search" method="get"><input type="hidden" name="module" value="media">'
+        '<input name="q" aria-label="搜索视频、非遗项目、传承人或地区" '
+        'placeholder="搜一搜：竹编、蓝染、手艺人的一天"><button type="submit">⌕</button></form>'
+        '<nav class="user-links" aria-label="用户功能"><span>消息</span><span>动态</span>'
+        '<span>收藏</span><span>历史</span><a href="?module=profile">文化档案</a>'
+        '<a href="?space=script">AI 脚本</a></nav>'
+        '<a class="publish-button" href="?space=publish">＋ 投稿</a></div>'
+        '<div class="channel-nav"><nav class="channel-main" aria-label="内容频道">'
+        f"{channel_link('all', '动态', icon='◎ ')}{channel_link('hot', '热门', icon='🔥 ')}"
+        f'<span class="channel-divider" aria-hidden="true"></span>{primary_markup}'
+        '<details class="more-menu"><summary aria-label="展开更多非遗分类">更多⌄</summary>'
+        '<div class="mega-menu"><section><strong>工艺</strong><a href="?module=media&channel=embroidery">刺绣</a>'
+        '<a href="?module=media&channel=dyeing">蓝染</a><a href="?module=media&channel=wood">木雕</a>'
+        '<a href="?module=media&channel=pottery">陶艺</a><a href="?module=media&channel=paper">剪纸</a></section>'
+        '<section><strong>表演</strong><a href="?module=media&channel=opera">戏曲</a><span>舞蹈</span>'
+        "<span>音乐</span><span>曲艺</span></section><section><strong>生活</strong><span>饮食</span>"
+        '<span>节庆</span><a href="?module=media&channel=folk">民俗</a><span>服饰</span></section>'
+        "<section><strong>探索</strong><span>文化地图</span><span>传承人</span><span>项目</span>"
+        "<span>专题</span></section></div></details></nav>"
+        '<nav class="channel-expanded" aria-label="扩展频道">'
+        f'{extra_markup}<a href="?module=media">舞蹈</a><a href="?module=media">音乐</a>'
+        '<a href="?module=media">饮食</a><a href="?module=media">节庆</a>'
+        '<span class="channel-divider" aria-hidden="true"></span><a href="?module=media">专栏</a>'
+        '<a href="?module=media">活动</a><a href="?module=media&channel=folk">文化地图</a>'
+        '<a href="?module=learn">课堂</a></nav></div></header>',
+        unsafe_allow_html=True,
     )
-    with navigation:
-        st.markdown(
-            '<nav class="global-nav"><a class="brand" href="?module=media">HAHA</a>'
-            f'<a class="{"active" if module == "media" else ""}" href="?module=media">首页</a>'
-            '<a href="?module=media">非遗影像</a>'
-            f'<a class="{"active" if module == "gift" else ""}" href="?module=gift">非遗礼遇</a>'
-            f'<a class="{"active" if module == "learn" else ""}" href="?module=learn">AI 学习</a></nav>',
-            unsafe_allow_html=True,
-        )
-    with search:
-        st.text_input(
-            "搜索手艺、工艺或创作者",
-            placeholder="搜一搜：竹编、蓝染、手艺人的一天",
-            key="media_search",
-            label_visibility="collapsed",
-        )
-    with script:
-        if st.button("AI 脚本", width="stretch"):
-            _navigate("script")
-    with user:
-        st.markdown(
-            '<div class="header-tools"><span>消息</span><span>收藏</span>'
-            '<span>历史</span><a href="?module=profile">用户</a></div>',
-            unsafe_allow_html=True,
-        )
-    with publish:
-        if st.button("＋ 投稿", width="stretch"):
-            _navigate("publish")
 
 
 def _render_module_placeholder(module: str) -> None:
@@ -129,15 +146,14 @@ def _render_creator_route(space: str) -> None:
 
 
 def _render_community_feed() -> None:
-    category_key = str(st.query_params.get("category", "all"))
+    category_key = str(st.query_params.get("channel", "all"))
     st.markdown(
         '<section class="brand-banner"><span>HERITAGE IN MOTION</span>'
         "<h1>让每一门手艺，都有被看见的下一帧。</h1>"
         "<p>HAHA 非遗影像社区 · 记录、理解、连接</p><b>哈</b></section>",
         unsafe_allow_html=True,
     )
-    _render_category_hub(category_key)
-    search = st.session_state.get("media_search", "")
+    search = str(st.query_params.get("q", ""))
     if category_key != "all" or search.strip():
         category = CATEGORY_LABELS.get(category_key, "首页")
         st.markdown(f"## {category if not search.strip() else '搜索结果'}")
@@ -282,25 +298,6 @@ def _render_ai_learning() -> None:
         '<footer class="site-footer"><strong>HAHA 飞颐</strong>'
         "<span>让非遗被看见、被理解、被继续创造。</span>"
         "<small>比赛 MVP · 演示内容</small></footer>",
-        unsafe_allow_html=True,
-    )
-
-
-def _render_category_hub(active_key: str) -> None:
-    chips = "".join(
-        f'<a class="{"active" if key == active_key else ""}" '
-        f'href="?module=media&category={key}">{label}</a>'
-        for key, label in tuple(CATEGORY_LABELS.items())[2:]
-    )
-    st.markdown(
-        '<section class="category-hub">'
-        f'<a class="category-feature {"active" if active_key == "all" else ""}" '
-        'href="?module=media&category=all"><i>◉</i><strong>动态</strong></a>'
-        f'<a class="category-feature hot {"active" if active_key == "hot" else ""}" '
-        'href="?module=media&category=hot"><i>✦</i><strong>热门</strong></a>'
-        f'<div class="category-chips">{chips}</div>'
-        '<div class="category-links"><span>▣ 专题</span><span>⚑ 活动</span>'
-        "<span>▤ 文化地图</span><span>▶ 课堂</span></div></section>",
         unsafe_allow_html=True,
     )
 
