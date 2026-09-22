@@ -12,15 +12,7 @@ from haha_media.theme import apply_theme
 def main() -> None:
     st.set_page_config(page_title="HAHA · 非遗影像馆", page_icon="◇", layout="wide")
     apply_theme()
-    st.markdown(
-        """
-        <header class="site-header">
-          <div class="wordmark">HAHA <span>HERITAGE, HERE AND AHEAD</span></div>
-          <div class="header-note">文化媒体 · 礼物发现 · AI 对话</div>
-        </header>
-        """,
-        unsafe_allow_html=True,
-    )
+    _render_top_navigation()
     pages = st.tabs(("非遗影像馆", "非遗礼遇", "AI 学习对话", "我的文化档案"))
     with pages[0]:
         render_media_home()
@@ -34,28 +26,56 @@ def main() -> None:
             st.info(f"{copy} 该板块将接在影像馆 MVP 之后开发。")
 
 
+def _render_top_navigation() -> None:
+    brand, search, create = st.columns((1.1, 1.7, 0.7), vertical_alignment="center")
+    with brand:
+        st.markdown(
+            '<div class="top-brand">HAHA <span>非遗视频社区</span></div>', unsafe_allow_html=True
+        )
+    with search:
+        st.text_input(
+            "搜索手艺、工艺或创作者",
+            placeholder="搜一搜：竹编、蓝染、手艺人的一天",
+            key="media_search",
+            label_visibility="collapsed",
+        )
+    with create:
+        if st.button("＋ 投稿", type="primary", width="stretch"):
+            st.session_state["media_view"] = "发布视频"
+    st.markdown(
+        '<nav class="top-nav" aria-label="内容导航"><span class="active">首页</span><span>热门</span>'
+        "<span>手艺现场</span><span>创作中心</span><span>文化地图</span></nav>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_media_home() -> None:
+    media_view = st.radio(
+        "社区功能",
+        ("社区精选", "发布视频", "生成图文脚本"),
+        horizontal=True,
+        key="media_view",
+        label_visibility="collapsed",
+    )
+    if media_view == "社区精选":
+        _render_community_feed()
+    elif media_view == "发布视频":
+        _render_video_publisher()
+    else:
+        _render_script_creator()
+
+
+def _render_community_feed() -> None:
     st.markdown(
         """
         <section class="media-hero">
           <span>HAHA MEDIA · BETA</span>
           <h1>先被一门手艺打动，<br>再走近它的故事。</h1>
-          <p>这是一个独立重写的非遗媒体首页。它用短内容建立好奇心，
-          再自然地把观众带向 AI 解读与文化礼物。</p>
+          <p>从一条视频开始，走进工艺、人物与文化；想继续问，或想发现礼物，都在这里自然发生。</p>
         </section>
         """,
         unsafe_allow_html=True,
     )
-    community, creator, browse = st.tabs(("社区精选", "发布视频", "生成图文脚本"))
-    with community:
-        _render_community_feed()
-    with creator:
-        _render_video_publisher()
-    with browse:
-        _render_script_creator()
-
-
-def _render_community_feed() -> None:
     category = st.radio(
         "内容分区",
         ("首页", "热门", "手艺现场", "人物故事", "工序观察", "文化知识"),
@@ -71,7 +91,7 @@ def _render_community_feed() -> None:
     stream, ranking = st.columns((2.25, 0.75), gap="large")
     with stream:
         st.markdown(f"### {'推荐内容' if category == '首页' else category}")
-        _render_story_grid(category)
+        _render_story_grid(category, st.session_state.get("media_search", ""))
         _render_published_posts()
     with ranking:
         st.markdown("### 热门榜")
@@ -88,8 +108,8 @@ def _render_community_feed() -> None:
         st.info(response)
 
 
-def _render_story_grid(category: str) -> None:
-    visible_stories = _filter_stories(category)
+def _render_story_grid(category: str, search: str) -> None:
+    visible_stories = _filter_stories(category, search)
     columns = st.columns(3, gap="medium")
     for column, story in zip(columns * 2, visible_stories, strict=False):
         with column:
@@ -103,17 +123,28 @@ def _render_story_grid(category: str) -> None:
     st.caption("内容为比赛 MVP 中的原创演示文案与视觉占位，不包含旧仓库的商品、来源或图片资料。")
 
 
-def _filter_stories(category: str) -> tuple:
+def _filter_stories(category: str, search: str) -> tuple:
     if category in {"首页", "热门"}:
-        return STORIES
-    keyword_by_category = {
-        "手艺现场": ("手艺人", "陶艺"),
-        "人物故事": ("人物", "手艺人"),
-        "工序观察": ("工序", "陶艺"),
-        "文化知识": ("纹样",),
-    }
-    keywords = keyword_by_category[category]
-    filtered = tuple(story for story in STORIES if any(word in story.category for word in keywords))
+        filtered = STORIES
+    else:
+        keyword_by_category = {
+            "手艺现场": ("手艺人", "陶艺"),
+            "人物故事": ("人物", "手艺人"),
+            "工序观察": ("工序", "陶艺"),
+            "文化知识": ("纹样",),
+        }
+        keywords = keyword_by_category[category]
+        filtered = tuple(
+            story for story in STORIES if any(word in story.category for word in keywords)
+        )
+    query = search.strip().casefold()
+    if query:
+        search_result = tuple(
+            story
+            for story in filtered
+            if query in f"{story.title} {story.category} {story.summary}".casefold()
+        )
+        return search_result
     return filtered or STORIES
 
 

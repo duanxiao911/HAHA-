@@ -12,9 +12,8 @@ def apply_theme() -> None:
           :root {--paper:#f6f1e9;--ink:#24201c;--muted:#746b61;--line:#d9cfc0;--red:#a63f34;}
           .block-container {max-width:1180px;padding-top:2rem;padding-bottom:4rem;}
           [data-testid="stAppViewContainer"] {background:var(--paper);color:var(--ink);}
-          .site-header {display:flex;justify-content:space-between;align-items:baseline;padding:0 0 1.2rem;border-bottom:1px solid var(--line);}
-          .wordmark {font-family:Georgia,serif;font-size:1.7rem;font-weight:700;letter-spacing:.04em;}
-          .wordmark span,.header-note {font-family:Arial,sans-serif;font-size:.65rem;color:var(--muted);letter-spacing:.12em;}
+          .top-brand {font:700 1.7rem Georgia,serif;letter-spacing:.04em;}.top-brand span {display:block;margin-top:.1rem;color:var(--muted);font:600 .65rem Arial,sans-serif;letter-spacing:.1em;}
+          .top-nav {display:flex;gap:1.35rem;align-items:center;margin:.9rem 0 1.1rem;padding-bottom:.9rem;border-bottom:1px solid var(--line);font-size:.85rem;}.top-nav span{color:var(--muted);cursor:default}.top-nav .active{color:var(--ink);font-weight:700;}
           .media-hero {margin:1.5rem 0 1.3rem;padding:3.2rem;border-radius:20px;color:#fff;background:linear-gradient(120deg,#431f1b,#a63f34 62%,#da9273);}
           .media-hero span {font:700 .72rem Arial,sans-serif;letter-spacing:.15em;opacity:.8;}
           .media-hero h1 {margin:.7rem 0;font:700 clamp(2.2rem,5vw,4.6rem)/1.05 Georgia,serif;}
@@ -31,7 +30,7 @@ def apply_theme() -> None:
           .creator-rule {display:grid;grid-template-columns:2rem 1fr;column-gap:.55rem;padding:1rem 0;border-bottom:1px solid var(--line);}.creator-rule b{grid-row:span 2;color:var(--red);font:700 1.1rem Georgia,serif;}.creator-rule strong{font-size:.88rem;}.creator-rule span{margin-top:.3rem;color:var(--muted);font-size:.76rem;line-height:1.6;}
           [data-testid="stFileUploaderDropzone"] {min-height:11rem;border:2px dashed #bd897d;background:#fffaf4;}
           [data-testid="stTabs"] button {font-weight:600;} [data-testid="stTabs"] button[aria-selected="true"] {color:var(--red);}
-          @media (max-width:700px) {.site-header{display:block}.header-note{margin-top:.4rem}.media-hero{padding:2.6rem 1.5rem}.cover.red{height:18rem}}
+          @media (max-width:700px) {.media-hero{padding:2.6rem 1.5rem}.cover.red{height:18rem}.top-nav{gap:.8rem;overflow-x:auto;white-space:nowrap}}
         </style>
         """,
         unsafe_allow_html=True,
