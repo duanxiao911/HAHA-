@@ -17,3 +17,7 @@ def test_script_generator_creates_a_claim_cautious_shooting_package() -> None:
     assert "竹编" in script.title
     assert len(script.shots) == 5
     assert "核验来源" in script.caption
+    assert script.judgment
+    assert len(script.storyboard) == 5
+    assert any(status == "风险" for status, _ in script.audits)
+    assert len(script.titles) >= 3
