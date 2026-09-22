@@ -522,9 +522,9 @@ def _render_published_posts() -> None:
 
 def _render_script_creator() -> None:
     st.markdown(
-        '<section class="creator-head studio-v2-head"><span>AI CREATIVE STUDIO · V2.0</span>'
-        "<h2>把一个想法变成可拍、可审、可发布的内容</h2>"
-        "<p>事实库 × 创作方法库 × 运营策略库。当前为规则与演示资料驱动的 MVP。</p></section>",
+        '<section class="creator-head studio-v2-head"><div class="studio-kicker">人工智能创意工作室 · V2.0</div>'
+        '<div class="studio-title">把一个想法变成可拍、可审、可发布的内容</div>'
+        '<div class="studio-description">事实库 × 创作方法库 × 运营策略库。当前为规则与演示资料驱动的 MVP。</div></section>',
         unsafe_allow_html=True,
     )
     _render_creator_steps(str(st.session_state.get("creator_stage", "settings")))
