@@ -107,16 +107,6 @@ def _render_creator_route(space: str) -> None:
 def _render_community_feed() -> None:
     st.markdown(
         """
-        <section class="media-hero">
-          <span>HAHA MEDIA · BETA</span>
-          <h1>先被一门手艺打动，<br>再走近它的故事。</h1>
-          <p>从一条视频开始，走进工艺、人物与文化；想继续问，或想发现礼物，都在这里自然发生。</p>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        """
         <section class="category-hub">
           <div class="category-feature"><i>◉</i><strong>动态</strong></div>
           <div class="category-feature hot"><i>✦</i><strong>热门</strong></div>
