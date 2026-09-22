@@ -181,8 +181,8 @@ def _render_creator_route(space: str) -> None:
     with sidebar:
         st.markdown(
             '<aside class="creator-sidebar"><div class="creator-logo">HAHA <span>创作中心</span></div>'
-            "<strong>创作工作台</strong><span>内容管理</span><span>数据中心</span>"
-            "<span>互动管理</span><span>文化审核</span></aside>",
+            "<strong>✦　创作工作台</strong><span>▤　内容管理</span><span>⌁　数据中心</span>"
+            "<span>◌　互动管理</span><span>◇　文化审核</span></aside>",
             unsafe_allow_html=True,
         )
         if st.button("← 返回社区", width="stretch"):
@@ -202,7 +202,7 @@ def _render_creator_route(space: str) -> None:
     with workspace:
         st.markdown(
             '<div class="workspace-top"><strong>HAHA 创作中心</strong>'
-            "<span>让内容先被看见，再被理解。</span></div>",
+            '<div class="project-status"><span>● 已自动保存</span><b>未命名项目</b><button>•••</button></div></div>',
             unsafe_allow_html=True,
         )
         if space == "publish":
@@ -524,14 +524,15 @@ def _render_script_creator() -> None:
     st.markdown(
         '<section class="creator-head studio-v2-head"><div class="studio-kicker">人工智能创意工作室 · V2.0</div>'
         '<div class="studio-title">把一个想法变成可拍、可审、可发布的内容</div>'
-        '<div class="studio-description">事实库 × 创作方法库 × 运营策略库。当前为规则与演示资料驱动的 MVP。</div></section>',
+        '<div class="studio-description">事实库 × 创作方法库 × 运营策略库</div></section>',
         unsafe_allow_html=True,
     )
     _render_creator_steps(str(st.session_state.get("creator_stage", "settings")))
     settings, canvas, review = st.columns((0.9, 1.9, 0.9), gap="medium")
     with settings:
         st.markdown(
-            '<div class="studio-column-title settings-marker">01 · 创作设定</div>',
+            '<div class="studio-column-title settings-marker"><b><i>01</i>创作设定</b>'
+            "<span>定义这次内容要讲什么、讲给谁、在哪里发布。</span></div>",
             unsafe_allow_html=True,
         )
         with st.form("script_creator", border=False):
@@ -603,7 +604,7 @@ def _render_script_creator() -> None:
                 "事实严格度", ("创意优先", "平衡", "严格考据"), value="平衡"
             )
             model_tier = st.radio("生成模式", ("快速", "标准", "精创"), index=1, horizontal=True)
-            generated = st.form_submit_button("生成本次创作判断", type="primary", width="stretch")
+            generated = st.form_submit_button("✦ 生成本次创作判断", type="primary", width="stretch")
     if generated:
         try:
             with st.status("正在理解你的创意……", expanded=True) as progress:
@@ -633,20 +634,24 @@ def _render_script_creator() -> None:
     script = st.session_state.get("generated_script")
     with canvas:
         st.markdown(
-            '<div class="studio-column-title">02 · AI 创作工作区</div>', unsafe_allow_html=True
+            '<div class="studio-column-title workspace-marker"><b><i>02</i>AI 创作工作区</b>'
+            "<span>从创作判断开始，逐步完成脚本、分镜与发布适配。</span></div>",
+            unsafe_allow_html=True,
         )
         if isinstance(script, ContentScript):
             _render_script(script)
         else:
             st.markdown(
-                '<div class="studio-empty"><i>✦</i><b>先完成左侧创作设定</b>'
-                "<span>AI 会依次生成</span><ul><li>本次创作判断</li><li>内容结构</li>"
-                "<li>Master Script</li><li>结构化分镜</li><li>发布包</li></ul></div>",
+                '<div class="studio-empty"><div class="weave-icon">✦</div><b>从一个想法开始</b>'
+                "<span>完成左侧设定后，AI 会先分析内容方向，再生成完整创作方案。</span>"
+                '<div class="ability-grid"><em>◇<b>创作判断</b></em><em>⌁<b>结构规划</b></em>'
+                "<em>▦<b>分镜生成</b></em><em>↗<b>发布适配</b></em></div></div>",
                 unsafe_allow_html=True,
             )
     with review:
         st.markdown(
-            '<div class="studio-column-title review-marker">03 · 判断与审核</div>',
+            '<div class="studio-column-title review-marker"><b><i>03</i>判断与审核</b>'
+            "<span>核对事实来源、文化风险与平台适配度。</span></div>",
             unsafe_allow_html=True,
         )
         _render_review_panel(script if isinstance(script, ContentScript) else None)
