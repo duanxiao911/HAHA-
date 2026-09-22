@@ -639,8 +639,9 @@ def _render_script_creator() -> None:
             _render_script(script)
         else:
             st.markdown(
-                '<div class="studio-empty"><b>先完成左侧创作设定</b><span>AI 会先给出创作判断，'
-                "经你确认后再生成 Master Script、结构化分镜与发布包。</span></div>",
+                '<div class="studio-empty"><i>✦</i><b>先完成左侧创作设定</b>'
+                "<span>AI 会依次生成</span><ul><li>本次创作判断</li><li>内容结构</li>"
+                "<li>Master Script</li><li>结构化分镜</li><li>发布包</li></ul></div>",
                 unsafe_allow_html=True,
             )
     with review:
@@ -782,8 +783,11 @@ def _render_script(script: ContentScript) -> None:
 def _render_review_panel(script: ContentScript | None) -> None:
     if script is None:
         st.markdown(
-            '<div class="review-empty">生成后将在这里显示：<br>事实来源<br>文化审核<br>'
-            "风险提示<br>运营建议</div>",
+            '<div class="review-empty"><span>生成后将在这里显示</span>'
+            "<div>↗ <b>事实来源</b><small>引用与资料日期</small></div>"
+            "<div>✓ <b>文化审核</b><small>名称、地域与工艺</small></div>"
+            "<div>⚠ <b>风险提示</b><small>待确认与错误表述</small></div>"
+            "<div>◆ <b>运营建议</b><small>平台与内容判断</small></div></div>",
             unsafe_allow_html=True,
         )
         return
