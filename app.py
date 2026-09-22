@@ -56,43 +56,65 @@ def render_media_home() -> None:
 
 
 def _render_community_feed() -> None:
-    primary, side = st.columns((1.45, 1), gap="large")
-    with primary:
-        featured = STORIES[0]
-        st.markdown(featured.cover_markup, unsafe_allow_html=True)
-        st.caption(f"本期影像 · {featured.duration} · {featured.category}")
-        st.markdown(f"## {featured.title}")
-        st.write(featured.summary)
-        first, second = st.columns(2)
-        if first.button("问 AI：这门手艺有什么故事？", type="primary", width="stretch"):
-            st.session_state["media_response"] = featured.ai_answer
-        if second.button("看看相关礼物", width="stretch"):
-            st.session_state["media_response"] = (
-                "礼物板块会依据你看过的内容、收藏和场景偏好做推荐。"
+    category = st.radio(
+        "内容分区",
+        ("首页", "热门", "手艺现场", "人物故事", "工序观察", "文化知识"),
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    st.markdown(
+        '<div class="channel-banner"><div><small>本周专题</small><strong>手艺，值得被完整地看见。</strong>'
+        "<span>从短视频出发，认识一门技艺的过程、人物与心意。</span></div>"
+        "<b>◇</b></div>",
+        unsafe_allow_html=True,
+    )
+    stream, ranking = st.columns((2.25, 0.75), gap="large")
+    with stream:
+        st.markdown(f"### {'推荐内容' if category == '首页' else category}")
+        _render_story_grid(category)
+        _render_published_posts()
+    with ranking:
+        st.markdown("### 热门榜")
+        for rank, story in enumerate(STORIES[:5], start=1):
+            st.markdown(
+                f'<div class="ranking-item"><b>{rank:02}</b><div><strong>{story.title}</strong>'
+                f"<small>{story.category} · {story.duration}</small></div></div>",
+                unsafe_allow_html=True,
             )
-    with side:
-        st.markdown("### 接着看")
-        for story in STORIES[1:4]:
-            with st.container(border=True):
-                st.markdown(story.cover_markup, unsafe_allow_html=True)
-                st.caption(f"{story.duration} · {story.category}")
-                st.markdown(f"**{story.title}**")
-                if st.button("打开故事", key=f"open_{story.slug}", width="stretch"):
-                    st.session_state["media_response"] = story.ai_answer
+        st.markdown("### 创作者工具")
+        st.caption("视频投稿和 AI 图文脚本在上方两个创作入口中。")
     if response := st.session_state.get("media_response"):
         st.markdown("### HAHA 正在为你展开")
         st.info(response)
-    st.markdown("### 更多文化片段")
+
+
+def _render_story_grid(category: str) -> None:
+    visible_stories = _filter_stories(category)
     columns = st.columns(3, gap="medium")
-    for column, story in zip(columns, STORIES[3:], strict=False):
+    for column, story in zip(columns * 2, visible_stories, strict=False):
         with column:
             with st.container(border=True):
                 st.markdown(story.cover_markup, unsafe_allow_html=True)
                 st.caption(f"{story.duration} · {story.category}")
                 st.markdown(f"**{story.title}**")
                 st.caption(story.summary)
+                if st.button("播放并展开", key=f"open_{story.slug}", width="stretch"):
+                    st.session_state["media_response"] = story.ai_answer
     st.caption("内容为比赛 MVP 中的原创演示文案与视觉占位，不包含旧仓库的商品、来源或图片资料。")
-    _render_published_posts()
+
+
+def _filter_stories(category: str) -> tuple:
+    if category in {"首页", "热门"}:
+        return STORIES
+    keyword_by_category = {
+        "手艺现场": ("手艺人", "陶艺"),
+        "人物故事": ("人物", "手艺人"),
+        "工序观察": ("工序", "陶艺"),
+        "文化知识": ("纹样",),
+    }
+    keywords = keyword_by_category[category]
+    filtered = tuple(story for story in STORIES if any(word in story.category for word in keywords))
+    return filtered or STORIES
 
 
 def _render_video_publisher() -> None:
