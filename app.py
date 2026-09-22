@@ -8,6 +8,19 @@ from haha_media.feed import STORIES
 from haha_media.script_writer import ContentBrief, ContentScript, generate_content_script
 from haha_media.theme import apply_theme
 
+CATEGORY_LABELS = {
+    "all": "首页",
+    "hot": "热门",
+    "embroidery": "刺绣",
+    "pottery": "陶艺",
+    "dyeing": "织染",
+    "metal": "金工",
+    "wood": "木作",
+    "paper": "纸艺",
+    "food": "传统美食",
+    "folk": "民俗影像",
+}
+
 
 def main() -> None:
     st.set_page_config(page_title="HAHA · 非遗影像馆", page_icon="◇", layout="wide")
@@ -16,30 +29,22 @@ def main() -> None:
     if space in {"publish", "script"}:
         _render_creator_route(space)
         return
-    _render_top_navigation()
-    pages = st.tabs(("非遗影像馆", "非遗礼遇", "AI 学习对话", "我的文化档案"))
-    with pages[0]:
+    module = str(st.query_params.get("module", "media"))
+    _render_top_navigation(module)
+    if module == "media":
         render_media_home()
-    for page, title, copy in (
-        (pages[1], "非遗礼遇", "从一段故事进入一件有文化来处的礼物。"),
-        (pages[2], "AI 学习对话", "在这里提问、理解与继续探索非遗。"),
-        (pages[3], "我的文化档案", "收藏、观看足迹与文化兴趣将在这里沉淀。"),
-    ):
-        with page:
-            st.markdown(f"## {title}")
-            st.info(f"{copy} 该板块将接在影像馆 MVP 之后开发。")
+    else:
+        _render_module_placeholder(module)
 
 
-def _render_top_navigation() -> None:
-    brand, home, search, script, publish = st.columns(
-        (0.95, 0.55, 1.65, 0.72, 0.55), vertical_alignment="center"
+def _render_top_navigation(module: str) -> None:
+    brand, search, script, publish = st.columns(
+        (1.05, 1.65, 0.72, 0.55), vertical_alignment="center"
     )
     with brand:
         st.markdown(
             '<div class="top-brand">HAHA <span>非遗视频社区</span></div>', unsafe_allow_html=True
         )
-    with home:
-        st.button("社区首页", type="primary", width="stretch", disabled=True)
     with search:
         st.text_input(
             "搜索手艺、工艺或创作者",
@@ -54,10 +59,25 @@ def _render_top_navigation() -> None:
         if st.button("＋ 投稿", width="stretch"):
             _navigate("publish")
     st.markdown(
-        '<nav class="top-nav" aria-label="内容导航"><span class="active">首页</span><span>热门</span>'
-        "<span>手艺现场</span><span>创作中心</span><span>文化地图</span></nav>",
+        '<nav class="top-nav" aria-label="平台导航">'
+        f'<a class="{"active" if module == "media" else ""}" href="?module=media">非遗影像馆</a>'
+        f'<a class="{"active" if module == "gift" else ""}" href="?module=gift">非遗礼遇</a>'
+        f'<a class="{"active" if module == "learn" else ""}" href="?module=learn">AI 学习对话</a>'
+        f'<a class="{"active" if module == "profile" else ""}" href="?module=profile">我的文化档案</a>'
+        "</nav>",
         unsafe_allow_html=True,
     )
+
+
+def _render_module_placeholder(module: str) -> None:
+    content = {
+        "gift": ("非遗礼遇", "从一段故事进入一件有文化来处的礼物。"),
+        "learn": ("AI 学习对话", "在这里提问、理解与继续探索非遗。"),
+        "profile": ("我的文化档案", "收藏、观看足迹与文化兴趣将在这里沉淀。"),
+    }
+    title, copy = content.get(module, content["gift"])
+    st.markdown(f"## {title}")
+    st.info(f"{copy} 该板块当前为预留入口。")
 
 
 def render_media_home() -> None:
@@ -105,33 +125,9 @@ def _render_creator_route(space: str) -> None:
 
 
 def _render_community_feed() -> None:
-    st.markdown(
-        """
-        <section class="category-hub">
-          <div class="category-feature"><i>◉</i><strong>动态</strong></div>
-          <div class="category-feature hot"><i>✦</i><strong>热门</strong></div>
-          <div class="category-chips">
-            <span>刺绣</span><span>陶艺</span><span>织染</span><span>金工</span>
-            <span>木作</span><span>纸艺</span><span>传统美食</span><span>民俗影像</span>
-          </div>
-          <div class="category-links"><span>▣ 专题</span><span>⚑ 活动</span><span>▤ 文化地图</span><span>▶ 课堂</span></div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-    category = st.pills(
-        "内容分区",
-        ("首页", "热门", "手艺现场", "人物故事", "工序观察", "文化知识"),
-        default="首页",
-        label_visibility="collapsed",
-    )
-    category = category or "首页"
-    st.markdown(
-        '<div class="channel-banner"><div><small>本周专题</small><strong>手艺，值得被完整地看见。</strong>'
-        "<span>从短视频出发，认识一门技艺的过程、人物与心意。</span></div>"
-        "<b>◇</b></div>",
-        unsafe_allow_html=True,
-    )
+    category_key = str(st.query_params.get("category", "all"))
+    category = CATEGORY_LABELS.get(category_key, "首页")
+    _render_category_hub(category_key)
     stream, ranking = st.columns((2.25, 0.75), gap="large")
     with stream:
         st.markdown(f"### {'推荐内容' if category == '首页' else category}")
@@ -150,6 +146,25 @@ def _render_community_feed() -> None:
     if response := st.session_state.get("media_response"):
         st.markdown("### HAHA 正在为你展开")
         st.info(response)
+
+
+def _render_category_hub(active_key: str) -> None:
+    chips = "".join(
+        f'<a class="{"active" if key == active_key else ""}" '
+        f'href="?module=media&category={key}">{label}</a>'
+        for key, label in tuple(CATEGORY_LABELS.items())[2:]
+    )
+    st.markdown(
+        '<section class="category-hub">'
+        f'<a class="category-feature {"active" if active_key == "all" else ""}" '
+        'href="?module=media&category=all"><i>◉</i><strong>动态</strong></a>'
+        f'<a class="category-feature hot {"active" if active_key == "hot" else ""}" '
+        'href="?module=media&category=hot"><i>✦</i><strong>热门</strong></a>'
+        f'<div class="category-chips">{chips}</div>'
+        '<div class="category-links"><span>▣ 专题</span><span>⚑ 活动</span>'
+        "<span>▤ 文化地图</span><span>▶ 课堂</span></div></section>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_story_grid(category: str, search: str) -> None:
@@ -172,12 +187,16 @@ def _filter_stories(category: str, search: str) -> tuple:
         filtered = STORIES
     else:
         keyword_by_category = {
-            "手艺现场": ("手艺人", "陶艺"),
-            "人物故事": ("人物", "手艺人"),
-            "工序观察": ("工序", "陶艺"),
-            "文化知识": ("纹样",),
+            "刺绣": ("刺绣", "人物"),
+            "陶艺": ("陶艺", "工序"),
+            "织染": ("织染", "纹样"),
+            "金工": ("金工", "手艺人"),
+            "木作": ("木作", "手艺人"),
+            "纸艺": ("纸艺", "纹样"),
+            "传统美食": ("美食",),
+            "民俗影像": ("文化", "民俗"),
         }
-        keywords = keyword_by_category[category]
+        keywords = keyword_by_category.get(category, (category,))
         filtered = tuple(
             story for story in STORIES if any(word in story.category for word in keywords)
         )
