@@ -68,6 +68,11 @@ def _render_navigation_system(module: str, channel: str) -> None:
         '<span>收藏</span><span>历史</span><a href="?module=profile">文化档案</a>'
         '<a href="?space=script">AI 脚本</a></nav>'
         '<a class="publish-button" href="?space=publish">＋ 投稿</a></div>'
+        '<div class="header-visual" aria-label="HAHA 非遗影像品牌视觉">'
+        '<div class="visual-brand"><b>HAHA</b><span>HERITAGE IN MOTION</span></div>'
+        '<div class="visual-copy"><strong>让手艺被看见，让故事继续发生</strong>'
+        "<span>非遗影像 · 文化故事 · 青年共创</span></div>"
+        '<i class="visual-seal">哈</i></div>'
         '<div class="channel-nav"><nav class="channel-main" aria-label="内容频道">'
         f"{channel_link('all', '动态', icon='◎ ')}{channel_link('hot', '热门', icon='🔥 ')}"
         f'<span class="channel-divider" aria-hidden="true"></span>{primary_markup}'
@@ -147,12 +152,6 @@ def _render_creator_route(space: str) -> None:
 
 def _render_community_feed() -> None:
     category_key = str(st.query_params.get("channel", "all"))
-    st.markdown(
-        '<section class="brand-banner"><span>HERITAGE IN MOTION</span>'
-        "<h1>让每一门手艺，都有被看见的下一帧。</h1>"
-        "<p>HAHA 非遗影像社区 · 记录、理解、连接</p><b>哈</b></section>",
-        unsafe_allow_html=True,
-    )
     search = str(st.query_params.get("q", ""))
     if category_key != "all" or search.strip():
         category = CATEGORY_LABELS.get(category_key, "首页")
