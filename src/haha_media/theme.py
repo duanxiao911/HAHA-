@@ -14,6 +14,7 @@ def apply_theme() -> None:
           [data-testid="stAppViewContainer"] {background:var(--paper);color:var(--ink);}
           .top-brand {font:700 1.7rem Georgia,serif;letter-spacing:.04em;}.top-brand span {display:block;margin-top:.1rem;color:var(--muted);font:600 .65rem Arial,sans-serif;letter-spacing:.1em;}
           .top-nav {display:flex;gap:1.35rem;align-items:center;margin:.9rem 0 1.1rem;padding-bottom:.9rem;border-bottom:1px solid var(--line);font-size:.85rem;}.top-nav span{color:var(--muted);cursor:default}.top-nav .active{color:var(--ink);font-weight:700;}
+          [data-testid="stHorizontalBlock"] [data-testid="stButton"] button {min-height:2.45rem;}
           .media-hero {margin:1.5rem 0 1.3rem;padding:3.2rem;border-radius:20px;color:#fff;background:linear-gradient(120deg,#431f1b,#a63f34 62%,#da9273);}
           .media-hero span {font:700 .72rem Arial,sans-serif;letter-spacing:.15em;opacity:.8;}
           .media-hero h1 {margin:.7rem 0;font:700 clamp(2.2rem,5vw,4.6rem)/1.05 Georgia,serif;}

@@ -27,11 +27,21 @@ def main() -> None:
 
 
 def _render_top_navigation() -> None:
-    brand, search, create = st.columns((1.1, 1.7, 0.7), vertical_alignment="center")
+    st.session_state.setdefault("media_view", "社区精选")
+    brand, home, search, script, publish = st.columns(
+        (0.95, 0.55, 1.65, 0.72, 0.55), vertical_alignment="center"
+    )
     with brand:
         st.markdown(
             '<div class="top-brand">HAHA <span>非遗视频社区</span></div>', unsafe_allow_html=True
         )
+    with home:
+        if st.button(
+            "社区首页",
+            type="primary" if st.session_state["media_view"] == "社区精选" else "secondary",
+            width="stretch",
+        ):
+            st.session_state["media_view"] = "社区精选"
     with search:
         st.text_input(
             "搜索手艺、工艺或创作者",
@@ -39,8 +49,19 @@ def _render_top_navigation() -> None:
             key="media_search",
             label_visibility="collapsed",
         )
-    with create:
-        if st.button("＋ 投稿", type="primary", width="stretch"):
+    with script:
+        if st.button(
+            "图文脚本",
+            type=("primary" if st.session_state["media_view"] == "生成图文脚本" else "secondary"),
+            width="stretch",
+        ):
+            st.session_state["media_view"] = "生成图文脚本"
+    with publish:
+        if st.button(
+            "＋ 投稿",
+            type="primary" if st.session_state["media_view"] == "发布视频" else "secondary",
+            width="stretch",
+        ):
             st.session_state["media_view"] = "发布视频"
     st.markdown(
         '<nav class="top-nav" aria-label="内容导航"><span class="active">首页</span><span>热门</span>'
@@ -50,13 +71,7 @@ def _render_top_navigation() -> None:
 
 
 def render_media_home() -> None:
-    media_view = st.radio(
-        "社区功能",
-        ("社区精选", "发布视频", "生成图文脚本"),
-        horizontal=True,
-        key="media_view",
-        label_visibility="collapsed",
-    )
+    media_view = st.session_state.get("media_view", "社区精选")
     if media_view == "社区精选":
         _render_community_feed()
     elif media_view == "发布视频":
