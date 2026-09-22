@@ -118,20 +118,52 @@ def _filter_stories(category: str) -> tuple:
 
 
 def _render_video_publisher() -> None:
-    st.markdown("## 发布一段手艺现场")
-    st.write("上传短视频，补上一句你希望观众记住的话，就能加入本次会话的社区内容流。")
-    with st.form("publish_video", border=True):
-        video = st.file_uploader("选择视频", type=("mp4", "mov", "webm"))
-        title = st.text_input("视频标题", placeholder="例如：竹丝在指尖慢慢成形")
-        description = st.text_area(
-            "一句故事或创作说明", placeholder="请只写你已确认的工艺、人物或作品信息。"
+    st.markdown(
+        """
+        <section class="creator-head">
+          <span>CREATOR STUDIO</span><h2>发布一段手艺现场</h2>
+          <p>把真实的创作过程交给观众。历史、地域与传承信息请在发布前核验。</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    form, rules = st.columns((1.7, 0.75), gap="large")
+    with form:
+        st.markdown("#### 1 · 上传视频")
+        st.markdown(
+            '<div class="upload-tip">支持 MP4、MOV、WebM 格式 · 建议横屏 16:9 或竖屏 9:16</div>',
+            unsafe_allow_html=True,
         )
-        category = st.selectbox("内容类型", ("手艺现场", "作品细节", "人物故事", "工序观察"))
-        submitted = st.form_submit_button("发布到社区", type="primary", width="stretch")
+        with st.form("publish_video", border=False):
+            video = st.file_uploader(
+                "将视频拖到这里，或点击选择文件",
+                type=("mp4", "mov", "webm"),
+                label_visibility="visible",
+            )
+            st.markdown("#### 2 · 填写作品信息")
+            title = st.text_input("视频标题", placeholder="例如：竹丝在指尖慢慢成形")
+            first, second = st.columns(2)
+            category = first.selectbox("投稿分区", ("手艺现场", "作品细节", "人物故事", "工序观察"))
+            tags = second.text_input("内容标签", placeholder="例如：竹编、日常、手作")
+            description = st.text_area(
+                "创作说明", placeholder="讲讲你拍下了什么。请只写已确认的工艺、人物或作品信息。"
+            )
+            confirmed = st.checkbox("我确认发布内容不含未经核验的历史、传承或商业承诺。")
+            submitted = st.form_submit_button("确认投稿", type="primary", width="stretch")
+    with rules:
+        st.markdown("#### 投稿小贴士")
+        st.markdown(
+            """
+            <div class="creator-rule"><b>01</b><strong>前 3 秒先给细节</strong><span>手、材料或一个关键动作，比解释更能留下观众。</span></div>
+            <div class="creator-rule"><b>02</b><strong>讲清一件事</strong><span>一条视频只回答一个问题，故事才不会散。</span></div>
+            <div class="creator-rule"><b>03</b><strong>来源要能说明</strong><span>文化事实与商品信息须能回到创作者或可核验来源。</span></div>
+            """,
+            unsafe_allow_html=True,
+        )
     if not submitted:
         return
-    if video is None or not title.strip():
-        st.warning("请上传视频并填写标题后再发布。")
+    if video is None or not title.strip() or not confirmed:
+        st.warning("请上传视频、填写标题，并确认内容核验说明后再投稿。")
         return
     posts = st.session_state.setdefault("published_posts", [])
     posts.insert(
@@ -140,11 +172,12 @@ def _render_video_publisher() -> None:
             "title": title.strip(),
             "description": description.strip() or "创作者暂未补充说明。",
             "category": category,
+            "tags": tags.strip(),
             "video": video.getvalue(),
             "mime": video.type or "video/mp4",
         },
     )
-    st.success("已发布到本次会话的社区内容流。正式上线时可接入账号、审核与云端存储。")
+    st.success("投稿成功，已发布到本次会话的社区内容流。正式上线时可接入账号、审核与云端存储。")
     _render_published_posts()
 
 
@@ -159,6 +192,8 @@ def _render_published_posts() -> None:
             st.caption(post["category"])
             st.markdown(f"**{post['title']}**")
             st.write(post["description"])
+            if post["tags"]:
+                st.caption("#" + post["tags"].replace("、", " #").replace("，", " #"))
 
 
 def _render_script_creator() -> None:
