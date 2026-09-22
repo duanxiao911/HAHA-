@@ -5,6 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from haha_media.feed import STORIES
+from haha_media.script_writer import ContentBrief, ContentScript, generate_content_script
 from haha_media.theme import apply_theme
 
 
@@ -45,6 +46,16 @@ def render_media_home() -> None:
         """,
         unsafe_allow_html=True,
     )
+    community, creator, browse = st.tabs(("社区精选", "发布视频", "生成图文脚本"))
+    with community:
+        _render_community_feed()
+    with creator:
+        _render_video_publisher()
+    with browse:
+        _render_script_creator()
+
+
+def _render_community_feed() -> None:
     primary, side = st.columns((1.45, 1), gap="large")
     with primary:
         featured = STORIES[0]
@@ -81,6 +92,98 @@ def render_media_home() -> None:
                 st.markdown(f"**{story.title}**")
                 st.caption(story.summary)
     st.caption("内容为比赛 MVP 中的原创演示文案与视觉占位，不包含旧仓库的商品、来源或图片资料。")
+    _render_published_posts()
+
+
+def _render_video_publisher() -> None:
+    st.markdown("## 发布一段手艺现场")
+    st.write("上传短视频，补上一句你希望观众记住的话，就能加入本次会话的社区内容流。")
+    with st.form("publish_video", border=True):
+        video = st.file_uploader("选择视频", type=("mp4", "mov", "webm"))
+        title = st.text_input("视频标题", placeholder="例如：竹丝在指尖慢慢成形")
+        description = st.text_area(
+            "一句故事或创作说明", placeholder="请只写你已确认的工艺、人物或作品信息。"
+        )
+        category = st.selectbox("内容类型", ("手艺现场", "作品细节", "人物故事", "工序观察"))
+        submitted = st.form_submit_button("发布到社区", type="primary", width="stretch")
+    if not submitted:
+        return
+    if video is None or not title.strip():
+        st.warning("请上传视频并填写标题后再发布。")
+        return
+    posts = st.session_state.setdefault("published_posts", [])
+    posts.insert(
+        0,
+        {
+            "title": title.strip(),
+            "description": description.strip() or "创作者暂未补充说明。",
+            "category": category,
+            "video": video.getvalue(),
+            "mime": video.type or "video/mp4",
+        },
+    )
+    st.success("已发布到本次会话的社区内容流。正式上线时可接入账号、审核与云端存储。")
+    _render_published_posts()
+
+
+def _render_published_posts() -> None:
+    posts = st.session_state.get("published_posts", [])
+    if not posts:
+        return
+    st.markdown("### 新发布")
+    for post in posts:
+        with st.container(border=True):
+            st.video(post["video"], format=post["mime"])
+            st.caption(post["category"])
+            st.markdown(f"**{post['title']}**")
+            st.write(post["description"])
+
+
+def _render_script_creator() -> None:
+    st.markdown("## 把一个想法变成可拍的图文脚本")
+    st.caption("生成内容是创作草案；涉及历史、地域、传承或商品承诺，发布前必须由创作者补充并核验。")
+    with st.form("script_creator", border=True):
+        craft = st.text_input("技艺或作品", placeholder="例如：蓝染、竹编、铁画")
+        story_seed = st.text_area("你想讲的一个瞬间", placeholder="例如：师傅把染好的布从水里提起")
+        first, second = st.columns(2)
+        audience = first.selectbox(
+            "想对谁讲", ("第一次接触非遗的人", "年轻生活方式用户", "海外文化爱好者")
+        )
+        platform = second.selectbox("发布平台", ("小红书", "抖音", "Bilibili", "Instagram Reels"))
+        tone = st.select_slider("表达气质", ("安静观察", "温暖叙事", "轻快科普"))
+        generated = st.form_submit_button("生成 45 秒图文脚本", type="primary", width="stretch")
+    if generated:
+        try:
+            st.session_state["generated_script"] = generate_content_script(
+                ContentBrief(craft, story_seed, audience, platform, tone)
+            )
+        except ValueError as exc:
+            st.warning(str(exc))
+    script = st.session_state.get("generated_script")
+    if isinstance(script, ContentScript):
+        _render_script(script)
+
+
+def _render_script(script: ContentScript) -> None:
+    st.markdown(f"### {script.title}")
+    st.info(f"开场钩子：{script.hook}")
+    voiceover, storyboard = st.columns(2)
+    with voiceover:
+        st.markdown("**旁白 / 字幕**")
+        for line in script.voiceover:
+            st.write(f"— {line}")
+    with storyboard:
+        st.markdown("**分镜清单**")
+        for shot in script.shots:
+            st.write(f"— {shot}")
+    st.markdown("**发布文案**")
+    st.code(f"{script.caption}\n\n{' '.join(script.tags)}", language=None)
+    st.download_button(
+        "下载脚本文本",
+        data=f"{script.title}\n\n{script.hook}\n\n" + "\n".join(script.voiceover),
+        file_name="haha-content-script.txt",
+        mime="text/plain",
+    )
 
 
 if __name__ == "__main__":
