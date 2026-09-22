@@ -12,6 +12,10 @@ from haha_media.theme import apply_theme
 def main() -> None:
     st.set_page_config(page_title="HAHA · 非遗影像馆", page_icon="◇", layout="wide")
     apply_theme()
+    space = str(st.query_params.get("space", "community"))
+    if space in {"publish", "script"}:
+        _render_creator_route(space)
+        return
     _render_top_navigation()
     pages = st.tabs(("非遗影像馆", "非遗礼遇", "AI 学习对话", "我的文化档案"))
     with pages[0]:
@@ -27,7 +31,6 @@ def main() -> None:
 
 
 def _render_top_navigation() -> None:
-    st.session_state.setdefault("media_view", "社区精选")
     brand, home, search, script, publish = st.columns(
         (0.95, 0.55, 1.65, 0.72, 0.55), vertical_alignment="center"
     )
@@ -36,12 +39,7 @@ def _render_top_navigation() -> None:
             '<div class="top-brand">HAHA <span>非遗视频社区</span></div>', unsafe_allow_html=True
         )
     with home:
-        if st.button(
-            "社区首页",
-            type="primary" if st.session_state["media_view"] == "社区精选" else "secondary",
-            width="stretch",
-        ):
-            st.session_state["media_view"] = "社区精选"
+        st.button("社区首页", type="primary", width="stretch", disabled=True)
     with search:
         st.text_input(
             "搜索手艺、工艺或创作者",
@@ -50,19 +48,11 @@ def _render_top_navigation() -> None:
             label_visibility="collapsed",
         )
     with script:
-        if st.button(
-            "图文脚本",
-            type=("primary" if st.session_state["media_view"] == "生成图文脚本" else "secondary"),
-            width="stretch",
-        ):
-            st.session_state["media_view"] = "生成图文脚本"
+        if st.button("图文脚本", width="stretch"):
+            _navigate("script")
     with publish:
-        if st.button(
-            "＋ 投稿",
-            type="primary" if st.session_state["media_view"] == "发布视频" else "secondary",
-            width="stretch",
-        ):
-            st.session_state["media_view"] = "发布视频"
+        if st.button("＋ 投稿", width="stretch"):
+            _navigate("publish")
     st.markdown(
         '<nav class="top-nav" aria-label="内容导航"><span class="active">首页</span><span>热门</span>'
         "<span>手艺现场</span><span>创作中心</span><span>文化地图</span></nav>",
@@ -71,13 +61,47 @@ def _render_top_navigation() -> None:
 
 
 def render_media_home() -> None:
-    media_view = st.session_state.get("media_view", "社区精选")
-    if media_view == "社区精选":
-        _render_community_feed()
-    elif media_view == "发布视频":
-        _render_video_publisher()
-    else:
-        _render_script_creator()
+    _render_community_feed()
+
+
+def _navigate(space: str) -> None:
+    st.query_params["space"] = space
+    st.rerun()
+
+
+def _render_creator_route(space: str) -> None:
+    sidebar, workspace = st.columns((0.5, 2.7), gap="large")
+    with sidebar:
+        st.markdown(
+            '<aside class="creator-sidebar"><div class="creator-logo">HAHA <span>创作中心</span></div>'
+            "<strong>创作工作台</strong><span>内容管理</span><span>数据中心</span>"
+            "<span>互动管理</span><span>文化审核</span></aside>",
+            unsafe_allow_html=True,
+        )
+        if st.button("← 返回社区", width="stretch"):
+            _navigate("community")
+        if st.button(
+            "视频投稿",
+            type="primary" if space == "publish" else "secondary",
+            width="stretch",
+        ):
+            _navigate("publish")
+        if st.button(
+            "图文脚本",
+            type="primary" if space == "script" else "secondary",
+            width="stretch",
+        ):
+            _navigate("script")
+    with workspace:
+        st.markdown(
+            '<div class="workspace-top"><strong>HAHA 创作中心</strong>'
+            "<span>让内容先被看见，再被理解。</span></div>",
+            unsafe_allow_html=True,
+        )
+        if space == "publish":
+            _render_video_publisher()
+        else:
+            _render_script_creator()
 
 
 def _render_community_feed() -> None:
@@ -91,12 +115,27 @@ def _render_community_feed() -> None:
         """,
         unsafe_allow_html=True,
     )
-    category = st.radio(
+    st.markdown(
+        """
+        <section class="category-hub">
+          <div class="category-feature"><i>◉</i><strong>动态</strong></div>
+          <div class="category-feature hot"><i>✦</i><strong>热门</strong></div>
+          <div class="category-chips">
+            <span>刺绣</span><span>陶艺</span><span>织染</span><span>金工</span>
+            <span>木作</span><span>纸艺</span><span>传统美食</span><span>民俗影像</span>
+          </div>
+          <div class="category-links"><span>▣ 专题</span><span>⚑ 活动</span><span>▤ 文化地图</span><span>▶ 课堂</span></div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    category = st.pills(
         "内容分区",
         ("首页", "热门", "手艺现场", "人物故事", "工序观察", "文化知识"),
-        horizontal=True,
+        default="首页",
         label_visibility="collapsed",
     )
+    category = category or "首页"
     st.markdown(
         '<div class="channel-banner"><div><small>本周专题</small><strong>手艺，值得被完整地看见。</strong>'
         "<span>从短视频出发，认识一门技艺的过程、人物与心意。</span></div>"
