@@ -5,6 +5,8 @@ from haha_media.script_writer import ContentBrief, generate_content_script
 def test_media_stories_have_unique_slugs() -> None:
     assert len(STORIES) >= 5
     assert len({story.slug for story in STORIES}) == len(STORIES)
+    assert all(story.author and story.region for story in STORIES)
+    assert all(story.views and story.interactions for story in STORIES)
 
 
 def test_script_generator_creates_a_claim_cautious_shooting_package() -> None:

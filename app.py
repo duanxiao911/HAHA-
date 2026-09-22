@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 import streamlit as st
 
 from haha_media.feed import STORIES
@@ -39,7 +41,7 @@ def main() -> None:
 
 def _render_top_navigation(module: str) -> None:
     navigation, search, script, user, publish = st.columns(
-        (2.15, 1.25, 0.55, 0.36, 0.48), vertical_alignment="center"
+        (2.05, 1.2, 0.5, 0.82, 0.43), vertical_alignment="center"
     )
     with navigation:
         st.markdown(
@@ -61,7 +63,11 @@ def _render_top_navigation(module: str) -> None:
         if st.button("AI 脚本", width="stretch"):
             _navigate("script")
     with user:
-        st.button("用户", width="stretch", disabled=True)
+        st.markdown(
+            '<div class="header-tools"><span>消息</span><span>收藏</span>'
+            '<span>历史</span><a href="?module=profile">用户</a></div>',
+            unsafe_allow_html=True,
+        )
     with publish:
         if st.button("＋ 投稿", width="stretch"):
             _navigate("publish")
@@ -141,6 +147,9 @@ def _render_community_feed() -> None:
     _render_channel_section("🔥 正在热门", STORIES, "hot")
     _render_channel_section("刺绣 · 一针一线里的故事", STORIES, "embroidery")
     _render_channel_section("陶艺 · 泥土与火的相遇", tuple(reversed(STORIES)), "pottery")
+    _render_region_discovery()
+    _render_special_topics()
+    _render_ai_learning()
     _render_published_posts()
     if response := st.session_state.get("media_response"):
         st.markdown("### HAHA 正在为你展开")
@@ -156,13 +165,10 @@ def _render_daily_feature() -> None:
     with featured:
         story = STORIES[0]
         with st.container(border=True):
-            st.markdown(
-                story.cover_markup.replace("cover red", "cover red featured-cover"),
-                unsafe_allow_html=True,
-            )
+            st.markdown(_video_thumbnail(story, featured=True), unsafe_allow_html=True)
             st.caption(f"今日大推荐 · {story.duration}")
             st.markdown(f"### {story.title}")
-            st.write(story.summary)
+            st.caption(f"{story.author} · {story.region}")
     with recommendations:
         stories = (STORIES[1:] + STORIES[:2])[:6]
         columns = st.columns(3, gap="medium")
@@ -188,12 +194,91 @@ def _render_card_row(stories: tuple, *, prefix: str) -> None:
 
 
 def _render_compact_card(story, key: str) -> None:
-    with st.container(border=True):
-        st.markdown(story.cover_markup, unsafe_allow_html=True)
-        st.markdown(f"**{story.title}**")
-        st.caption(f"{story.category} · {story.duration}")
-        if st.button("观看", key=key, width="stretch"):
-            st.session_state["media_response"] = story.ai_answer
+    st.markdown(
+        '<article class="video-card">'
+        f"{_video_thumbnail(story)}<h3>{escape(story.title)}</h3>"
+        f"<p>{escape(story.author)} · {escape(story.region)}</p></article>",
+        unsafe_allow_html=True,
+    )
+
+
+def _video_thumbnail(story, *, featured: bool = False) -> str:
+    cover = story.cover_markup
+    if featured:
+        cover = cover.replace('class="cover ', 'class="cover featured-cover ', 1)
+    overlay = (
+        '<div class="video-overlay"><span>'
+        f"▶ {escape(story.views)}　♡ {escape(story.interactions)}</span>"
+        f'<b>{escape(story.duration)}</b></div><div class="play-mark">▶</div>'
+    )
+    return cover.replace("</div>", f"{overlay}</div>", 1)
+
+
+def _render_region_discovery() -> None:
+    st.markdown(
+        '<div class="section-title"><h2>按地区发现非遗</h2>'
+        '<a href="?module=media">进入文化地图 ></a></div>',
+        unsafe_allow_html=True,
+    )
+    regions = (
+        ("云南", "扎染与民族纹样", "24 个项目"),
+        ("贵州", "苗绣与银饰", "19 个项目"),
+        ("四川", "竹编与蜀绣", "27 个项目"),
+        ("浙江", "木作与织造", "31 个项目"),
+        ("福建", "漆艺与传统建筑", "22 个项目"),
+    )
+    columns = st.columns(5, gap="medium")
+    for column, (name, craft, count) in zip(columns, regions, strict=True):
+        with column:
+            st.markdown(
+                f'<article class="region-card"><span>{escape(count)}</span>'
+                f"<h3>{escape(name)}</h3><p>{escape(craft)}</p></article>",
+                unsafe_allow_html=True,
+            )
+
+
+def _render_special_topics() -> None:
+    st.markdown(
+        '<div class="section-title"><h2>专题策展</h2><a href="?module=media">查看全部 ></a></div>',
+        unsafe_allow_html=True,
+    )
+    topics = (
+        ("中国蓝染地图", "从植物染料到地方生活", "indigo"),
+        ("100 位年轻传承人", "传统技艺的新一代表达", "vermilion"),
+        ("从泥土到瓷器", "跟随火候看见时间", "earth"),
+    )
+    columns = st.columns(3, gap="large")
+    for column, (title, copy, tone) in zip(columns, topics, strict=True):
+        with column:
+            st.markdown(
+                f'<article class="topic-card {tone}"><span>HAHA CURATION</span>'
+                f"<h3>{escape(title)}</h3><p>{escape(copy)}</p></article>",
+                unsafe_allow_html=True,
+            )
+
+
+def _render_ai_learning() -> None:
+    st.markdown('<div class="section-title"><h2>跟 AI 学非遗</h2></div>', unsafe_allow_html=True)
+    tools = (
+        ("问 AI", "苗绣和苏绣有什么区别？", "问一个文化问题"),
+        ("学习专题", "5 分钟认识蓝染", "从一条学习路径开始"),
+        ("AI 识图", "拍一件器物，看看它可能来自哪里", "识别结果仅作探索提示"),
+    )
+    columns = st.columns(3, gap="large")
+    for column, (title, example, note) in zip(columns, tools, strict=True):
+        with column:
+            st.markdown(
+                '<article class="ai-tool"><span>AI CULTURE TOOL</span>'
+                f"<h3>{escape(title)}</h3><strong>{escape(example)}</strong>"
+                f"<p>{escape(note)}</p></article>",
+                unsafe_allow_html=True,
+            )
+    st.markdown(
+        '<footer class="site-footer"><strong>HAHA 飞颐</strong>'
+        "<span>让非遗被看见、被理解、被继续创造。</span>"
+        "<small>比赛 MVP · 演示内容</small></footer>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_category_hub(active_key: str) -> None:
