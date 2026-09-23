@@ -2,3 +2,4 @@ __pycache__/
 *.py[cod]
 .pytest_tmp/
 .streamlit/
+model-config.ps1
