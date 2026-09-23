@@ -244,7 +244,7 @@ def _render_script_workspace_shell() -> None:
         '<div class="project-status"><span><i></i>已自动保存</span><b>未命名项目</b>'
         '<button aria-label="更多项目操作">•••</button></div></div>'
         '<div class="script-header-copy"><h1>把一个想法变成可拍、可审、可发布的内容</h1>'
-        "<p>事实库 × 创作方法库 × 运营策略库</p></div></header>",
+        "<p>创作方法库 × 运营策略库 × 多模型内容制作</p></div></header>",
         unsafe_allow_html=True,
     )
     _render_creator_steps(stage)
@@ -253,136 +253,153 @@ def _render_script_workspace_shell() -> None:
 
 def _render_script_creator_horizontal() -> None:
     script = st.session_state.get("generated_script")
-    canvas, review = st.columns((1, 0.38), gap="large")
-    with canvas:
-        st.markdown(
-            '<div class="studio-column-title workspace-marker"><b><i>02</i>AI 创作工作区</b>'
-            "<span>从创作判断开始，逐步完成脚本、分镜与发布适配。</span></div>",
-            unsafe_allow_html=True,
-        )
-        if isinstance(script, ContentScript):
-            _render_script(script)
-        else:
-            st.markdown(
-                '<div class="studio-empty"><div class="weave-icon">✦</div><b>从一个想法开始</b>'
-                "<span>完成下方创作设定后，AI 会先分析内容方向，再生成完整创作方案。</span>"
-                '<div class="ability-grid"><em>◇<b>创作判断</b></em><em>⌁<b>结构规划</b></em>'
-                "<em>▦<b>分镜生成</b></em><em>↗<b>发布适配</b></em></div></div>",
-                unsafe_allow_html=True,
+    st.markdown('<div class="conversation-marker"></div>', unsafe_allow_html=True)
+    tool_a, tool_b, tool_c, tool_d = st.columns((1, 1, 1, 3.2), gap="small")
+    with tool_a:
+        with st.popover("⚙ 创作参数", use_container_width=True):
+            generated, brief = _render_compact_creator_settings()
+    with tool_b:
+        with st.popover("▧ 素材资产", use_container_width=True):
+            st.markdown("**人物、作品与场景参考**")
+            st.file_uploader(
+                "上传参考图片",
+                type=("png", "jpg", "jpeg", "webp"),
+                accept_multiple_files=True,
+                key="creator_assets",
             )
-    with review:
+            st.caption("后续首帧与视频生成将复用这些资产，保持人物、作品和场景一致。")
+    with tool_c:
+        with st.popover("◇ 知识与 Run", use_container_width=True):
+            _render_review_panel(script if isinstance(script, ContentScript) else None)
+    with tool_d:
+        mode = "真实 API" if isinstance(script, ContentScript) and script.model_evidence else "工作台待命"
         st.markdown(
-            '<div class="studio-column-title review-marker"><b><i>03</i>判断与审核</b>'
-            "<span>核对事实来源、文化风险与平台适配度。</span></div>",
+            f'<div class="conversation-status"><i></i><b>{mode}</b><span>对话驱动 · 参数随时可调</span></div>',
             unsafe_allow_html=True,
         )
-        _render_review_panel(script if isinstance(script, ContentScript) else None)
 
+    if generated and brief is not None:
+        _run_creator_generation(brief)
+
+    messages = st.session_state.setdefault("creator_messages", [])
+    if not messages and not isinstance(script, ContentScript):
+        st.markdown(
+            '<section class="conversation-welcome"><span>HAHA AI CREATOR</span>'
+            '<h2>从一句话开始，共同完成一条内容</h2>'
+            '<p>可以直接描述想法，也可以先在“创作参数”中设定平台、受众和画幅。</p>'
+            '<div><em>帮我做一条白族扎染科普</em><em>把这段故事改成 45 秒短视频</em>'
+            '<em>先生成分镜，再做首帧</em><em>根据参考图保持人物一致</em></div></section>',
+            unsafe_allow_html=True,
+        )
+
+    for message in messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if isinstance(script, ContentScript):
+        with st.chat_message("assistant", avatar="🤖"):
+            st.markdown("我已经结合创作方法库和运营策略库完成了本轮内容方案。")
+            _render_script(script)
+            if st.session_state.get("creator_stage") != "judgment":
+                _render_visual_production_cards(script)
+
+    prompt = st.chat_input("告诉 HAHA 你想创作什么，或继续修改当前方案……")
+    if prompt:
+        messages.append({"role": "user", "content": prompt})
+        current_script = st.session_state.get("generated_script")
+        if isinstance(current_script, ContentScript):
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": "收到。我会保留当前知识依据，把你的要求应用到下一轮生成。",
+                }
+            )
+        else:
+            brief = _brief_from_conversation(prompt)
+            _run_creator_generation(brief)
+        st.rerun()
+
+
+def _render_compact_creator_settings() -> tuple[bool, ContentBrief | None]:
+    with st.form("conversation_creator_settings", border=False):
+        craft = st.text_input("创作主题", placeholder="白族扎染、龙泉青瓷、竹编")
+        story_seed = st.text_area("想讲的一个瞬间", height=84)
+        goals = st.multiselect(
+            "内容目标",
+            ("文化科普", "人物故事", "工艺展示", "情绪表达", "商品故事", "收藏型内容"),
+            default=("文化科普",),
+            max_selections=2,
+        )
+        audience = st.selectbox(
+            "目标受众",
+            ("第一次接触非遗的人", "年轻学生", "传统文化爱好者", "手作爱好者", "海外中国文化兴趣用户"),
+        )
+        first, second = st.columns(2)
+        platform = first.selectbox("发布平台", ("抖音", "小红书", "B站", "视频号", "TikTok"), index=1)
+        duration = second.selectbox("时长", ("15秒", "30秒", "45秒", "60秒", "90秒"), index=2)
+        aspect = first.selectbox("画幅", ("9:16", "16:9", "1:1", "3:4"))
+        tone = second.selectbox("表达气质", ("安静观察", "纪录片", "年轻轻快", "人物纪实", "诗意东方", "工艺满足感"))
+        generated = st.form_submit_button("生成创作判断", type="primary", width="stretch")
+    if not generated:
+        return False, None
+    return True, ContentBrief(
+        craft,
+        story_seed,
+        audience,
+        platform,
+        tone,
+        " + ".join(goals) or "文化科普",
+        duration,
+        aspect,
+    )
+
+
+def _brief_from_conversation(prompt: str) -> ContentBrief:
+    topic = prompt.strip()[:32]
+    return ContentBrief(
+        topic,
+        prompt.strip(),
+        "第一次接触非遗的人",
+        "小红书",
+        "安静观察",
+    )
+
+
+def _run_creator_generation(brief: ContentBrief) -> None:
+    try:
+        try:
+            script = generate_content_script_with_model(brief)
+            st.session_state["model_run_mode"] = "api"
+        except ValueError:
+            script = generate_content_script(brief)
+            st.session_state["model_run_mode"] = "local"
+        st.session_state["generated_script"] = script
+        st.session_state["creator_stage"] = "judgment"
+        st.session_state.setdefault("creator_messages", []).append(
+            {"role": "assistant", "content": "已完成创作判断。请确认方向，或直接告诉我需要怎样修改。"}
+        )
+        st.rerun()
+    except (ValueError, ModelCallError) as exc:
+        st.warning(str(exc))
+
+
+def _render_visual_production_cards(script: ContentScript) -> None:
+    st.markdown("### 继续制作")
     st.markdown(
-        '<div class="settings-console-head settings-console-marker"><b><i>01</i>创作设定</b>'
-        "<span>定义这次内容要讲什么、讲给谁、用什么规格生成。</span></div>",
+        '<div class="production-flow">'
+        '<article class="ready"><i>05</i><b>视觉资产</b><span>参考图与角色资产</span><em>可配置</em></article>'
+        '<article><i>06</i><b>分镜首帧</b><span>Seedream 图片任务</span><em>待生成</em></article>'
+        '<article><i>07</i><b>镜头视频</b><span>逐镜头视频任务</span><em>待生成</em></article>'
+        '<article><i>08</i><b>成片制作</b><span>配音、字幕与剪辑</span><em>待制作</em></article>'
+        '</div>',
         unsafe_allow_html=True,
     )
-    with st.form("script_creator_horizontal", border=False):
-        core, audience_panel, spec_panel, style_panel = st.columns(4, gap="large")
-        with core:
-            st.markdown('<div class="form-group-title">A · 创作核心</div>', unsafe_allow_html=True)
-            craft = st.text_input("创作主题", placeholder="白族扎染、龙泉青瓷、竹编或某位传承人")
-            story_seed = st.text_area(
-                "想讲的一个瞬间", placeholder="师傅把刚染好的布从染缸里缓慢提起。", height=104
-            )
-        with audience_panel:
-            st.markdown(
-                '<div class="form-group-title">B · 受众与平台</div>', unsafe_allow_html=True
-            )
-            goals = st.multiselect(
-                "内容目标（最多两项）",
-                (
-                    "文化科普",
-                    "人物故事",
-                    "工艺展示",
-                    "情绪表达",
-                    "活动宣传",
-                    "商品故事",
-                    "引流涨粉",
-                    "收藏型内容",
-                ),
-                default=("文化科普",),
-                max_selections=2,
-            )
-            audience = st.selectbox(
-                "目标受众",
-                (
-                    "第一次接触非遗的人",
-                    "年轻学生",
-                    "传统文化爱好者",
-                    "手作爱好者",
-                    "旅游人群",
-                    "亲子家庭",
-                    "设计师 / 创作者",
-                    "海外中国文化兴趣用户",
-                ),
-            )
-            platform = st.selectbox(
-                "发布平台", ("抖音", "小红书", "B站", "视频号", "TikTok"), index=1
-            )
-        with spec_panel:
-            st.markdown('<div class="form-group-title">C · 成片规格</div>', unsafe_allow_html=True)
-            spec_a, spec_b = st.columns(2)
-            duration = spec_a.selectbox(
-                "成片时长", ("15秒", "30秒", "45秒", "60秒", "90秒"), index=2
-            )
-            aspect = spec_b.selectbox("画幅", ("9:16", "16:9", "1:1", "3:4"))
-            content_count = st.selectbox("内容数量", ("单条内容", "3条系列", "5条系列"))
-        with style_panel:
-            st.markdown(
-                '<div class="form-group-title">D · 风格与生成</div>', unsafe_allow_html=True
-            )
-            tone = st.selectbox(
-                "表达气质",
-                (
-                    "安静观察",
-                    "纪录片",
-                    "年轻轻快",
-                    "人物纪实",
-                    "诗意东方",
-                    "工艺满足感",
-                    "悬念探索",
-                    "知识科普",
-                    "温暖治愈",
-                    "真实粗粝",
-                ),
-            )
-            fact_level = st.select_slider(
-                "事实严格度", ("创意优先", "平衡", "严格考据"), value="平衡"
-            )
-            model_tier = st.radio("生成模式", ("快速", "标准", "精创"), index=1, horizontal=True)
-            generated = st.form_submit_button("✦ 生成本次创作判断", type="primary", width="stretch")
-    if generated:
-        try:
-            brief = ContentBrief(
-                    craft,
-                    story_seed,
-                    audience,
-                    platform,
-                    tone,
-                    " + ".join(goals) or "文化科普",
-                    duration,
-                    aspect,
-                    content_count,
-                    fact_level,
-                    model_tier,
-                )
-            try:
-                st.session_state["generated_script"] = generate_content_script_with_model(brief)
-                st.session_state["model_run_mode"] = "api"
-            except ValueError:
-                st.session_state["generated_script"] = generate_content_script(brief)
-                st.session_state["model_run_mode"] = "local"
-            st.session_state["creator_stage"] = "judgment"
-            st.rerun()
-        except (ValueError, ModelCallError) as exc:
-            st.warning(str(exc))
+    shot_count = len(script.storyboard)
+    st.caption(f"当前方案包含 {shot_count} 个结构化镜头。先确认参考资产，再批量生成首帧。")
+    first, second, third = st.columns(3)
+    first.button("生成全部首帧", width="stretch", disabled=True, help="待接入生图任务队列")
+    second.button("创建视频任务", width="stretch", disabled=True, help="待接入视频生成模型")
+    third.button("进入成片制作", width="stretch", disabled=True, help="待接入配音与剪辑流水线")
 
 
 def _render_community_feed() -> None:
@@ -880,7 +897,7 @@ def _render_script(script: ContentScript) -> None:
     if stage == "judgment":
         confirm, reset = st.columns(2)
         if confirm.button("确认并生成完整脚本", type="primary", width="stretch"):
-            st.session_state["creator_stage"] = "script"
+            st.session_state["creator_stage"] = "master"
             st.rerun()
         if reset.button("修改设定 / 重新判断", width="stretch"):
             st.session_state.pop("generated_script", None)
