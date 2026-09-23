@@ -214,11 +214,11 @@ def _render_creator_route(space: str) -> None:
 def _render_script_workspace_shell() -> None:
     st.markdown(
         '<header class="script-app-header"><details class="drawer-menu"><summary>☰</summary>'
-        '<div class="drawer-scrim"></div><aside><div class="drawer-brand">HAHA<span>创作中心</span></div>'
+        '<div class="drawer-scrim"></div><div class="drawer-panel"><div class="drawer-brand">HAHA<span>创作中心</span></div>'
         '<a class="active" href="?space=script">✦ 创作工作台</a><a>▤ 内容管理</a>'
-        "<a>⌁ 数据中心</a><a>◌ 互动管理</a><a>◇ 文化审核</a><hr>"
+        '<a>⌁ 数据中心</a><a>◌ 互动管理</a><a>◇ 文化审核</a><div class="drawer-divider"></div>'
         '<a href="?space=community">← 返回社区</a><a href="?space=publish">视频投稿</a>'
-        '<a class="primary" href="?space=script">图文脚本</a></aside></details>'
+        '<a class="primary" href="?space=script">图文脚本</a></div></details>'
         '<div class="script-header-brand"><b>HAHA 创作中心</b><span>人工智能创意工作室 · V2.0</span></div>'
         '<div class="project-status"><span>● 已自动保存</span><b>未命名项目</b><button>•••</button></div>'
         '<div class="script-header-copy"><h1>把一个想法变成可拍、可审、可发布的内容</h1>'
