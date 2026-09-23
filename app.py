@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
+import sys
 from html import escape
+from pathlib import Path
 
-import streamlit as st
-import streamlit.components.v1 as components
+# Keep the local ``src`` package importable when Streamlit launches this file
+# directly (including desktop preview sessions that do not set PYTHONPATH).
+SRC_DIR = Path(__file__).resolve().parent / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-from haha_media.feed import STORIES
-from haha_media.script_writer import ContentBrief, ContentScript, generate_content_script
-from haha_media.theme import apply_theme
+import streamlit as st  # noqa: E402
+import streamlit.components.v1 as components  # noqa: E402
+
+from haha_media.feed import STORIES  # noqa: E402
+from haha_media.script_writer import (  # noqa: E402
+    ContentBrief,
+    ContentScript,
+    generate_content_script,
+)
+from haha_media.theme import apply_theme  # noqa: E402
 
 CATEGORY_LABELS = {
     "all": "首页",
