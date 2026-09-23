@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from haha_media.knowledge import (
+    RetrievalTrace,
+    build_retrieval_trace,
+    retrieve_creative_methods,
+    retrieve_operation_strategies,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ContentBrief:
@@ -36,6 +43,10 @@ class ContentScript:
     sources: tuple[str, ...] = ()
     audits: tuple[tuple[str, str], ...] = ()
     operation_scores: tuple[tuple[str, str], ...] = ()
+    method_sources: tuple[tuple[str, str], ...] = ()
+    strategy_sources: tuple[tuple[str, str], ...] = ()
+    fact_checks: tuple[str, ...] = ()
+    retrieval_trace: RetrievalTrace | None = None
 
 
 def generate_content_script(brief: ContentBrief) -> ContentScript:
@@ -45,6 +56,20 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
     if not craft:
         raise ValueError("请先填写要讲述的技艺或作品名称。")
     context = story_seed or "一位手艺人与一件正在完成的作品"
+    user_query = " ".join(
+        (craft, context, brief.goal, brief.audience, brief.platform, brief.duration, brief.aspect_ratio, brief.tone)
+    )
+    creative_query = " ".join(
+        (craft, "传统工艺短视频", context, brief.duration, brief.tone, "手部动作 镜头 结构化分镜 人物一致性")
+    )
+    operation_query = " ".join(
+        (brief.platform, brief.goal, brief.audience, brief.duration, brief.aspect_ratio, "前三秒 Hook 标题 封面 互动")
+    )
+    creative_hits = retrieve_creative_methods(creative_query, limit=5)
+    operation_hits = retrieve_operation_strategies(operation_query, limit=5)
+    trace = build_retrieval_trace(
+        user_query, creative_query, operation_query, creative_hits, operation_hits
+    )
     title = f"{craft}：把时间留在手上"
     hook = f"你见过 {craft} 的这一刻吗？先别急着划走。"
     voiceover = (
@@ -67,6 +92,8 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
     )
     tags = ("#非遗", f"#{craft}", "#传统技艺", "#手艺人的一天")
     structure = "视觉钩子 → 工艺过程 → 人物细节 → 文化知识 → 情绪收尾"
+    method_summary = "、".join(hit.chunk.title for hit in creative_hits[:3])
+    strategy_summary = "、".join(hit.chunk.title for hit in operation_hits[:3])
     judgment = (
         ("创作主体", craft),
         ("内容类型", brief.goal),
@@ -74,6 +101,8 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
         ("推荐平台", brief.platform),
         ("推荐规格", f"{brief.duration} · {brief.aspect_ratio}"),
         ("内容结构", structure),
+        ("创作方法", method_summary),
+        ("运营策略", strategy_summary),
         ("核心卖点", f"“{context}”具备清晰动作和材料变化，适合作为视觉记忆点。"),
         ("事实风险", "当前演示资料不足以确认具体起源年代与代表人物，不建议自行补写。"),
     )
@@ -151,11 +180,7 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
     )
     covers = (f"{craft}成形的一刻", "手艺不会说话，细节会", "这一瞬间值得被看见")
     interactions = ("你最想继续看哪一道工序？", "下一次想认识哪一门手艺？")
-    sources = (
-        "HAHA 非遗事实库 · 项目基础条目（演示）",
-        "创作者现场资料 · 待补充",
-        "平台运营策略库 · 规则模板",
-    )
+    sources = ("当前未接入非遗事实库", "创作者现场资料 · 待补充并核验")
     audits = (
         ("通过", "项目名称在全文保持一致"),
         ("需确认", "地域、非遗级别与代表人物尚未提供权威来源"),
@@ -168,6 +193,13 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
         ("收藏价值", "中"),
         ("评论潜力", "中"),
         ("知识价值", "中"),
+    )
+    method_sources = tuple((hit.chunk.id, hit.chunk.title) for hit in creative_hits)
+    strategy_sources = tuple((hit.chunk.id, hit.chunk.title) for hit in operation_hits)
+    fact_checks = (
+        f"{craft} 的起源年代、地域归属与非遗级别",
+        "具体人物身份、传承关系及代表性称号",
+        "材料、工序与纹样含义等客观工艺陈述",
     )
     return ContentScript(
         title,
@@ -184,4 +216,8 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
         sources,
         audits,
         operation_scores,
+        method_sources,
+        strategy_sources,
+        fact_checks,
+        trace,
     )

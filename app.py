@@ -966,26 +966,33 @@ def _render_review_panel(script: ContentScript | None) -> None:
     if script is None:
         st.markdown(
             '<div class="review-empty"><span>生成后将在这里显示</span>'
-            "<div>↗ <b>事实来源</b><small>引用与资料日期</small></div>"
-            "<div>✓ <b>文化审核</b><small>名称、地域与工艺</small></div>"
-            "<div>⚠ <b>风险提示</b><small>待确认与错误表述</small></div>"
+            "<div>◇ <b>方法依据</b><small>创作方法知识库</small></div>"
+            "<div>↗ <b>策略依据</b><small>运营策略知识库</small></div>"
+            "<div>⚠ <b>待事实核验</b><small>当前未接入事实知识库</small></div>"
             "<div>◆ <b>运营建议</b><small>平台与内容判断</small></div></div>",
             unsafe_allow_html=True,
         )
         return
-    st.markdown("#### 事实来源")
-    for source in script.sources:
-        st.markdown(f'<div class="source-item">↗ {escape(source)}</div>', unsafe_allow_html=True)
-    st.caption("演示来源不等同于权威引用，正式发布前需补充链接与审核状态。")
-    st.markdown("#### 文化审核")
-    status_class = {"通过": "pass", "需确认": "check", "风险": "risk", "错误": "error"}
-    for status, message in script.audits:
+    st.markdown(f"#### 方法依据 · {len(script.method_sources)} 条")
+    for chunk_id, title in script.method_sources:
         st.markdown(
-            f'<div class="audit-item {status_class.get(status, "check")}"><b>{escape(status)}</b>'
-            f"<span>{escape(message)}</span></div>",
+            f'<div class="source-item"><b>[{escape(chunk_id)}]</b> {escape(title)}</div>',
             unsafe_allow_html=True,
         )
-    st.markdown("#### 运营判断")
+    st.markdown(f"#### 策略依据 · {len(script.strategy_sources)} 条")
+    for chunk_id, title in script.strategy_sources:
+        st.markdown(
+            f'<div class="source-item"><b>[{escape(chunk_id)}]</b> {escape(title)}</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown("#### 待事实核验")
+    st.caption("当前未接入非遗事实知识库，以下内容不得作为确定事实直接发布。")
+    for item in script.fact_checks:
+        st.markdown(
+            f'<div class="audit-item risk"><b>待核验</b><span>{escape(item)}</span></div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown("#### 运营建议")
     st.markdown(
         '<div class="operation-grid">'
         + "".join(
@@ -996,6 +1003,16 @@ def _render_review_panel(script: ContentScript | None) -> None:
         unsafe_allow_html=True,
     )
     st.info("建议先展示关键动作，再进入文化背景，避免前三秒信息量过大。")
+    if script.retrieval_trace:
+        with st.expander("查看本次知识调用详情"):
+            st.caption(f"生成记录：{script.retrieval_trace.generation_id}")
+            st.code(
+                "CREATIVE_METHOD_CONTEXT\n"
+                + script.retrieval_trace.creative_query
+                + "\n\nOPERATION_STRATEGY_CONTEXT\n"
+                + script.retrieval_trace.operation_query,
+                language=None,
+            )
 
 
 if __name__ == "__main__":
