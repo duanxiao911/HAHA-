@@ -16,10 +16,12 @@ import streamlit as st  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 
 from haha_media.feed import STORIES  # noqa: E402
+from haha_media.model_router import ModelCallError  # noqa: E402
 from haha_media.script_writer import (  # noqa: E402
     ContentBrief,
     ContentScript,
     generate_content_script,
+    generate_content_script_with_model,
 )
 from haha_media.theme import apply_theme  # noqa: E402
 
@@ -358,8 +360,7 @@ def _render_script_creator_horizontal() -> None:
             generated = st.form_submit_button("✦ 生成本次创作判断", type="primary", width="stretch")
     if generated:
         try:
-            st.session_state["generated_script"] = generate_content_script(
-                ContentBrief(
+            brief = ContentBrief(
                     craft,
                     story_seed,
                     audience,
@@ -372,10 +373,15 @@ def _render_script_creator_horizontal() -> None:
                     fact_level,
                     model_tier,
                 )
-            )
+            try:
+                st.session_state["generated_script"] = generate_content_script_with_model(brief)
+                st.session_state["model_run_mode"] = "api"
+            except ValueError:
+                st.session_state["generated_script"] = generate_content_script(brief)
+                st.session_state["model_run_mode"] = "local"
             st.session_state["creator_stage"] = "judgment"
             st.rerun()
-        except ValueError as exc:
+        except (ValueError, ModelCallError) as exc:
             st.warning(str(exc))
 
 
@@ -779,8 +785,7 @@ def _render_script_creator() -> None:
                 progress.write("✓ 正在查找相关非遗资料")
                 progress.write("✓ 正在匹配创作方法")
                 progress.write("✓ 正在匹配平台运营策略")
-                st.session_state["generated_script"] = generate_content_script(
-                    ContentBrief(
+                brief = ContentBrief(
                         craft,
                         story_seed,
                         audience,
@@ -793,11 +798,16 @@ def _render_script_creator() -> None:
                         fact_level,
                         model_tier,
                     )
-                )
+                try:
+                    st.session_state["generated_script"] = generate_content_script_with_model(brief)
+                    st.session_state["model_run_mode"] = "api"
+                except ValueError:
+                    st.session_state["generated_script"] = generate_content_script(brief)
+                    st.session_state["model_run_mode"] = "local"
                 progress.write("✓ 正在设计内容结构并进行文化核验")
                 progress.update(label="创作判断已完成", state="complete", expanded=False)
             st.session_state["creator_stage"] = "judgment"
-        except ValueError as exc:
+        except (ValueError, ModelCallError) as exc:
             st.warning(str(exc))
     script = st.session_state.get("generated_script")
     with canvas:
@@ -1025,6 +1035,16 @@ def _render_run_evidence(script: ContentScript) -> None:
         f'<em>{score_lookup.get(chunk_id, 0):.3f}</em></li>'
         for chunk_id, title in script.strategy_sources
     )
+    model = script.model_evidence
+    model_evidence = (
+        '<div class="model-evidence verified"><b>真实模型 API</b>'
+        f'<span>{escape(model.provider)} · {escape(model.model)}</span>'
+        f'<dl><dt>Request ID</dt><dd>{escape(model.request_id)}</dd>'
+        f'<dt>Token</dt><dd>{model.input_tokens} 输入 / {model.output_tokens} 输出</dd>'
+        f'<dt>耗时</dt><dd>{model.latency_ms} ms</dd></dl></div>'
+        if model
+        else '<div class="model-evidence local"><b>本地演示生成</b><span>未发生模型 API 调用</span></div>'
+    )
     st.markdown(
         '<section class="run-evidence verified">'
         '<div class="run-evidence-head"><span><i></i>RUN 已验证</span><b>双库调用成功</b></div>'
@@ -1032,7 +1052,8 @@ def _render_run_evidence(script: ContentScript) -> None:
         f'<span><b>{len(script.method_sources)}</b>方法命中</span>'
         f'<span><b>{len(script.strategy_sources)}</b>策略命中</span>'
         '<span><b>2</b>独立查询</span></div>'
-        f'<dl><dt>Run ID</dt><dd>{escape(trace.generation_id)}</dd>'
+        + model_evidence
+        + f'<dl><dt>Run ID</dt><dd>{escape(trace.generation_id)}</dd>'
         f'<dt>知识版本</dt><dd>{escape(trace.document_version)}</dd>'
         f'<dt>运行时间</dt><dd>{escape(trace.created_at)}</dd></dl>'
         '<div class="run-query"><b>Creative Query</b>'

@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
 
 from haha_media.knowledge import (
+    CREATIVE_METHOD_CHUNKS,
+    OPERATION_STRATEGY_CHUNKS,
     RetrievalTrace,
     build_retrieval_trace,
     retrieve_creative_methods,
     retrieve_operation_strategies,
 )
+from haha_media.model_router import CallEvidence, ModelRouter, get_model_router
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +51,7 @@ class ContentScript:
     strategy_sources: tuple[tuple[str, str], ...] = ()
     fact_checks: tuple[str, ...] = ()
     retrieval_trace: RetrievalTrace | None = None
+    model_evidence: CallEvidence | None = None
 
 
 def generate_content_script(brief: ContentBrief) -> ContentScript:
@@ -220,4 +225,73 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
         strategy_sources,
         fact_checks,
         trace,
+    )
+
+
+def generate_content_script_with_model(
+    brief: ContentBrief, router: ModelRouter | None = None
+) -> ContentScript:
+    """Generate through the configured model while preserving KB and audit evidence."""
+    base = generate_content_script(brief)
+    active_router = router or get_model_router()
+    if not active_router.status().text_ready:
+        raise ValueError("尚未配置可用的 DeepSeek API。")
+    method_lookup = {chunk.id: chunk for chunk in CREATIVE_METHOD_CHUNKS}
+    strategy_lookup = {chunk.id: chunk for chunk in OPERATION_STRATEGY_CHUNKS}
+    method_context = "\n\n".join(
+        f"[{chunk_id}] {method_lookup[chunk_id].title}\n{method_lookup[chunk_id].content}"
+        for chunk_id, _ in base.method_sources
+        if chunk_id in method_lookup
+    )
+    strategy_context = "\n\n".join(
+        f"[{chunk_id}] {strategy_lookup[chunk_id].title}\n{strategy_lookup[chunk_id].content}"
+        for chunk_id, _ in base.strategy_sources
+        if chunk_id in strategy_lookup
+    )
+    system_prompt = """你是 HAHA AI 图文脚本创作系统。你会收到两个严格分区的知识上下文。
+CREATIVE_METHOD_CONTEXT 只回答怎么创作；OPERATION_STRATEGY_CONTEXT 只回答怎么适配平台和受众。
+它们都不是非遗事实来源。不得自行确认历史、地域、人物身份、非遗级别或起源年代；相关陈述必须标记待事实核验。
+请只输出合法 JSON，不要输出 Markdown。JSON 必须包含 title、hook、voiceover、shots、caption、tags 六个字段。
+voiceover 和 shots 必须是字符串数组，tags 也是字符串数组。"""
+    user_prompt = f"""创作设定：
+{json.dumps({"主题": brief.craft, "瞬间": brief.story_seed, "受众": brief.audience, "平台": brief.platform, "气质": brief.tone, "目标": brief.goal, "时长": brief.duration, "画幅": brief.aspect_ratio}, ensure_ascii=False)}
+
+<CREATIVE_METHOD_CONTEXT>
+{method_context}
+</CREATIVE_METHOD_CONTEXT>
+
+<OPERATION_STRATEGY_CONTEXT>
+{strategy_context}
+</OPERATION_STRATEGY_CONTEXT>
+
+生成一份可拍摄的短内容方案。不要添加上下文没有提供的文化事实。"""
+    result = active_router.generate_json(
+        "creation_judgement",
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.35,
+        max_tokens=4096,
+    )
+    data = result.data
+
+    def text_value(key: str, fallback: str) -> str:
+        value = data.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else fallback
+
+    def tuple_value(key: str, fallback: tuple[str, ...], minimum: int = 1) -> tuple[str, ...]:
+        value = data.get(key)
+        if not isinstance(value, list):
+            return fallback
+        items = tuple(str(item).strip() for item in value if str(item).strip())
+        return items if len(items) >= minimum else fallback
+
+    return replace(
+        base,
+        title=text_value("title", base.title),
+        hook=text_value("hook", base.hook),
+        voiceover=tuple_value("voiceover", base.voiceover, 3),
+        shots=tuple_value("shots", base.shots, 3),
+        caption=text_value("caption", base.caption),
+        tags=tuple_value("tags", base.tags, 2),
+        model_evidence=result.evidence,
     )

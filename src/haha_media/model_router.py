@@ -97,15 +97,26 @@ class ModelRouter:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
+            "thinking": {"type": "disabled"},
         }
         response, headers, latency = self._post_json(
             f"{self.deepseek_base_url}/chat/completions", self.deepseek_api_key, payload
         )
         try:
-            content = response["choices"][0]["message"]["content"]
-            data = json.loads(content)
+            choice = response["choices"][0]
+            content = choice["message"]["content"].strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            data = json.loads(content.strip())
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-            raise ModelCallError("DeepSeek 返回了无法解析的结构化结果。") from exc
+            finish_reason = response.get("choices", [{}])[0].get("finish_reason", "unknown")
+            raise ModelCallError(
+                f"DeepSeek 返回了无法解析的结构化结果（finish_reason={finish_reason}）。"
+            ) from exc
         usage = response.get("usage", {})
         evidence = CallEvidence(
             provider="deepseek",
