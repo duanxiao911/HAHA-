@@ -330,21 +330,21 @@ def _render_script_creator_horizontal() -> None:
                 if st.session_state.get("creator_stage") != "judgment":
                     _render_visual_production_cards(script)
 
+        asset_count = len(st.session_state.get("creator_assets", []) or [])
+        st.markdown('<div class="composer-marker"></div>', unsafe_allow_html=True)
+        with st.container(border=False):
+            shortcut_a, shortcut_b, shortcut_c, shortcut_space = st.columns((1, 1, 1, 5), gap="small")
+            shortcut_a.button("＋ 素材", key="composer_assets", width="stretch")
+            shortcut_b.button("@ 知识库", key="composer_knowledge", width="stretch")
+            shortcut_c.button("/ 命令", key="composer_commands", width="stretch")
+            shortcut_space.markdown(
+                f'<div class="composer-context">当前上下文：创作方法库 · 运营策略库 · 小红书 · 45秒 · 素材 {asset_count}</div>',
+                unsafe_allow_html=True,
+            )
+            prompt = st.chat_input("告诉 HAHA 你想创作什么，或继续修改当前方案……")
+
     if generated and brief is not None:
         _run_creator_generation(brief)
-
-    asset_count = len(st.session_state.get("creator_assets", []) or [])
-    st.markdown('<div class="composer-marker"></div>', unsafe_allow_html=True)
-    shortcut_a, shortcut_b, shortcut_c, shortcut_space = st.columns((1, 1, 1, 5), gap="small")
-    shortcut_a.button("＋ 素材", key="composer_assets", width="stretch")
-    shortcut_b.button("@ 知识库", key="composer_knowledge", width="stretch")
-    shortcut_c.button("/ 命令", key="composer_commands", width="stretch")
-    shortcut_space.markdown(
-        f'<div class="composer-context">当前上下文：创作方法库 · 运营策略库 · 小红书 · 45秒 · 素材 {asset_count}</div>',
-        unsafe_allow_html=True,
-    )
-
-    prompt = st.chat_input("告诉 HAHA 你想创作什么，或继续修改当前方案……")
     if prompt:
         messages.append({"role": "user", "content": prompt})
         current_script = st.session_state.get("generated_script")
