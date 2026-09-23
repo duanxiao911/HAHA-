@@ -224,20 +224,28 @@ def _render_creator_route(space: str) -> None:
 
 
 def _render_script_workspace_shell() -> None:
+    stage = str(st.session_state.get("creator_stage", "settings"))
+    stage_order = {"settings": 1, "judgment": 2, "master": 3, "storyboard": 4, "publish": 5, "audit": 6}
+    requested_stage = str(st.query_params.get("stage", ""))
+    if requested_stage in stage_order and stage_order[requested_stage] <= stage_order.get(stage, 1):
+        stage = requested_stage
+        st.session_state["creator_stage"] = stage
     st.markdown(
-        '<header class="script-app-header"><details class="drawer-menu"><summary>☰</summary>'
+        '<header class="script-app-header"><div class="script-topbar">'
+        '<details class="drawer-menu"><summary aria-label="打开导航菜单">☰</summary>'
         '<div class="drawer-scrim"></div><div class="drawer-panel"><div class="drawer-brand">HAHA<span>创作中心</span></div>'
         '<a class="active" href="?space=script">✦ 创作工作台</a><a>▤ 内容管理</a>'
         '<a>⌁ 数据中心</a><a>◌ 互动管理</a><a>◇ 文化审核</a><div class="drawer-divider"></div>'
         '<a href="?space=community">← 返回社区</a><a href="?space=publish">视频投稿</a>'
         '<a class="primary" href="?space=script">图文脚本</a></div></details>'
         '<div class="script-header-brand"><b>HAHA 创作中心</b><span>人工智能创意工作室 · V2.0</span></div>'
-        '<div class="project-status"><span>● 已自动保存</span><b>未命名项目</b><button>•••</button></div>'
+        '<div class="project-status"><span><i></i>已自动保存</span><b>未命名项目</b>'
+        '<button aria-label="更多项目操作">•••</button></div></div>'
         '<div class="script-header-copy"><h1>把一个想法变成可拍、可审、可发布的内容</h1>'
         "<p>事实库 × 创作方法库 × 运营策略库</p></div></header>",
         unsafe_allow_html=True,
     )
-    _render_creator_steps(str(st.session_state.get("creator_stage", "settings")))
+    _render_creator_steps(stage)
     _render_script_creator_horizontal()
 
 
@@ -818,19 +826,28 @@ def _render_script_creator() -> None:
 
 
 def _render_creator_steps(stage: str) -> None:
-    current = {"settings": 1, "judgment": 2, "script": 6}.get(stage, 1)
+    current = {
+        "settings": 1,
+        "judgment": 2,
+        "master": 3,
+        "storyboard": 4,
+        "publish": 5,
+        "audit": 6,
+        "script": 6,
+    }.get(stage, 1)
     steps = (
-        (1, "创作设定"),
-        (2, "创作判断"),
-        (3, "Master Script"),
-        (4, "结构化分镜"),
-        (5, "发布包"),
-        (6, "文化审核"),
+        (1, "settings", "创作设定"),
+        (2, "judgment", "创作判断"),
+        (3, "master", "主脚本"),
+        (4, "storyboard", "结构化分镜"),
+        (5, "publish", "发布包"),
+        (6, "audit", "文化审核"),
     )
     markup = "".join(
-        f'<span class="{"done" if number < current else "active" if number == current else "pending"}">'
-        f"{'✓' if number < current else f'{number:02d}'} {label}</span>"
-        for number, label in steps
+        f'<a class="step-node {"done" if number < current else "active" if number == current else "pending"}" '
+        f'{f"href=?space=script&amp;stage={key}" if number < current else "aria-disabled=true"}>'
+        f'<i>{"✓" if number < current else f"{number:02d}"}</i><b>{number:02d} {label}</b></a>'
+        for number, key, label in steps
     )
     st.markdown(
         f'<nav class="creator-steps" aria-label="创作流程">{markup}</nav>',
