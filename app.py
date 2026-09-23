@@ -226,6 +226,18 @@ def _render_creator_route(space: str) -> None:
 
 
 def _render_script_workspace_shell() -> None:
+    if str(st.query_params.get("new", "")) == "1":
+        for key in (
+            "generated_script",
+            "creator_messages",
+            "creator_stage",
+            "model_run_mode",
+            "creator_brief",
+            "creator_assets",
+        ):
+            st.session_state.pop(key, None)
+        st.query_params.pop("new", None)
+        st.rerun()
     stage = str(st.session_state.get("creator_stage", "settings"))
     stage_order = {"settings": 1, "judgment": 2, "master": 3, "storyboard": 4, "publish": 5, "audit": 6}
     requested_stage = str(st.query_params.get("stage", ""))
@@ -233,75 +245,104 @@ def _render_script_workspace_shell() -> None:
         stage = requested_stage
         st.session_state["creator_stage"] = stage
     st.markdown(
-        '<header class="script-app-header"><div class="script-topbar">'
+        '<header class="ai-workbench-header"><div class="workbench-brand">'
         '<details class="drawer-menu"><summary aria-label="打开导航菜单">☰</summary>'
         '<div class="drawer-scrim"></div><div class="drawer-panel"><div class="drawer-brand">HAHA<span>创作中心</span></div>'
         '<a class="active" href="?space=script">✦ 创作工作台</a><a>▤ 内容管理</a>'
         '<a>⌁ 数据中心</a><a>◌ 互动管理</a><a>◇ 文化审核</a><div class="drawer-divider"></div>'
         '<a href="?space=community">← 返回社区</a><a href="?space=publish">视频投稿</a>'
-        '<a class="primary" href="?space=script">图文脚本</a></div></details>'
-        '<div class="script-header-brand"><b>HAHA 创作中心</b><span>人工智能创意工作室 · V2.0</span></div>'
-        '<div class="project-status"><span><i></i>已自动保存</span><b>未命名项目</b>'
-        '<button aria-label="更多项目操作">•••</button></div></div>'
-        '<div class="script-header-copy"><h1>把一个想法变成可拍、可审、可发布的内容</h1>'
-        "<p>创作方法库 × 运营策略库 × 多模型内容制作</p></div></header>",
+        '<a class="primary" href="?space=script">智能工作台</a></div></details>'
+        '<div><b>HAHA AI创作台</b><span>智能对话工作台</span></div></div>'
+        '<nav class="workbench-actions"><a href="?space=script&amp;new=1">＋ 新建对话</a>'
+        '<a href="#conversation-history">历史会话</a></nav>'
+        '<div class="workbench-meta"><span><i></i>工作台待命</span>'
+        '<b>知识库 2</b><b>素材随对话挂载</b></div></header>',
         unsafe_allow_html=True,
     )
-    _render_creator_steps(stage)
     _render_script_creator_horizontal()
 
 
 def _render_script_creator_horizontal() -> None:
     script = st.session_state.get("generated_script")
     st.markdown('<div class="conversation-marker"></div>', unsafe_allow_html=True)
-    tool_a, tool_b, tool_c, tool_d = st.columns((1, 1, 1, 3.2), gap="small")
-    with tool_a:
-        with st.popover("⚙ 创作参数", use_container_width=True):
+    messages = st.session_state.setdefault("creator_messages", [])
+    main, inspector = st.columns((1, 0.36), gap="large")
+    with inspector:
+        st.markdown('<div class="inspector-marker"></div>', unsafe_allow_html=True)
+        parameter_tab, asset_tab, run_tab = st.tabs(("创作参数", "素材资产", "知识与 Run"))
+        with parameter_tab:
             generated, brief = _render_compact_creator_settings()
-    with tool_b:
-        with st.popover("▧ 素材资产", use_container_width=True):
-            st.markdown("**人物、作品与场景参考**")
-            st.file_uploader(
-                "上传参考图片",
-                type=("png", "jpg", "jpeg", "webp"),
+        with asset_tab:
+            st.markdown("#### 当前会话素材")
+            assets = st.file_uploader(
+                "拖拽或选择参考资料",
+                type=("png", "jpg", "jpeg", "webp", "txt", "md", "pdf", "docx"),
                 accept_multiple_files=True,
                 key="creator_assets",
             )
-            st.caption("后续首帧与视频生成将复用这些资产，保持人物、作品和场景一致。")
-    with tool_c:
-        with st.popover("◇ 知识与 Run", use_container_width=True):
+            if assets:
+                for asset in assets:
+                    st.markdown(
+                        f'<div class="asset-row"><b>{escape(asset.name)}</b><span>已挂载</span></div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown(
+                    '<div class="asset-empty">尚未挂载素材<br><span>参考图、文档和脚本片段会进入当前对话上下文</span></div>',
+                    unsafe_allow_html=True,
+                )
+        with run_tab:
             _render_review_panel(script if isinstance(script, ContentScript) else None)
-    with tool_d:
-        mode = "真实 API" if isinstance(script, ContentScript) and script.model_evidence else "工作台待命"
-        st.markdown(
-            f'<div class="conversation-status"><i></i><b>{mode}</b><span>对话驱动 · 参数随时可调</span></div>',
-            unsafe_allow_html=True,
-        )
+
+    with main:
+        st.markdown('<div class="conversation-thread-marker"></div>', unsafe_allow_html=True)
+        brief_state = st.session_state.get("creator_brief")
+        if isinstance(brief_state, ContentBrief):
+            summary = (
+                f'<b>当前任务：{escape(brief_state.craft)}</b>'
+                f'<span>平台 {escape(brief_state.platform)}</span>'
+                f'<span>{escape(brief_state.goal)}</span>'
+                f'<span>{escape(brief_state.duration)}</span>'
+                f'<span>{escape(brief_state.audience)}</span>'
+            )
+        else:
+            summary = '<b>当前任务：新对话</b><span>平台 小红书</span><span>文化科普</span><span>45秒</span>'
+        st.markdown(f'<div class="task-summary">{summary}</div>', unsafe_allow_html=True)
+
+        if not messages and not isinstance(script, ContentScript):
+            st.markdown(
+                '<section class="conversation-welcome"><span>HAHA AI CREATOR</span>'
+                '<h2>从一句话开始，完成一条内容</h2>'
+                '<p>直接描述想法，或在右侧挂载平台、知识库和素材。</p>'
+                '<div><em>帮我做一条白族扎染科普</em><em>把这段故事改成 45 秒视频</em>'
+                '<em>先生成分镜，再做首帧</em><em>根据参考图保持人物一致</em></div></section>',
+                unsafe_allow_html=True,
+            )
+
+        for message in messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        if isinstance(script, ContentScript):
+            with st.chat_message("assistant", avatar="🤖"):
+                st.markdown("我已经结合创作方法库和运营策略库完成了本轮内容方案。")
+                _render_script(script)
+                if st.session_state.get("creator_stage") != "judgment":
+                    _render_visual_production_cards(script)
 
     if generated and brief is not None:
         _run_creator_generation(brief)
 
-    messages = st.session_state.setdefault("creator_messages", [])
-    if not messages and not isinstance(script, ContentScript):
-        st.markdown(
-            '<section class="conversation-welcome"><span>HAHA AI CREATOR</span>'
-            '<h2>从一句话开始，共同完成一条内容</h2>'
-            '<p>可以直接描述想法，也可以先在“创作参数”中设定平台、受众和画幅。</p>'
-            '<div><em>帮我做一条白族扎染科普</em><em>把这段故事改成 45 秒短视频</em>'
-            '<em>先生成分镜，再做首帧</em><em>根据参考图保持人物一致</em></div></section>',
-            unsafe_allow_html=True,
-        )
-
-    for message in messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    if isinstance(script, ContentScript):
-        with st.chat_message("assistant", avatar="🤖"):
-            st.markdown("我已经结合创作方法库和运营策略库完成了本轮内容方案。")
-            _render_script(script)
-            if st.session_state.get("creator_stage") != "judgment":
-                _render_visual_production_cards(script)
+    asset_count = len(st.session_state.get("creator_assets", []) or [])
+    st.markdown('<div class="composer-marker"></div>', unsafe_allow_html=True)
+    shortcut_a, shortcut_b, shortcut_c, shortcut_space = st.columns((1, 1, 1, 5), gap="small")
+    shortcut_a.button("＋ 素材", key="composer_assets", width="stretch")
+    shortcut_b.button("@ 知识库", key="composer_knowledge", width="stretch")
+    shortcut_c.button("/ 命令", key="composer_commands", width="stretch")
+    shortcut_space.markdown(
+        f'<div class="composer-context">当前上下文：创作方法库 · 运营策略库 · 小红书 · 45秒 · 素材 {asset_count}</div>',
+        unsafe_allow_html=True,
+    )
 
     prompt = st.chat_input("告诉 HAHA 你想创作什么，或继续修改当前方案……")
     if prompt:
@@ -374,6 +415,7 @@ def _run_creator_generation(brief: ContentBrief) -> None:
             script = generate_content_script(brief)
             st.session_state["model_run_mode"] = "local"
         st.session_state["generated_script"] = script
+        st.session_state["creator_brief"] = brief
         st.session_state["creator_stage"] = "judgment"
         st.session_state.setdefault("creator_messages", []).append(
             {"role": "assistant", "content": "已完成创作判断。请确认方向，或直接告诉我需要怎样修改。"}
