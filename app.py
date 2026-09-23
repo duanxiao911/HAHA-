@@ -244,6 +244,7 @@ def _render_script_workspace_shell() -> None:
     if requested_stage in stage_order and stage_order[requested_stage] <= stage_order.get(stage, 1):
         stage = requested_stage
         st.session_state["creator_stage"] = stage
+    asset_count = len(st.session_state.get("creator_assets", []) or [])
     st.markdown(
         '<header class="ai-workbench-header"><div class="workbench-brand">'
         '<details class="drawer-menu"><summary aria-label="打开导航菜单">☰</summary>'
@@ -253,13 +254,48 @@ def _render_script_workspace_shell() -> None:
         '<a href="?space=community">← 返回社区</a><a href="?space=publish">视频投稿</a>'
         '<a class="primary" href="?space=script">智能工作台</a></div></details>'
         '<div><b>HAHA AI创作台</b><span>智能对话工作台</span></div></div>'
-        '<nav class="workbench-actions"><a href="?space=script&amp;new=1">＋ 新建对话</a>'
-        '<a href="#conversation-history">历史会话</a></nav>'
-        '<div class="workbench-meta"><span><i></i>工作台待命</span>'
-        '<b>知识库 2</b><b>素材随对话挂载</b></div></header>',
+        '<nav class="workbench-actions"><a href="?space=script&amp;new=1">＋ <i>新建对话</i><em>新建</em></a>'
+        '<a href="#conversation-history"><i>历史会话</i><em>历史</em></a>'
+        '<label class="model-picker"><span>模型：</span><select aria-label="选择创作模型">'
+        '<option>自动选择</option><option>DeepSeek</option><option>本地演示</option></select></label></nav>'
+        '<div class="workbench-meta"><span><i></i><strong>工作台待命</strong><em>待命</em></span>'
+        f'<b>知识库 <i>2</i></b><b>素材 <i>{asset_count}</i></b>'
+        '<details class="compact-more"><summary>•••</summary><div><a href="?space=script&amp;new=1">新建对话</a>'
+        '<a href="#conversation-history">历史会话</a><span>知识库 2</span>'
+        f'<span>素材 {asset_count}</span></div></details></div></header>',
         unsafe_allow_html=True,
     )
+    _install_workbench_header_scroll()
     _render_script_creator_horizontal()
+
+
+def _install_workbench_header_scroll() -> None:
+    components.html(
+        """
+        <script>
+        (() => {
+          const host = window.parent;
+          const doc = host.document;
+          if (host.__hahaWorkbenchHeaderCleanup) host.__hahaWorkbenchHeaderCleanup();
+          const scroller = doc.querySelector('[data-testid="stMain"]');
+          const header = doc.querySelector('.ai-workbench-header');
+          if (!scroller || !header) return;
+          let compact = header.classList.contains('is-compact') || scroller.scrollTop > 96;
+          const render = () => {
+            const y = scroller.scrollTop;
+            if (!compact && y > 96) compact = true;
+            else if (compact && y <= 32) compact = false;
+            header.classList.toggle('is-compact', compact);
+          };
+          scroller.addEventListener('scroll', render, {passive: true});
+          render();
+          host.__hahaWorkbenchHeaderCleanup = () => scroller.removeEventListener('scroll', render);
+        })();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
+    )
 
 
 def _render_script_creator_horizontal() -> None:
