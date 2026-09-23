@@ -965,6 +965,9 @@ def _render_script(script: ContentScript) -> None:
 def _render_review_panel(script: ContentScript | None) -> None:
     if script is None:
         st.markdown(
+            '<section class="run-evidence idle"><div class="run-evidence-head">'
+            '<span><i></i>RUN 未运行</span><b>等待生成</b></div>'
+            '<p>点击“生成本次创作判断”后，这里会显示双知识库的真实检索记录。</p></section>'
             '<div class="review-empty"><span>生成后将在这里显示</span>'
             "<div>◇ <b>方法依据</b><small>创作方法知识库</small></div>"
             "<div>↗ <b>策略依据</b><small>运营策略知识库</small></div>"
@@ -973,6 +976,7 @@ def _render_review_panel(script: ContentScript | None) -> None:
             unsafe_allow_html=True,
         )
         return
+    _render_run_evidence(script)
     st.markdown(f"#### 方法依据 · {len(script.method_sources)} 条")
     for chunk_id, title in script.method_sources:
         st.markdown(
@@ -1003,16 +1007,46 @@ def _render_review_panel(script: ContentScript | None) -> None:
         unsafe_allow_html=True,
     )
     st.info("建议先展示关键动作，再进入文化背景，避免前三秒信息量过大。")
-    if script.retrieval_trace:
-        with st.expander("查看本次知识调用详情"):
-            st.caption(f"生成记录：{script.retrieval_trace.generation_id}")
-            st.code(
-                "CREATIVE_METHOD_CONTEXT\n"
-                + script.retrieval_trace.creative_query
-                + "\n\nOPERATION_STRATEGY_CONTEXT\n"
-                + script.retrieval_trace.operation_query,
-                language=None,
-            )
+
+
+def _render_run_evidence(script: ContentScript) -> None:
+    trace = script.retrieval_trace
+    if trace is None:
+        st.error("本次生成没有检索证据，请勿将结果视为已调用知识库。")
+        return
+    score_lookup = dict(trace.rerank_scores)
+    method_rows = "".join(
+        f'<li><b>{escape(chunk_id)}</b><span>{escape(title)}</span>'
+        f'<em>{score_lookup.get(chunk_id, 0):.3f}</em></li>'
+        for chunk_id, title in script.method_sources
+    )
+    strategy_rows = "".join(
+        f'<li><b>{escape(chunk_id)}</b><span>{escape(title)}</span>'
+        f'<em>{score_lookup.get(chunk_id, 0):.3f}</em></li>'
+        for chunk_id, title in script.strategy_sources
+    )
+    st.markdown(
+        '<section class="run-evidence verified">'
+        '<div class="run-evidence-head"><span><i></i>RUN 已验证</span><b>双库调用成功</b></div>'
+        '<div class="run-evidence-stats">'
+        f'<span><b>{len(script.method_sources)}</b>方法命中</span>'
+        f'<span><b>{len(script.strategy_sources)}</b>策略命中</span>'
+        '<span><b>2</b>独立查询</span></div>'
+        f'<dl><dt>Run ID</dt><dd>{escape(trace.generation_id)}</dd>'
+        f'<dt>知识版本</dt><dd>{escape(trace.document_version)}</dd>'
+        f'<dt>运行时间</dt><dd>{escape(trace.created_at)}</dd></dl>'
+        '<div class="run-query"><b>Creative Query</b>'
+        f'<p>{escape(trace.creative_query)}</p></div>'
+        '<div class="run-query"><b>Operation Query</b>'
+        f'<p>{escape(trace.operation_query)}</p></div>'
+        '<div class="run-hit-group"><b>创作方法库命中与 Rerank 分</b>'
+        f'<ul>{method_rows}</ul></div>'
+        '<div class="run-hit-group"><b>运营策略库命中与 Rerank 分</b>'
+        f'<ul>{strategy_rows}</ul></div>'
+        '<footer>来源：HAHA飞颐项目营销端总材料包(1).docx · 两库独立检索</footer>'
+        "</section>",
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":
