@@ -3,3 +3,4 @@ __pycache__/
 .pytest_tmp/
 .streamlit/
 model-config.ps1
+artifacts/
