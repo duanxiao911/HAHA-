@@ -74,6 +74,18 @@ class ModelRouter:
             image_model=self.seedream_model,
         )
 
+    def resolve_text_mode(self, preference: str) -> Literal["deepseek", "local"]:
+        """Resolve the UI preference to a usable text-generation route."""
+        if preference == "本地演示":
+            return "local"
+        if preference == "DeepSeek":
+            if not self.deepseek_api_key:
+                raise ModelCallError("尚未配置 DEEPSEEK_API_KEY，无法使用 DeepSeek。")
+            return "deepseek"
+        if preference == "自动选择":
+            return "deepseek" if self.deepseek_api_key else "local"
+        raise ValueError(f"不支持的模型选择：{preference}")
+
     def generate_json(
         self,
         task: TaskType,

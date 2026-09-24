@@ -1,6 +1,7 @@
 import pytest
 
 from haha_media.model_router import ModelCallError, ModelRouter
+from haha_media.script_writer import ContentBrief, generate_content_script_for_mode
 
 
 def test_router_reports_provider_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -28,6 +29,69 @@ def test_router_rejects_calls_without_keys(monkeypatch: pytest.MonkeyPatch) -> N
         )
     with pytest.raises(ModelCallError, match="ARK_API_KEY"):
         router.generate_image("竹编手部特写")
+
+
+def test_text_model_preference_resolves_to_actual_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    router = ModelRouter()
+
+    assert router.resolve_text_mode("自动选择") == "local"
+    assert router.resolve_text_mode("本地演示") == "local"
+    with pytest.raises(ModelCallError, match="DEEPSEEK_API_KEY"):
+        router.resolve_text_mode("DeepSeek")
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
+    ready_router = ModelRouter()
+    assert ready_router.resolve_text_mode("自动选择") == "deepseek"
+    assert ready_router.resolve_text_mode("DeepSeek") == "deepseek"
+
+
+def test_script_generation_uses_selected_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    import haha_media.script_writer as script_writer
+
+    brief = ContentBrief("竹编", "竹篾弯折", "新手", "小红书", "克制")
+    router = ModelRouter()
+    calls: list[str] = []
+
+    def fake_model_generation(_brief: ContentBrief, *, router: ModelRouter) -> object:
+        calls.append("deepseek")
+        return script_writer.generate_content_script(_brief)
+
+    monkeypatch.setattr(script_writer, "generate_content_script_with_model", fake_model_generation)
+    local_script, local_mode = generate_content_script_for_mode(brief, "本地演示", router)
+    assert local_mode == "local"
+    assert local_script.model_evidence is None
+    assert calls == []
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
+    router = ModelRouter()
+    api_script, api_mode = generate_content_script_for_mode(brief, "DeepSeek", router)
+    assert api_mode == "api"
+    assert api_script.model_evidence is None
+    assert calls == ["deepseek"]
+
+
+def test_failed_deepseek_selection_does_not_fall_back_to_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import haha_media.script_writer as script_writer
+
+    brief = ContentBrief("竹编", "竹篾弯折", "新手", "小红书", "克制")
+    router = ModelRouter()
+
+    def fail_model_generation(*_args: object, **_kwargs: object) -> object:
+        raise ModelCallError("模型服务连接失败")
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
+    router = ModelRouter()
+    monkeypatch.setattr(script_writer, "generate_content_script_with_model", fail_model_generation)
+    monkeypatch.setattr(
+        script_writer,
+        "generate_content_script",
+        lambda _brief: pytest.fail("API 失败后不应回退到本地生成"),
+    )
+    with pytest.raises(ModelCallError, match="模型服务连接失败"):
+        generate_content_script_for_mode(brief, "DeepSeek", router)
 
 
 def test_router_normalizes_text_and_image_evidence(monkeypatch: pytest.MonkeyPatch) -> None:

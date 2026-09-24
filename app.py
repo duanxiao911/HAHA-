@@ -9,18 +9,21 @@ from pathlib import Path
 # Keep the local ``src`` package importable when Streamlit launches this file
 # directly (including desktop preview sessions that do not set PYTHONPATH).
 SRC_DIR = Path(__file__).resolve().parent / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+SRC_PATH = str(SRC_DIR)
+if SRC_PATH in sys.path:
+    sys.path.remove(SRC_PATH)
+sys.path.insert(0, SRC_PATH)
 
 import streamlit as st  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 
 from haha_media.feed import STORIES  # noqa: E402
-from haha_media.model_router import ModelCallError  # noqa: E402
+from haha_media.model_router import ModelCallError, get_model_router  # noqa: E402
 from haha_media.script_writer import (  # noqa: E402
     ContentBrief,
     ContentScript,
     generate_content_script,
+    generate_content_script_for_mode,
     generate_content_script_with_model,
 )
 from haha_media.theme import apply_theme  # noqa: E402
@@ -232,6 +235,8 @@ def _render_script_workspace_shell() -> None:
             "creator_messages",
             "creator_stage",
             "model_run_mode",
+            "creator_model_status",
+            "creator_model_status_choice",
             "creator_brief",
             "creator_assets",
         ):
@@ -245,6 +250,22 @@ def _render_script_workspace_shell() -> None:
         stage = requested_stage
         st.session_state["creator_stage"] = stage
     asset_count = len(st.session_state.get("creator_assets", []) or [])
+    model_router = get_model_router()
+    model_choice = st.session_state.get("creator_model_choice", "自动选择")
+    previous_choice = st.session_state.get("creator_model_status_choice")
+    try:
+        active_model_mode = model_router.resolve_text_mode(model_choice)
+        model_status = (
+            st.session_state.get("creator_model_status")
+            if previous_choice == model_choice
+            else None
+        ) or (
+            f"DeepSeek 可用 · {model_router.status().text_model}"
+            if active_model_mode == "deepseek"
+            else "本地演示 · 未调用模型 API"
+        )
+    except ModelCallError:
+        model_status = "DeepSeek 未配置密钥"
     st.markdown(
         '<header class="ai-workbench-header"><div class="workbench-brand">'
         '<details class="drawer-menu"><summary aria-label="打开导航菜单">☰</summary>'
@@ -256,9 +277,8 @@ def _render_script_workspace_shell() -> None:
         '<div><b>HAHA AI创作台</b><span>智能对话工作台</span></div></div>'
         '<nav class="workbench-actions"><a href="?space=script&amp;new=1">＋ <i>新建对话</i><em>新建</em></a>'
         '<a href="#conversation-history"><i>历史会话</i><em>历史</em></a>'
-        '<label class="model-picker"><span>模型：</span><select aria-label="选择创作模型">'
-        '<option>自动选择</option><option>DeepSeek</option><option>本地演示</option></select></label></nav>'
-        '<div class="workbench-meta"><span><i></i><strong>工作台待命</strong><em>待命</em></span>'
+        '</nav>'
+        f'<div class="workbench-meta"><span><i></i><strong>{escape(model_status)}</strong><em>{escape(model_status)}</em></span>'
         f'<b>知识库 <i>2</i></b><b>素材 <i>{asset_count}</i></b>'
         '<details class="compact-more"><summary>•••</summary><div><a href="?space=script&amp;new=1">新建对话</a>'
         '<a href="#conversation-history">历史会话</a><span>知识库 2</span>'
@@ -368,11 +388,15 @@ def _render_script_creator_horizontal() -> None:
         asset_count = len(st.session_state.get("creator_assets", []) or [])
         st.markdown('<div class="composer-marker"></div>', unsafe_allow_html=True)
         with st.container(border=True):
-            shortcut_a, shortcut_b, shortcut_c, shortcut_space = st.columns((1, 1, 1, 5), gap="small")
-            shortcut_a.button("＋ 素材", key="composer_assets", width="stretch")
-            shortcut_b.button("@ 知识库", key="composer_knowledge", width="stretch")
-            shortcut_c.button("/ 命令", key="composer_commands", width="stretch")
-            shortcut_space.markdown(
+            model_option, context_space = st.columns((2, 6), gap="small")
+            model_option.selectbox(
+                "生成模型",
+                ("自动选择", "DeepSeek", "本地演示"),
+                key="creator_model_choice",
+                label_visibility="collapsed",
+                help="自动选择会在 DeepSeek 密钥可用时调用 API，否则使用本地演示生成。",
+            )
+            context_space.markdown(
                 f'<div class="composer-context">当前上下文：创作方法库 · 运营策略库 · 小红书 · 45秒 · 素材 {asset_count}</div>',
                 unsafe_allow_html=True,
             )
@@ -443,12 +467,16 @@ def _brief_from_conversation(prompt: str) -> ContentBrief:
 
 def _run_creator_generation(brief: ContentBrief) -> None:
     try:
-        try:
-            script = generate_content_script_with_model(brief)
-            st.session_state["model_run_mode"] = "api"
-        except ValueError:
-            script = generate_content_script(brief)
-            st.session_state["model_run_mode"] = "local"
+        router = get_model_router()
+        choice = st.session_state.get("creator_model_choice", "自动选择")
+        script, run_mode = generate_content_script_for_mode(brief, choice, router=router)
+        st.session_state["model_run_mode"] = run_mode
+        st.session_state["creator_model_status_choice"] = choice
+        if run_mode == "api":
+            model_name = script.model_evidence.model if script.model_evidence else router.status().text_model
+            st.session_state["creator_model_status"] = f"DeepSeek 已调用 · {model_name}"
+        else:
+            st.session_state["creator_model_status"] = "本地演示生成 · 未调用模型 API"
         st.session_state["generated_script"] = script
         st.session_state["creator_brief"] = brief
         st.session_state["creator_stage"] = "judgment"
@@ -457,7 +485,12 @@ def _run_creator_generation(brief: ContentBrief) -> None:
         )
         st.rerun()
     except (ValueError, ModelCallError) as exc:
+        st.session_state["creator_model_status_choice"] = st.session_state.get(
+            "creator_model_choice", "自动选择"
+        )
+        st.session_state["creator_model_status"] = "模型调用失败"
         st.warning(str(exc))
+        st.rerun()
 
 
 def _render_visual_production_cards(script: ContentScript) -> None:

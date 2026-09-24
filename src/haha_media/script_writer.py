@@ -295,3 +295,16 @@ voiceover 和 shots 必须是字符串数组，tags 也是字符串数组。"""
         tags=tuple_value("tags", base.tags, 2),
         model_evidence=result.evidence,
     )
+
+
+def generate_content_script_for_mode(
+    brief: ContentBrief,
+    preference: str,
+    router: ModelRouter | None = None,
+) -> tuple[ContentScript, str]:
+    """Generate using the selected real route and report which route ran."""
+    active_router = router or get_model_router()
+    mode = active_router.resolve_text_mode(preference)
+    if mode == "deepseek":
+        return generate_content_script_with_model(brief, router=active_router), "api"
+    return generate_content_script(brief), "local"
