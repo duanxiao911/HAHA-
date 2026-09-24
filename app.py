@@ -347,11 +347,10 @@ def _render_script_creator_horizontal() -> None:
 
         if not messages and not isinstance(script, ContentScript):
             st.markdown(
-                '<section class="conversation-welcome"><span>HAHA AI CREATOR</span>'
-                '<h2>从一句话开始，完成一条内容</h2>'
-                '<p>直接描述想法，或在右侧挂载平台、知识库和素材。</p>'
-                '<div><em>帮我做一条白族扎染科普</em><em>把这段故事改成 45 秒视频</em>'
-                '<em>先生成分镜，再做首帧</em><em>根据参考图保持人物一致</em></div></section>',
+                '<section class="conversation-empty"><h2>今天想创作什么？</h2>'
+                '<p>可以直接输入，也可以从一个示例开始</p>'
+                '<div><em>白族扎染科普</em><em>故事改成 45 秒视频</em>'
+                '<em>生成分镜和首帧</em><em>参考图保持人物一致</em></div></section>',
                 unsafe_allow_html=True,
             )
 
@@ -368,7 +367,7 @@ def _render_script_creator_horizontal() -> None:
 
         asset_count = len(st.session_state.get("creator_assets", []) or [])
         st.markdown('<div class="composer-marker"></div>', unsafe_allow_html=True)
-        with st.container(border=False):
+        with st.container(border=True):
             shortcut_a, shortcut_b, shortcut_c, shortcut_space = st.columns((1, 1, 1, 5), gap="small")
             shortcut_a.button("＋ 素材", key="composer_assets", width="stretch")
             shortcut_b.button("@ 知识库", key="composer_knowledge", width="stretch")
