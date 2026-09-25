@@ -276,6 +276,15 @@ def _render_script_workspace_shell() -> None:
             "creator_run_attempt",
             "creator_brief",
             "creator_assets",
+            "creator_parameter_sync_pending",
+            "creator_param_craft",
+            "creator_param_story_seed",
+            "creator_param_goals",
+            "creator_param_audience",
+            "creator_param_platform",
+            "creator_param_duration",
+            "creator_param_aspect",
+            "creator_param_tone",
         ):
             st.session_state.pop(key, None)
         st.query_params.pop("new", None)
@@ -337,6 +346,7 @@ def _install_workbench_header_scroll() -> None:
 
 
 def _render_script_creator_horizontal() -> None:
+    _sync_creator_parameter_state()
     script = st.session_state.get("generated_script")
     st.markdown('<div class="conversation-marker"></div>', unsafe_allow_html=True)
     messages = st.session_state.setdefault("creator_messages", [])
@@ -345,7 +355,9 @@ def _render_script_creator_horizontal() -> None:
         st.markdown('<div class="inspector-marker"></div>', unsafe_allow_html=True)
         parameter_tab, asset_tab, run_tab = st.tabs(("创作参数", "素材资产", "知识与 Run"))
         with parameter_tab:
-            generated, brief = _render_compact_creator_settings()
+            generated, draft_brief = _render_compact_creator_settings(
+                has_result=isinstance(script, ContentScript)
+            )
         with asset_tab:
             st.markdown("#### 当前会话素材")
             assets = st.file_uploader(
@@ -376,14 +388,14 @@ def _render_script_creator_horizontal() -> None:
         brief_state = st.session_state.get("creator_brief")
         if isinstance(brief_state, ContentBrief):
             summary = (
-                f'<b>当前任务：{escape(brief_state.craft)}</b>'
+                f'<b>当前结果：{escape(brief_state.craft)}</b>'
                 f'<span>平台 {escape(brief_state.platform)}</span>'
                 f'<span>{escape(brief_state.goal)}</span>'
                 f'<span>{escape(brief_state.duration)}</span>'
                 f'<span>{escape(brief_state.audience)}</span>'
             )
         else:
-            summary = '<b>当前任务：新对话</b><span>平台 小红书</span><span>文化科普</span><span>45秒</span>'
+            summary = '<b>当前结果：尚未生成</b><span>请在右侧设置参数</span>'
         st.markdown(f'<div class="task-summary">{summary}</div>', unsafe_allow_html=True)
 
         if not messages and not isinstance(script, ContentScript):
@@ -407,6 +419,8 @@ def _render_script_creator_horizontal() -> None:
                     _render_visual_production_cards(script)
 
         asset_count = len(st.session_state.get("creator_assets", []) or [])
+        context_brief = brief_state if isinstance(brief_state, ContentBrief) else draft_brief
+        context_status = "当前结果参数" if isinstance(brief_state, ContentBrief) else "待应用参数"
         st.markdown('<div class="composer-marker"></div>', unsafe_allow_html=True)
         with st.container(border=True):
             model_option, context_space = st.columns((2, 6), gap="small")
@@ -418,13 +432,15 @@ def _render_script_creator_horizontal() -> None:
                 help="自动选择会在 DeepSeek 密钥可用时调用 API，否则使用本地演示生成。",
             )
             context_space.markdown(
-                f'<div class="composer-context">当前上下文：非遗事实库 · 创作方法库 · 运营策略库 · 小红书 · 45秒 · 素材 {asset_count}</div>',
+                f'<div class="composer-context">{context_status}：非遗事实库 · 创作方法库 · 运营策略库 · '
+                f'{escape(context_brief.platform)} · {escape(context_brief.duration)} · '
+                f'{escape(context_brief.aspect_ratio)} · 素材 {asset_count}</div>',
                 unsafe_allow_html=True,
             )
             prompt = st.chat_input("告诉 HAHA 你想创作什么，或继续修改当前方案……")
 
-    if generated and brief is not None:
-        _run_creator_generation(brief)
+    if generated:
+        _run_creator_generation(draft_brief)
     if prompt:
         messages.append({"role": "user", "content": prompt})
         current_script = st.session_state.get("generated_script")
@@ -441,29 +457,77 @@ def _render_script_creator_horizontal() -> None:
         st.rerun()
 
 
-def _render_compact_creator_settings() -> tuple[bool, ContentBrief | None]:
+def _sync_creator_parameter_state() -> None:
+    pending = st.session_state.pop("creator_parameter_sync_pending", None)
+    current = pending if isinstance(pending, ContentBrief) else st.session_state.get("creator_brief")
+    if not isinstance(current, ContentBrief):
+        current = ContentBrief(
+            "",
+            "",
+            "第一次接触非遗的人",
+            "小红书",
+            "安静观察",
+        )
+    defaults = {
+        "creator_param_craft": current.craft,
+        "creator_param_story_seed": current.story_seed,
+        "creator_param_goals": current.goal.split(" + "),
+        "creator_param_audience": current.audience,
+        "creator_param_platform": current.platform,
+        "creator_param_duration": current.duration,
+        "creator_param_aspect": current.aspect_ratio,
+        "creator_param_tone": current.tone,
+    }
+    for key, value in defaults.items():
+        if pending is not None or key not in st.session_state:
+            st.session_state[key] = value
+
+
+def _render_compact_creator_settings(*, has_result: bool) -> tuple[bool, ContentBrief]:
+    st.caption(
+        "这里是待应用参数。修改后点击下方按钮，才会重新检索知识库并调用当前模型。"
+    )
     with st.form("conversation_creator_settings", border=False):
-        craft = st.text_input("创作主题", placeholder="白族扎染、龙泉青瓷、竹编")
-        story_seed = st.text_area("想讲的一个瞬间", height=84)
+        craft = st.text_input(
+            "创作主题", placeholder="白族扎染、龙泉青瓷、竹编", key="creator_param_craft"
+        )
+        story_seed = st.text_area(
+            "想讲的一个瞬间", height=84, key="creator_param_story_seed"
+        )
         goals = st.multiselect(
             "内容目标",
             ("文化科普", "人物故事", "工艺展示", "情绪表达", "商品故事", "收藏型内容"),
-            default=("文化科普",),
             max_selections=2,
+            key="creator_param_goals",
         )
         audience = st.selectbox(
             "目标受众",
             ("第一次接触非遗的人", "年轻学生", "传统文化爱好者", "手作爱好者", "海外中国文化兴趣用户"),
+            key="creator_param_audience",
         )
         first, second = st.columns(2)
-        platform = first.selectbox("发布平台", ("抖音", "小红书", "B站", "视频号", "TikTok"), index=1)
-        duration = second.selectbox("时长", ("15秒", "30秒", "45秒", "60秒", "90秒"), index=2)
-        aspect = first.selectbox("画幅", ("9:16", "16:9", "1:1", "3:4"))
-        tone = second.selectbox("表达气质", ("安静观察", "纪录片", "年轻轻快", "人物纪实", "诗意东方", "工艺满足感"))
-        generated = st.form_submit_button("生成创作判断", type="primary", width="stretch")
-    if not generated:
-        return False, None
-    return True, ContentBrief(
+        platform = first.selectbox(
+            "发布平台",
+            ("抖音", "小红书", "B站", "视频号", "TikTok"),
+            key="creator_param_platform",
+        )
+        duration = second.selectbox(
+            "时长", ("15秒", "30秒", "45秒", "60秒", "90秒"), key="creator_param_duration"
+        )
+        aspect = first.selectbox(
+            "画幅", ("9:16", "16:9", "1:1", "3:4"), key="creator_param_aspect"
+        )
+        tone = second.selectbox(
+            "表达气质",
+            ("安静观察", "纪录片", "年轻轻快", "人物纪实", "诗意东方", "工艺满足感"),
+            key="creator_param_tone",
+        )
+        generated = st.form_submit_button(
+            "应用参数并重新生成" if has_result else "应用参数并生成创作判断",
+            type="primary",
+            width="stretch",
+        )
+    return generated, ContentBrief(
         craft,
         story_seed,
         audience,
@@ -530,6 +594,7 @@ def _run_creator_generation(brief: ContentBrief) -> None:
         }
         st.session_state["generated_script"] = script
         st.session_state["creator_brief"] = brief
+        st.session_state["creator_parameter_sync_pending"] = brief
         st.session_state["creator_stage"] = "judgment"
         st.session_state.setdefault("creator_messages", []).append(
             {"role": "assistant", "content": "已完成创作判断。请确认方向，或直接告诉我需要怎样修改。"}
