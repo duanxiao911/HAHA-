@@ -3,7 +3,7 @@ name = "haha-platform-v2"
 version = "0.1.0"
 description = "A clean-slate cultural media MVP for HAHA"
 requires-python = ">=3.11"
-dependencies = ["streamlit>=1.40,<2"]
+dependencies = ["streamlit>=1.64,<2"]
 
 [tool.ruff]
 line-length = 100
@@ -15,3 +15,4 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+addopts = "-p no:cacheprovider"

@@ -18,7 +18,7 @@ if SRC_PATH in sys.path:
 sys.path.insert(0, SRC_PATH)
 
 import streamlit as st  # noqa: E402
-import streamlit.components.v1 as components  # noqa: E402
+from streamlit.errors import StreamlitSecretNotFoundError  # noqa: E402
 
 from haha_media.feed import STORIES  # noqa: E402
 from haha_media.model_router import ModelCallError, get_model_router  # noqa: E402
@@ -30,6 +30,28 @@ from haha_media.script_writer import (  # noqa: E402
     generate_content_script_with_model,
 )
 from haha_media.theme import apply_theme  # noqa: E402
+
+_SCROLL_STATE_COMPONENT = st.components.v2.component(
+    "haha_scroll_state",
+    js="""
+    export default function(component) {
+      const { data } = component;
+      const scroller = document.querySelector('[data-testid="stMain"]');
+      const target = document.querySelector(data.selector);
+      if (!scroller || !target) return;
+      let compact = target.classList.contains(data.className) || scroller.scrollTop > data.enterAt;
+      const render = () => {
+        const y = scroller.scrollTop;
+        if (!compact && y > data.enterAt) compact = true;
+        else if (compact && y <= data.exitAt) compact = false;
+        target.classList.toggle(data.className, compact);
+      };
+      scroller.addEventListener('scroll', render, { passive: true });
+      render();
+      return () => scroller.removeEventListener('scroll', render);
+    }
+    """,
+)
 
 CATEGORY_LABELS = {
     "all": "首页",
@@ -47,6 +69,7 @@ CATEGORY_LABELS = {
 
 def main() -> None:
     st.set_page_config(page_title="HAHA · 非遗影像馆", page_icon="◇", layout="wide")
+    _load_local_model_secrets()
     apply_theme()
     space = str(st.query_params.get("space", "community"))
     if space in {"publish", "script"}:
@@ -61,6 +84,27 @@ def main() -> None:
         _render_culture_map()
     else:
         _render_module_placeholder(module)
+
+
+def _load_local_model_secrets() -> None:
+    """Load optional local Streamlit secrets without overriding process configuration."""
+    for key in (
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "DEEPSEEK_MODEL",
+        "ARK_API_KEY",
+        "SEEDREAM_BASE_URL",
+        "SEEDREAM_MODEL",
+        "MODEL_API_TIMEOUT",
+    ):
+        if os.getenv(key):
+            continue
+        try:
+            value = st.secrets.get(key)
+        except StreamlitSecretNotFoundError:
+            return
+        if value is not None and str(value).strip():
+            os.environ[key] = str(value).strip()
 
 
 def _render_navigation_system(module: str, channel: str) -> None:
@@ -120,31 +164,16 @@ def _render_navigation_system(module: str, channel: str) -> None:
 
 
 def _install_scroll_navigation() -> None:
-    components.html(
-        """
-        <script>
-        (() => {
-          const host = window.parent;
-          const doc = host.document;
-          if (host.__hahaNavCleanup) host.__hahaNavCleanup();
-          const scroller = doc.querySelector('[data-testid="stMain"]');
-          const header = doc.querySelector('.header-system');
-          if (!scroller || !header) return;
-          let compact = scroller.scrollTop > 120;
-          const render = () => {
-            const y = scroller.scrollTop;
-            if (!compact && y > 120) compact = true;
-            if (compact && y < 60) compact = false;
-            header.classList.toggle('is-scrolled', compact);
-          };
-          scroller.addEventListener('scroll', render, {passive: true});
-          render();
-          host.__hahaNavCleanup = () => scroller.removeEventListener('scroll', render);
-        })();
-        </script>
-        """,
+    _SCROLL_STATE_COMPONENT(
+        key="community-scroll-navigation",
+        data={
+            "selector": ".header-system",
+            "className": "is-scrolled",
+            "enterAt": 120,
+            "exitAt": 60,
+        },
+        width=0,
         height=0,
-        scrolling=False,
     )
 
 
@@ -294,31 +323,16 @@ def _render_script_workspace_shell() -> None:
 
 
 def _install_workbench_header_scroll() -> None:
-    components.html(
-        """
-        <script>
-        (() => {
-          const host = window.parent;
-          const doc = host.document;
-          if (host.__hahaWorkbenchHeaderCleanup) host.__hahaWorkbenchHeaderCleanup();
-          const scroller = doc.querySelector('[data-testid="stMain"]');
-          const header = doc.querySelector('.ai-workbench-header');
-          if (!scroller || !header) return;
-          let compact = header.classList.contains('is-compact') || scroller.scrollTop > 96;
-          const render = () => {
-            const y = scroller.scrollTop;
-            if (!compact && y > 96) compact = true;
-            else if (compact && y <= 32) compact = false;
-            header.classList.toggle('is-compact', compact);
-          };
-          scroller.addEventListener('scroll', render, {passive: true});
-          render();
-          host.__hahaWorkbenchHeaderCleanup = () => scroller.removeEventListener('scroll', render);
-        })();
-        </script>
-        """,
+    _SCROLL_STATE_COMPONENT(
+        key="workbench-scroll-navigation",
+        data={
+            "selector": ".ai-workbench-header",
+            "className": "is-compact",
+            "enterAt": 96,
+            "exitAt": 32,
+        },
+        width=0,
         height=0,
-        scrolling=False,
     )
 
 

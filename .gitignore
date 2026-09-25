@@ -9,7 +9,8 @@ venv/
 .env
 .env.*
 !.env.example
-.streamlit/
+.streamlit/*
+!.streamlit/secrets.toml.example
 model-config.ps1
 artifacts/
 %SystemDrive%/

@@ -41,6 +41,9 @@ python -m pip install -e . pytest ruff
 
 环境变量名称参见 [`config/model.env.example`](config/model.env.example)。不要把真实 API Key 写进仓库。
 
+推荐把 [`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example) 复制为
+`.streamlit/secrets.toml`，然后只在本机填写密钥。真实文件已被 Git 忽略，应用启动时会自动读取。
+
 当前 PowerShell 会话可这样设置：
 
 ```powershell
