@@ -31,28 +31,6 @@ from haha_media.script_writer import (  # noqa: E402
 )
 from haha_media.theme import apply_theme  # noqa: E402
 
-_SCROLL_STATE_COMPONENT = st.components.v2.component(
-    "haha_scroll_state",
-    js="""
-    export default function(component) {
-      const { data } = component;
-      const scroller = document.querySelector('[data-testid="stMain"]');
-      const target = document.querySelector(data.selector);
-      if (!scroller || !target) return;
-      let compact = target.classList.contains(data.className) || scroller.scrollTop > data.enterAt;
-      const render = () => {
-        const y = scroller.scrollTop;
-        if (!compact && y > data.enterAt) compact = true;
-        else if (compact && y <= data.exitAt) compact = false;
-        target.classList.toggle(data.className, compact);
-      };
-      scroller.addEventListener('scroll', render, { passive: true });
-      render();
-      return () => scroller.removeEventListener('scroll', render);
-    }
-    """,
-)
-
 CATEGORY_LABELS = {
     "all": "首页",
     "hot": "热门",
@@ -164,16 +142,42 @@ def _render_navigation_system(module: str, channel: str) -> None:
 
 
 def _install_scroll_navigation() -> None:
-    _SCROLL_STATE_COMPONENT(
-        key="community-scroll-navigation",
-        data={
-            "selector": ".header-system",
-            "className": "is-scrolled",
-            "enterAt": 120,
-            "exitAt": 60,
-        },
+    _install_scroll_state(
+        selector=".header-system",
+        class_name="is-scrolled",
+        enter_at=120,
+        exit_at=60,
+        cleanup_name="__hahaNavCleanup",
+    )
+
+
+def _install_scroll_state(
+    *, selector: str, class_name: str, enter_at: int, exit_at: int, cleanup_name: str
+) -> None:
+    """Attach trusted scroll behavior without mounting a stateful custom component."""
+    st.html(
+        f"""
+        <script>
+        (() => {{
+          if (window.{cleanup_name}) window.{cleanup_name}();
+          const scroller = document.querySelector('[data-testid="stMain"]');
+          const target = document.querySelector('{selector}');
+          if (!scroller || !target) return;
+          let compact = target.classList.contains('{class_name}') || scroller.scrollTop > {enter_at};
+          const render = () => {{
+            const y = scroller.scrollTop;
+            if (!compact && y > {enter_at}) compact = true;
+            else if (compact && y <= {exit_at}) compact = false;
+            target.classList.toggle('{class_name}', compact);
+          }};
+          scroller.addEventListener('scroll', render, {{ passive: true }});
+          render();
+          window.{cleanup_name} = () => scroller.removeEventListener('scroll', render);
+        }})();
+        </script>
+        """,
         width="content",
-        height=0,
+        unsafe_allow_javascript=True,
     )
 
 
@@ -323,16 +327,12 @@ def _render_script_workspace_shell() -> None:
 
 
 def _install_workbench_header_scroll() -> None:
-    _SCROLL_STATE_COMPONENT(
-        key="workbench-scroll-navigation",
-        data={
-            "selector": ".ai-workbench-header",
-            "className": "is-compact",
-            "enterAt": 96,
-            "exitAt": 32,
-        },
-        width="content",
-        height=0,
+    _install_scroll_state(
+        selector=".ai-workbench-header",
+        class_name="is-compact",
+        enter_at=96,
+        exit_at=32,
+        cleanup_name="__hahaWorkbenchHeaderCleanup",
     )
 
 
