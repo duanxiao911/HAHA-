@@ -172,7 +172,7 @@ def _install_scroll_navigation() -> None:
             "enterAt": 120,
             "exitAt": 60,
         },
-        width=0,
+        width="content",
         height=0,
     )
 
@@ -331,7 +331,7 @@ def _install_workbench_header_scroll() -> None:
             "enterAt": 96,
             "exitAt": 32,
         },
-        width=0,
+        width="content",
         height=0,
     )
 
