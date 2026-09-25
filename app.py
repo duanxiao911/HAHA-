@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import time
+import traceback
 from html import escape
 from pathlib import Path
 
@@ -237,6 +240,7 @@ def _render_script_workspace_shell() -> None:
             "model_run_mode",
             "creator_model_status",
             "creator_model_status_choice",
+            "creator_run_attempt",
             "creator_brief",
             "creator_assets",
         ):
@@ -252,18 +256,18 @@ def _render_script_workspace_shell() -> None:
     asset_count = len(st.session_state.get("creator_assets", []) or [])
     model_router = get_model_router()
     model_choice = st.session_state.get("creator_model_choice", "自动选择")
-    previous_choice = st.session_state.get("creator_model_status_choice")
+    latest_attempt = st.session_state.get("creator_run_attempt")
     try:
         active_model_mode = model_router.resolve_text_mode(model_choice)
-        model_status = (
-            st.session_state.get("creator_model_status")
-            if previous_choice == model_choice
-            else None
-        ) or (
-            f"DeepSeek 可用 · {model_router.status().text_model}"
-            if active_model_mode == "deepseek"
-            else "本地演示 · 未调用模型 API"
-        )
+        model_status = None
+        if isinstance(latest_attempt, dict) and latest_attempt.get("choice") == model_choice:
+            model_status = latest_attempt.get("status_label")
+        if model_status is None:
+            model_status = (
+                f"DeepSeek 可用 · {model_router.status().text_model}"
+                if active_model_mode == "deepseek"
+                else "本地演示 · 未调用模型 API"
+            )
     except ModelCallError:
         model_status = "DeepSeek 未配置密钥"
     st.markdown(
@@ -279,9 +283,9 @@ def _render_script_workspace_shell() -> None:
         '<a href="#conversation-history"><i>历史会话</i><em>历史</em></a>'
         '</nav>'
         f'<div class="workbench-meta"><span><i></i><strong>{escape(model_status)}</strong><em>{escape(model_status)}</em></span>'
-        f'<b>知识库 <i>2</i></b><b>素材 <i>{asset_count}</i></b>'
+        f'<b>知识库 <i>3</i></b><b>素材 <i>{asset_count}</i></b>'
         '<details class="compact-more"><summary>•••</summary><div><a href="?space=script&amp;new=1">新建对话</a>'
-        '<a href="#conversation-history">历史会话</a><span>知识库 2</span>'
+        '<a href="#conversation-history">历史会话</a><span>知识库 3</span>'
         f'<span>素材 {asset_count}</span></div></details></div></header>',
         unsafe_allow_html=True,
     )
@@ -348,7 +352,10 @@ def _render_script_creator_horizontal() -> None:
                     unsafe_allow_html=True,
                 )
         with run_tab:
-            _render_review_panel(script if isinstance(script, ContentScript) else None)
+            _render_review_panel(
+                script if isinstance(script, ContentScript) else None,
+                st.session_state.get("creator_run_attempt"),
+            )
 
     with main:
         st.markdown('<div class="conversation-thread-marker"></div>', unsafe_allow_html=True)
@@ -380,7 +387,7 @@ def _render_script_creator_horizontal() -> None:
 
         if isinstance(script, ContentScript):
             with st.chat_message("assistant", avatar="🤖"):
-                st.markdown("我已经结合创作方法库和运营策略库完成了本轮内容方案。")
+                st.markdown("我已经结合非遗事实库、创作方法库和运营策略库完成了本轮内容方案。")
                 _render_script(script)
                 if st.session_state.get("creator_stage") != "judgment":
                     _render_visual_production_cards(script)
@@ -397,7 +404,7 @@ def _render_script_creator_horizontal() -> None:
                 help="自动选择会在 DeepSeek 密钥可用时调用 API，否则使用本地演示生成。",
             )
             context_space.markdown(
-                f'<div class="composer-context">当前上下文：创作方法库 · 运营策略库 · 小红书 · 45秒 · 素材 {asset_count}</div>',
+                f'<div class="composer-context">当前上下文：非遗事实库 · 创作方法库 · 运营策略库 · 小红书 · 45秒 · 素材 {asset_count}</div>',
                 unsafe_allow_html=True,
             )
             prompt = st.chat_input("告诉 HAHA 你想创作什么，或继续修改当前方案……")
@@ -466,17 +473,47 @@ def _brief_from_conversation(prompt: str) -> ContentBrief:
 
 
 def _run_creator_generation(brief: ContentBrief) -> None:
+    started = time.perf_counter()
+    choice = st.session_state.get("creator_model_choice", "自动选择")
     try:
         router = get_model_router()
-        choice = st.session_state.get("creator_model_choice", "自动选择")
         script, run_mode = generate_content_script_for_mode(brief, choice, router=router)
+        trace = script.retrieval_trace
+        model = script.model_evidence
+        elapsed_ms = round((time.perf_counter() - started) * 1000)
         st.session_state["model_run_mode"] = run_mode
         st.session_state["creator_model_status_choice"] = choice
         if run_mode == "api":
-            model_name = script.model_evidence.model if script.model_evidence else router.status().text_model
+            model_name = model.model if model else router.status().text_model
             st.session_state["creator_model_status"] = f"DeepSeek 已调用 · {model_name}"
         else:
             st.session_state["creator_model_status"] = "本地演示生成 · 未调用模型 API"
+        st.session_state["creator_run_attempt"] = {
+            "status": "success",
+            "status_label": "生成成功",
+            "choice": choice,
+            "provider": model.provider if model else "local-demo",
+            "model": model.model if model else (trace.model if trace else "local-demo-generator"),
+            "mode": "API" if model else "本地演示",
+            "request_id": model.request_id if model else "",
+            "latency_ms": model.latency_ms if model else elapsed_ms,
+            "input_tokens": model.input_tokens if model else None,
+            "output_tokens": model.output_tokens if model else None,
+            "knowledge_called": trace is not None,
+            "knowledge_bases": tuple(
+                name
+                for name, used in (
+                    ("非遗事实库", bool(trace and trace.fact_chunks_used)),
+                    ("创作方法库", bool(trace and trace.creative_chunks_used)),
+                    ("运营策略库", bool(trace and trace.operation_chunks_used)),
+                )
+                if used
+            ),
+            "run_id": trace.generation_id if trace else "",
+            "created_at": trace.created_at if trace else "",
+            "error": "",
+            "debug_error": "",
+        }
         st.session_state["generated_script"] = script
         st.session_state["creator_brief"] = brief
         st.session_state["creator_stage"] = "judgment"
@@ -485,12 +522,85 @@ def _run_creator_generation(brief: ContentBrief) -> None:
         )
         st.rerun()
     except (ValueError, ModelCallError) as exc:
+        evidence = exc.evidence if isinstance(exc, ModelCallError) else None
+        trace = exc.retrieval_trace if isinstance(exc, ModelCallError) else None
+        try:
+            selected_mode = get_model_router().resolve_text_mode(choice)
+        except ModelCallError:
+            selected_mode = "unavailable"
+        elapsed_ms = round((time.perf_counter() - started) * 1000)
         st.session_state["creator_model_status_choice"] = st.session_state.get(
             "creator_model_choice", "自动选择"
         )
         st.session_state["creator_model_status"] = "模型调用失败"
-        st.warning(str(exc))
+        debug_error = (
+            exc.detail if isinstance(exc, ModelCallError) else str(exc)
+        ) + "\n\n" + traceback.format_exc()
+        st.session_state["creator_run_attempt"] = {
+            "status": "failed",
+            "status_label": "生成失败",
+            "choice": choice,
+            "provider": evidence.provider if evidence else (
+                "deepseek" if selected_mode in {"deepseek", "unavailable"} else "local-demo"
+            ),
+            "model": evidence.model if evidence else (
+                os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
+                if selected_mode in {"deepseek", "unavailable"}
+                else "local-demo-generator"
+            ),
+            "mode": "API" if evidence or selected_mode == "deepseek" else "未调用 API",
+            "request_id": evidence.request_id if evidence else "",
+            "latency_ms": evidence.latency_ms if evidence else elapsed_ms,
+            "input_tokens": evidence.input_tokens if evidence else None,
+            "output_tokens": evidence.output_tokens if evidence else None,
+            "knowledge_called": trace is not None,
+            "knowledge_bases": tuple(
+                name
+                for name, used in (
+                    ("非遗事实库", bool(trace and trace.fact_chunks_used)),
+                    ("创作方法库", bool(trace and trace.creative_chunks_used)),
+                    ("运营策略库", bool(trace and trace.operation_chunks_used)),
+                )
+                if used
+            ),
+            "run_id": trace.generation_id if trace else "",
+            "created_at": trace.created_at if trace else "",
+            "error": str(exc),
+            "debug_error": _redact_sensitive_text(debug_error),
+        }
         st.rerun()
+    except Exception:
+        elapsed_ms = round((time.perf_counter() - started) * 1000)
+        debug_error = _redact_sensitive_text(traceback.format_exc())
+        st.session_state["creator_model_status_choice"] = choice
+        st.session_state["creator_model_status"] = "模型调用失败"
+        st.session_state["creator_run_attempt"] = {
+            "status": "failed",
+            "status_label": "生成失败",
+            "choice": choice,
+            "provider": "unknown",
+            "model": "unknown",
+            "mode": "调用未完成",
+            "request_id": "",
+            "latency_ms": elapsed_ms,
+            "input_tokens": None,
+            "output_tokens": None,
+            "knowledge_called": False,
+            "knowledge_bases": (),
+            "run_id": "",
+            "created_at": "",
+            "error": "生成失败，请查看诊断详情。",
+            "debug_error": debug_error,
+        }
+        st.rerun()
+
+
+def _redact_sensitive_text(value: str) -> str:
+    for key_name in ("DEEPSEEK_API_KEY", "ARK_API_KEY", "LAS_API_KEY"):
+        secret = os.getenv(key_name, "")
+        if secret:
+            value = value.replace(secret, "[REDACTED]")
+    return value
 
 
 def _render_visual_production_cards(script: ContentScript) -> None:
@@ -1099,21 +1209,39 @@ def _render_script(script: ContentScript) -> None:
         _navigate("publish")
 
 
-def _render_review_panel(script: ContentScript | None) -> None:
+def _render_review_panel(
+    script: ContentScript | None,
+    run_attempt: dict[str, object] | None = None,
+) -> None:
+    if run_attempt and run_attempt.get("status") == "failed":
+        _render_run_evidence(script, run_attempt)
+        st.error(str(run_attempt.get("error") or "生成失败。"))
+        if detail := str(run_attempt.get("debug_error") or ""):
+            with st.expander("开发诊断详情"):
+                st.code(detail, language="text")
+        return
     if script is None:
+        if run_attempt and run_attempt.get("status") == "success":
+            st.error("本次 Run 标记成功，但没有对应的生成结果。")
+            return
         st.markdown(
             '<section class="run-evidence idle"><div class="run-evidence-head">'
             '<span><i></i>RUN 未运行</span><b>等待生成</b></div>'
-            '<p>点击“生成本次创作判断”后，这里会显示双知识库的真实检索记录。</p></section>'
+            '<p>点击“生成本次创作判断”后，这里会显示三套知识库的真实检索记录。</p></section>'
             '<div class="review-empty"><span>生成后将在这里显示</span>'
             "<div>◇ <b>方法依据</b><small>创作方法知识库</small></div>"
             "<div>↗ <b>策略依据</b><small>运营策略知识库</small></div>"
-            "<div>⚠ <b>待事实核验</b><small>当前未接入事实知识库</small></div>"
+            "<div>✓ <b>事实依据</b><small>非遗事实知识库</small></div>"
             "<div>◆ <b>运营建议</b><small>平台与内容判断</small></div></div>",
             unsafe_allow_html=True,
         )
         return
-    _render_run_evidence(script)
+    if run_attempt and run_attempt.get("run_id") != (
+        script.retrieval_trace.generation_id if script.retrieval_trace else ""
+    ):
+        st.error("当前结果与最近一次 Run 不匹配，已隐藏旧证据。")
+        return
+    _render_run_evidence(script, run_attempt)
     st.markdown(f"#### 方法依据 · {len(script.method_sources)} 条")
     for chunk_id, title in script.method_sources:
         st.markdown(
@@ -1126,13 +1254,21 @@ def _render_review_panel(script: ContentScript | None) -> None:
             f'<div class="source-item"><b>[{escape(chunk_id)}]</b> {escape(title)}</div>',
             unsafe_allow_html=True,
         )
-    st.markdown("#### 待事实核验")
-    st.caption("当前未接入非遗事实知识库，以下内容不得作为确定事实直接发布。")
-    for item in script.fact_checks:
-        st.markdown(
-            f'<div class="audit-item risk"><b>待核验</b><span>{escape(item)}</span></div>',
-            unsafe_allow_html=True,
-        )
+    st.markdown(f"#### 事实依据 · {len(script.fact_sources)} 条")
+    if script.fact_sources:
+        for chunk_id, title, source_url in script.fact_sources:
+            st.markdown(
+                f'<div class="source-item"><b>[{escape(chunk_id)}]</b> {escape(title)} '
+                f'<a href="{escape(source_url)}" target="_blank">权威来源</a></div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.caption("事实库未命中准确项目，以下内容仍需人工核验。")
+        for item in script.fact_checks:
+            st.markdown(
+                f'<div class="audit-item risk"><b>待核验</b><span>{escape(item)}</span></div>',
+                unsafe_allow_html=True,
+            )
     st.markdown("#### 运营建议")
     st.markdown(
         '<div class="operation-grid">'
@@ -1146,7 +1282,32 @@ def _render_review_panel(script: ContentScript | None) -> None:
     st.info("建议先展示关键动作，再进入文化背景，避免前三秒信息量过大。")
 
 
-def _render_run_evidence(script: ContentScript) -> None:
+def _render_run_evidence(
+    script: ContentScript | None,
+    run_attempt: dict[str, object] | None = None,
+) -> None:
+    if run_attempt and run_attempt.get("status") == "failed":
+        knowledge_called = bool(run_attempt.get("knowledge_called"))
+        st.markdown(
+            '<section class="run-evidence failed">'
+            '<div class="run-evidence-head"><span>RUN 失败</span><b>本次调用未完成</b></div>'
+            f'<dl><dt>Provider</dt><dd>{escape(str(run_attempt.get("provider", "unknown")))}</dd>'
+            f'<dt>模型</dt><dd>{escape(str(run_attempt.get("model", "unknown")))}</dd>'
+            f'<dt>模式</dt><dd>{escape(str(run_attempt.get("mode", "unknown")))}</dd>'
+            f'<dt>状态</dt><dd>{escape(str(run_attempt.get("status_label", "生成失败")))}</dd>'
+            f'<dt>请求 ID</dt><dd>{escape(str(run_attempt.get("request_id") or "Provider 未返回"))}</dd>'
+            f'<dt>耗时</dt><dd>{escape(str(run_attempt.get("latency_ms", "未知")))} ms</dd>'
+            f'<dt>输入 / 输出 Token</dt><dd>{escape(str(run_attempt.get("input_tokens") if run_attempt.get("input_tokens") is not None else "未提供"))} / '
+            f'{escape(str(run_attempt.get("output_tokens") if run_attempt.get("output_tokens") is not None else "未提供"))}</dd>'
+            f'<dt>知识库</dt><dd>{"已调用：" + escape("、".join(run_attempt.get("knowledge_bases", ()))) if knowledge_called else "未调用"}</dd>'
+            f'<dt>Run ID</dt><dd>{escape(str(run_attempt.get("run_id") or "未生成"))}</dd></dl>'
+            '</section>',
+            unsafe_allow_html=True,
+        )
+        return
+    if script is None:
+        st.error("没有可展示的本次生成证据。")
+        return
     trace = script.retrieval_trace
     if trace is None:
         st.error("本次生成没有检索证据，请勿将结果视为已调用知识库。")
@@ -1162,36 +1323,71 @@ def _render_run_evidence(script: ContentScript) -> None:
         f'<em>{score_lookup.get(chunk_id, 0):.3f}</em></li>'
         for chunk_id, title in script.strategy_sources
     )
+    fact_rows = "".join(
+        f'<li><b>{escape(chunk_id)}</b><span>{escape(title)}</span>'
+        f'<em>{score_lookup.get(chunk_id, 0):.3f}</em></li>'
+        for chunk_id, title, _ in script.fact_sources
+    )
     model = script.model_evidence
+    provider = str(run_attempt.get("provider")) if run_attempt else (
+        model.provider if model else "local-demo"
+    )
+    model_name = str(run_attempt.get("model")) if run_attempt else (
+        model.model if model else trace.model
+    )
+    run_mode = str(run_attempt.get("mode")) if run_attempt else (
+        "API" if model else "本地演示"
+    )
+    run_id = str(run_attempt.get("run_id")) if run_attempt else trace.generation_id
+    run_status = str(run_attempt.get("status_label", "生成成功")) if run_attempt else "生成成功"
+    request_id = str(run_attempt.get("request_id", "")) if run_attempt else (
+        model.request_id if model else ""
+    )
+    latency_ms = run_attempt.get("latency_ms") if run_attempt else (
+        model.latency_ms if model else None
+    )
+    input_tokens = run_attempt.get("input_tokens") if run_attempt else (
+        model.input_tokens if model else None
+    )
+    output_tokens = run_attempt.get("output_tokens") if run_attempt else (
+        model.output_tokens if model else None
+    )
+    knowledge_called = bool(run_attempt.get("knowledge_called")) if run_attempt else True
     model_evidence = (
-        '<div class="model-evidence verified"><b>真实模型 API</b>'
-        f'<span>{escape(model.provider)} · {escape(model.model)}</span>'
-        f'<dl><dt>Request ID</dt><dd>{escape(model.request_id)}</dd>'
-        f'<dt>Token</dt><dd>{model.input_tokens} 输入 / {model.output_tokens} 输出</dd>'
-        f'<dt>耗时</dt><dd>{model.latency_ms} ms</dd></dl></div>'
-        if model
-        else '<div class="model-evidence local"><b>本地演示生成</b><span>未发生模型 API 调用</span></div>'
+        f'<div class="model-evidence {"verified" if model else "local"}">'
+        f'<b>{"真实模型 API" if model else "本地演示生成"}</b>'
+        f'<span>{escape(provider)} · {escape(model_name)} · {escape(run_mode)}</span>'
+        f'<dl><dt>请求 ID</dt><dd>{escape(request_id or "Provider 未返回")}</dd>'
+        f'<dt>输入 / 输出 Token</dt><dd>{escape(str(input_tokens if input_tokens is not None else "未提供"))} / '
+        f'{escape(str(output_tokens if output_tokens is not None else "未提供"))}</dd>'
+        f'<dt>耗时</dt><dd>{escape(str(latency_ms if latency_ms is not None else "未知"))} ms</dd>'
+        f'<dt>知识库调用</dt><dd>{"已调用" if knowledge_called else "未调用"}</dd></dl></div>'
     )
     st.markdown(
-        '<section class="run-evidence verified">'
-        '<div class="run-evidence-head"><span><i></i>RUN 已验证</span><b>双库调用成功</b></div>'
+        f'<section class="run-evidence {"verified" if run_attempt is None or run_attempt.get("status") == "success" else "failed"}">'
+        f'<div class="run-evidence-head"><span>RUN {escape(run_status)}</span><b>{"Knowledge & Context 检索完成" if knowledge_called else "未调用知识库"}</b></div>'
         '<div class="run-evidence-stats">'
         f'<span><b>{len(script.method_sources)}</b>方法命中</span>'
         f'<span><b>{len(script.strategy_sources)}</b>策略命中</span>'
-        '<span><b>2</b>独立查询</span></div>'
+        f'<span><b>{len(script.fact_sources)}</b>事实命中</span>'
+        f'<span><b>{3 if knowledge_called else 0}</b>独立查询</span></div>'
         + model_evidence
-        + f'<dl><dt>Run ID</dt><dd>{escape(trace.generation_id)}</dd>'
+        + f'<dl><dt>Run ID</dt><dd>{escape(run_id)}</dd>'
         f'<dt>知识版本</dt><dd>{escape(trace.document_version)}</dd>'
         f'<dt>运行时间</dt><dd>{escape(trace.created_at)}</dd></dl>'
         '<div class="run-query"><b>Creative Query</b>'
         f'<p>{escape(trace.creative_query)}</p></div>'
         '<div class="run-query"><b>Operation Query</b>'
         f'<p>{escape(trace.operation_query)}</p></div>'
+        '<div class="run-query"><b>Fact Query</b>'
+        f'<p>{escape(trace.fact_query)}</p></div>'
         '<div class="run-hit-group"><b>创作方法库命中与 Rerank 分</b>'
         f'<ul>{method_rows}</ul></div>'
         '<div class="run-hit-group"><b>运营策略库命中与 Rerank 分</b>'
         f'<ul>{strategy_rows}</ul></div>'
-        '<footer>来源：HAHA飞颐项目营销端总材料包(1).docx · 两库独立检索</footer>'
+        '<div class="run-hit-group"><b>非遗事实库命中与 Rerank 分</b>'
+        f'<ul>{fact_rows or "<li><span>未命中准确事实项目</span></li>"}</ul></div>'
+        '<footer>来源：haha非遗项目类别细化.docx + HAHA飞颐项目营销端总材料包(1).docx · 三库独立检索</footer>'
         "</section>",
         unsafe_allow_html=True,
     )

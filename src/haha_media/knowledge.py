@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
+from pathlib import Path
 from uuid import uuid4
 
 SOURCE_NAME = "HAHA飞颐项目营销端总材料包(1).docx"
+FACT_SOURCE_NAME = "haha非遗项目类别细化.docx"
+FACT_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "heritage_facts.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,13 +37,42 @@ class RetrievalHit:
 
 
 @dataclass(frozen=True, slots=True)
+class HeritageFact:
+    id: str
+    name: str
+    category: str
+    region: str
+    level: str
+    summary: str
+    history: str
+    core_craft: str
+    characteristics: str
+    representative_bearers: str
+    misconceptions: str
+    visual_points: str
+    authority: str
+    source_url: str
+    material_year: str
+    review_status: str
+    source_document: str = FACT_SOURCE_NAME
+
+
+@dataclass(frozen=True, slots=True)
+class FactRetrievalHit:
+    fact: HeritageFact
+    score: float
+
+
+@dataclass(frozen=True, slots=True)
 class RetrievalTrace:
     generation_id: str
     user_query: str
     creative_query: str
     operation_query: str
+    fact_query: str
     creative_chunks_used: tuple[str, ...]
     operation_chunks_used: tuple[str, ...]
+    fact_chunks_used: tuple[str, ...]
     rerank_scores: tuple[tuple[str, float], ...]
     document_version: str
     model: str
@@ -107,12 +141,65 @@ def retrieve_operation_strategies(query: str, limit: int = 5) -> tuple[Retrieval
     return _hybrid_search(query, OPERATION_STRATEGY_CHUNKS, limit)
 
 
+@lru_cache(maxsize=1)
+def load_heritage_facts() -> tuple[HeritageFact, ...]:
+    """Load the reviewed, versioned heritage catalogue bundled with the app."""
+    payload = json.loads(FACT_DATA_PATH.read_text(encoding="utf-8"))
+    records = tuple(HeritageFact(**record) for record in payload["records"])
+    if len(records) != payload["record_count"]:
+        raise ValueError("Heritage fact catalogue record count does not match its manifest")
+    return records
+
+
+def retrieve_heritage_facts(query: str, limit: int = 5) -> tuple[FactRetrievalHit, ...]:
+    """Entity-aware hybrid retrieval over reviewed heritage facts."""
+    query_tokens = _tokens(query)
+    query_terms = set(query_tokens)
+    normalized_query = re.sub(r"\s+", "", query.lower())
+    hits: list[FactRetrievalHit] = []
+    for fact in load_heritage_facts():
+        if fact.review_status != "已核验":
+            continue
+        text = " ".join(
+            (
+                fact.name,
+                fact.category,
+                fact.region,
+                fact.level,
+                fact.summary,
+                fact.history,
+                fact.core_craft,
+                fact.characteristics,
+                fact.representative_bearers,
+                fact.misconceptions,
+                fact.visual_points,
+            )
+        )
+        fact_tokens = _tokens(text)
+        keyword = len(query_terms & set(fact_tokens)) / max(1, len(query_terms))
+        semantic = _cosine(query_tokens, fact_tokens)
+        name = re.sub(r"\s+", "", fact.name.lower())
+        entity_bonus = 0.45 if name and name in normalized_query else 0.0
+        category_bonus = 0.12 if fact.category.lower() in query.lower() else 0.0
+        region_bonus = 0.08 if fact.region.lower() in query.lower() else 0.0
+        score = min(
+            1.0,
+            keyword * 0.28 + semantic * 0.27 + entity_bonus + category_bonus + region_bonus,
+        )
+        if score >= 0.12:
+            hits.append(FactRetrievalHit(fact, round(score, 3)))
+    hits.sort(key=lambda hit: (hit.score, hit.fact.id), reverse=True)
+    return tuple(hits[:limit])
+
+
 def build_retrieval_trace(
     user_query: str,
     creative_query: str,
     operation_query: str,
     creative_hits: tuple[RetrievalHit, ...],
     operation_hits: tuple[RetrievalHit, ...],
+    fact_query: str = "",
+    fact_hits: tuple[FactRetrievalHit, ...] = (),
 ) -> RetrievalTrace:
     hits = creative_hits + operation_hits
     return RetrievalTrace(
@@ -120,10 +207,13 @@ def build_retrieval_trace(
         user_query=user_query,
         creative_query=creative_query,
         operation_query=operation_query,
+        fact_query=fact_query,
         creative_chunks_used=tuple(hit.chunk.id for hit in creative_hits),
         operation_chunks_used=tuple(hit.chunk.id for hit in operation_hits),
-        rerank_scores=tuple((hit.chunk.id, hit.score) for hit in hits),
-        document_version="1.0",
+        fact_chunks_used=tuple(hit.fact.id for hit in fact_hits),
+        rerank_scores=tuple((hit.chunk.id, hit.score) for hit in hits)
+        + tuple((hit.fact.id, hit.score) for hit in fact_hits),
+        document_version="facts-1.0 / methods-1.0 / operations-1.0",
         model="deterministic-provider",
         created_at=datetime.now(UTC).isoformat(),
     )

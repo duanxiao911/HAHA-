@@ -1,6 +1,14 @@
 __pycache__/
 *.py[cod]
 .pytest_tmp/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
 .streamlit/
 model-config.ps1
 artifacts/
+%SystemDrive%/

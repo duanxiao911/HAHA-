@@ -1,5 +1,10 @@
 from haha_media.feed import STORIES
-from haha_media.knowledge import retrieve_creative_methods, retrieve_operation_strategies
+from haha_media.knowledge import (
+    load_heritage_facts,
+    retrieve_creative_methods,
+    retrieve_heritage_facts,
+    retrieve_operation_strategies,
+)
 from haha_media.script_writer import ContentBrief, generate_content_script
 
 
@@ -24,11 +29,13 @@ def test_script_generator_creates_a_claim_cautious_shooting_package() -> None:
     assert len(script.titles) >= 3
     assert script.method_sources
     assert script.strategy_sources
+    assert script.fact_sources
     assert all(chunk_id.startswith("M-") for chunk_id, _ in script.method_sources)
     assert all(chunk_id.startswith("O-") for chunk_id, _ in script.strategy_sources)
-    assert script.fact_checks
+    assert all(chunk_id.startswith("F-") for chunk_id, _, _ in script.fact_sources)
     assert script.retrieval_trace is not None
-    assert "事实库" not in " ".join(script.sources).replace("未接入非遗事实库", "")
+    assert script.retrieval_trace.fact_chunks_used
+    assert "ihchina.cn" in " ".join(script.sources)
 
 
 def test_two_knowledge_bases_are_retrieved_independently() -> None:
@@ -40,3 +47,15 @@ def test_two_knowledge_bases_are_retrieved_independently() -> None:
     assert all(hit.chunk.knowledge_base == "operation_strategy" for hit in strategies)
     assert methods[0].chunk.id.startswith("M-")
     assert strategies[0].chunk.id.startswith("O-")
+
+
+def test_reviewed_heritage_fact_catalogue_is_retrievable_and_traceable() -> None:
+    facts = load_heritage_facts()
+    hits = retrieve_heritage_facts("竹编 一片竹篾被慢慢压弯")
+
+    assert len(facts) == 164
+    assert hits
+    assert hits[0].fact.name == "竹编"
+    assert hits[0].fact.review_status == "已核验"
+    assert hits[0].fact.source_url == "https://www.ihchina.cn"
+    assert all(hit.fact.id.startswith("F-") for hit in hits)

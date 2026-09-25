@@ -16,6 +16,18 @@ TaskType = Literal["creation_judgement", "master_script", "storyboard", "publish
 class ModelCallError(RuntimeError):
     """A sanitized provider error safe to display in the application."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        detail: str | None = None,
+        evidence: CallEvidence | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.detail = detail or message
+        self.evidence = evidence
+        self.retrieval_trace = None
+
 
 @dataclass(frozen=True, slots=True)
 class CallEvidence:
@@ -112,7 +124,20 @@ class ModelRouter:
             "thinking": {"type": "disabled"},
         }
         response, headers, latency = self._post_json(
-            f"{self.deepseek_base_url}/chat/completions", self.deepseek_api_key, payload
+            f"{self.deepseek_base_url}/chat/completions",
+            self.deepseek_api_key,
+            payload,
+            provider="deepseek",
+            model=self.deepseek_model,
+        )
+        usage = response.get("usage", {})
+        evidence = CallEvidence(
+            provider="deepseek",
+            model=str(response.get("model", self.deepseek_model)),
+            request_id=str(response.get("id") or headers.get("x-request-id", "")),
+            latency_ms=latency,
+            input_tokens=int(usage.get("prompt_tokens", 0)),
+            output_tokens=int(usage.get("completion_tokens", 0)),
         )
         try:
             choice = response["choices"][0]
@@ -127,17 +152,18 @@ class ModelRouter:
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             finish_reason = response.get("choices", [{}])[0].get("finish_reason", "unknown")
             raise ModelCallError(
-                f"DeepSeek 返回了无法解析的结构化结果（finish_reason={finish_reason}）。"
+                f"DeepSeek 返回了无法解析的结构化结果（finish_reason={finish_reason}）。",
+                detail=f"Invalid structured response: {exc}; finish_reason={finish_reason}",
+                evidence=CallEvidence(
+                    evidence.provider,
+                    evidence.model,
+                    evidence.request_id,
+                    evidence.latency_ms,
+                    evidence.input_tokens,
+                    evidence.output_tokens,
+                    status="failed",
+                ),
             ) from exc
-        usage = response.get("usage", {})
-        evidence = CallEvidence(
-            provider="deepseek",
-            model=str(response.get("model", self.deepseek_model)),
-            request_id=str(response.get("id") or headers.get("x-request-id", "")),
-            latency_ms=latency,
-            input_tokens=int(usage.get("prompt_tokens", 0)),
-            output_tokens=int(usage.get("completion_tokens", 0)),
-        )
         return TextModelResult(data=data, evidence=evidence)
 
     def generate_image(
@@ -167,7 +193,11 @@ class ModelRouter:
         if count > 1:
             payload["sequential_image_generation_options"] = {"max_images": min(count, 15)}
         response, headers, latency = self._post_json(
-            f"{self.seedream_base_url}/images/generations", self.ark_api_key, payload
+            f"{self.seedream_base_url}/images/generations",
+            self.ark_api_key,
+            payload,
+            provider="volcengine",
+            model=self.seedream_model,
         )
         images = tuple(
             str(item["url"])
@@ -187,7 +217,13 @@ class ModelRouter:
         return ImageModelResult(images=images, evidence=evidence)
 
     def _post_json(
-        self, url: str, api_key: str, payload: dict[str, Any]
+        self,
+        url: str,
+        api_key: str,
+        payload: dict[str, Any],
+        *,
+        provider: str,
+        model: str,
     ) -> tuple[dict[str, Any], dict[str, str], int]:
         request = urllib.request.Request(
             url,
@@ -201,17 +237,49 @@ class ModelRouter:
                 raw = response.read().decode("utf-8")
                 headers = {key.lower(): value for key, value in response.headers.items()}
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:500]
-            raise ModelCallError(f"模型服务返回 HTTP {exc.code}：{detail}") from exc
+            latency = round((time.perf_counter() - started) * 1000)
+            headers = {key.lower(): value for key, value in (exc.headers or {}).items()}
+            detail = exc.read().decode("utf-8", errors="replace")
+            detail = detail.replace(api_key, "[REDACTED]") if api_key else detail
+            evidence = CallEvidence(
+                provider, model, headers.get("x-request-id", ""), latency, status="failed"
+            )
+            raise ModelCallError(
+                f"模型服务返回 HTTP {exc.code}。",
+                detail=f"HTTP {exc.code}: {detail or exc.reason}",
+                evidence=evidence,
+            ) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise ModelCallError("模型服务连接失败或超时，请检查网络与 API 配置。") from exc
+            latency = round((time.perf_counter() - started) * 1000)
+            reason = getattr(exc, "reason", exc)
+            detail = f"{type(exc).__name__}: {reason}"
+            detail = detail.replace(api_key, "[REDACTED]") if api_key else detail
+            raise ModelCallError(
+                "模型服务连接失败或超时，请检查网络与 API 配置。",
+                detail=detail,
+                evidence=CallEvidence(provider, model, "", latency, status="failed"),
+            ) from exc
         latency = round((time.perf_counter() - started) * 1000)
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise ModelCallError("模型服务返回了无效 JSON。") from exc
+            detail = f"Invalid JSON response: {exc}; body={raw[:1000]}"
+            detail = detail.replace(api_key, "[REDACTED]") if api_key else detail
+            raise ModelCallError(
+                "模型服务返回了无效 JSON。",
+                detail=detail,
+                evidence=CallEvidence(
+                    provider, model, headers.get("x-request-id", ""), latency, status="failed"
+                ),
+            ) from exc
         if not isinstance(parsed, dict):
-            raise ModelCallError("模型服务返回格式不正确。")
+            raise ModelCallError(
+                "模型服务返回格式不正确。",
+                detail=f"Expected a JSON object, got {type(parsed).__name__}.",
+                evidence=CallEvidence(
+                    provider, model, headers.get("x-request-id", ""), latency, status="failed"
+                ),
+            )
         return parsed, headers, latency
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
+from typing import NoReturn
 
 from haha_media.knowledge import (
     CREATIVE_METHOD_CHUNKS,
@@ -11,9 +12,10 @@ from haha_media.knowledge import (
     RetrievalTrace,
     build_retrieval_trace,
     retrieve_creative_methods,
+    retrieve_heritage_facts,
     retrieve_operation_strategies,
 )
-from haha_media.model_router import CallEvidence, ModelRouter, get_model_router
+from haha_media.model_router import CallEvidence, ModelCallError, ModelRouter, get_model_router
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +54,7 @@ class ContentScript:
     fact_checks: tuple[str, ...] = ()
     retrieval_trace: RetrievalTrace | None = None
     model_evidence: CallEvidence | None = None
+    fact_sources: tuple[tuple[str, str, str], ...] = ()
 
 
 def generate_content_script(brief: ContentBrief) -> ContentScript:
@@ -70,11 +73,20 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
     operation_query = " ".join(
         (brief.platform, brief.goal, brief.audience, brief.duration, brief.aspect_ratio, "前三秒 Hook 标题 封面 互动")
     )
+    fact_query = " ".join((craft, context, "地域 级别 历史 工艺 传承人 视觉点 常见误区"))
     creative_hits = retrieve_creative_methods(creative_query, limit=5)
     operation_hits = retrieve_operation_strategies(operation_query, limit=5)
+    fact_hits = retrieve_heritage_facts(fact_query, limit=5)
     trace = build_retrieval_trace(
-        user_query, creative_query, operation_query, creative_hits, operation_hits
+        user_query,
+        creative_query,
+        operation_query,
+        creative_hits,
+        operation_hits,
+        fact_query,
+        fact_hits,
     )
+    trace = replace(trace, model="local-demo-generator")
     title = f"{craft}：把时间留在手上"
     hook = f"你见过 {craft} 的这一刻吗？先别急着划走。"
     voiceover = (
@@ -185,10 +197,16 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
     )
     covers = (f"{craft}成形的一刻", "手艺不会说话，细节会", "这一瞬间值得被看见")
     interactions = ("你最想继续看哪一道工序？", "下一次想认识哪一门手艺？")
-    sources = ("当前未接入非遗事实库", "创作者现场资料 · 待补充并核验")
+    sources = tuple(
+        f"{hit.fact.authority} · {hit.fact.source_url} · {hit.fact.material_year}"
+        for hit in fact_hits
+    ) or ("事实库未命中 · 请补充项目准确名称", "创作者现场资料 · 待补充并核验")
     audits = (
         ("通过", "项目名称在全文保持一致"),
-        ("需确认", "地域、非遗级别与代表人物尚未提供权威来源"),
+        (
+            "通过" if fact_hits else "需确认",
+            "非遗事实库已命中并保留来源" if fact_hits else "地域、非遗级别与代表人物尚未匹配权威来源",
+        ),
         ("风险", "禁止加入未经来源支持的明确起源年份"),
         ("通过", "镜头与情绪表达已与事实陈述分离"),
     )
@@ -201,30 +219,34 @@ def generate_content_script(brief: ContentBrief) -> ContentScript:
     )
     method_sources = tuple((hit.chunk.id, hit.chunk.title) for hit in creative_hits)
     strategy_sources = tuple((hit.chunk.id, hit.chunk.title) for hit in operation_hits)
-    fact_checks = (
+    fact_sources = tuple(
+        (hit.fact.id, hit.fact.name, hit.fact.source_url) for hit in fact_hits
+    )
+    fact_checks = () if fact_hits else (
         f"{craft} 的起源年代、地域归属与非遗级别",
         "具体人物身份、传承关系及代表性称号",
         "材料、工序与纹样含义等客观工艺陈述",
     )
     return ContentScript(
-        title,
-        hook,
-        voiceover,
-        shots,
-        caption,
-        tags,
-        judgment,
-        storyboard,
-        titles,
-        covers,
-        interactions,
-        sources,
-        audits,
-        operation_scores,
-        method_sources,
-        strategy_sources,
-        fact_checks,
-        trace,
+        title=title,
+        hook=hook,
+        voiceover=voiceover,
+        shots=shots,
+        caption=caption,
+        tags=tags,
+        judgment=judgment,
+        storyboard=storyboard,
+        titles=titles,
+        covers=covers,
+        interactions=interactions,
+        sources=sources,
+        audits=audits,
+        operation_scores=operation_scores,
+        method_sources=method_sources,
+        strategy_sources=strategy_sources,
+        fact_checks=fact_checks,
+        retrieval_trace=trace,
+        fact_sources=fact_sources,
     )
 
 
@@ -248,9 +270,18 @@ def generate_content_script_with_model(
         for chunk_id, _ in base.strategy_sources
         if chunk_id in strategy_lookup
     )
-    system_prompt = """你是 HAHA AI 图文脚本创作系统。你会收到两个严格分区的知识上下文。
-CREATIVE_METHOD_CONTEXT 只回答怎么创作；OPERATION_STRATEGY_CONTEXT 只回答怎么适配平台和受众。
-它们都不是非遗事实来源。不得自行确认历史、地域、人物身份、非遗级别或起源年代；相关陈述必须标记待事实核验。
+    fact_hits = retrieve_heritage_facts(base.retrieval_trace.fact_query, limit=5) if base.retrieval_trace else ()
+    fact_context = "\n\n".join(
+        f"[{hit.fact.id}] 项目：{hit.fact.name}\n类别：{hit.fact.category}\n地域：{hit.fact.region}\n"
+        f"级别：{hit.fact.level}\n简介：{hit.fact.summary}\n历史：{hit.fact.history}\n"
+        f"核心工艺：{hit.fact.core_craft}\n特点：{hit.fact.characteristics}\n"
+        f"代表性传承人：{hit.fact.representative_bearers}\n常见误区：{hit.fact.misconceptions}\n"
+        f"视觉点：{hit.fact.visual_points}\n来源：{hit.fact.authority} {hit.fact.source_url}（{hit.fact.material_year}）"
+        for hit in fact_hits
+    )
+    system_prompt = """你是 HAHA AI 图文脚本创作系统。你会收到三个严格分区的知识上下文。
+CREATIVE_METHOD_CONTEXT 只回答怎么创作；OPERATION_STRATEGY_CONTEXT 只回答怎么适配平台和受众；HERITAGE_FACT_CONTEXT 是唯一允许引用的非遗事实来源。
+历史、地域、人物身份、非遗级别、起源年代和工艺陈述必须能由 HERITAGE_FACT_CONTEXT 支持；未命中的内容必须标记待事实核验，禁止推断或补写。
 请只输出合法 JSON，不要输出 Markdown。JSON 必须包含 title、hook、voiceover、shots、caption、tags 六个字段。
 voiceover 和 shots 必须是字符串数组，tags 也是字符串数组。"""
     user_prompt = f"""创作设定：
@@ -264,35 +295,70 @@ voiceover 和 shots 必须是字符串数组，tags 也是字符串数组。"""
 {strategy_context}
 </OPERATION_STRATEGY_CONTEXT>
 
-生成一份可拍摄的短内容方案。不要添加上下文没有提供的文化事实。"""
-    result = active_router.generate_json(
-        "creation_judgement",
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=0.35,
-        max_tokens=4096,
-    )
+<HERITAGE_FACT_CONTEXT>
+{fact_context or "未命中已核验事实记录"}
+</HERITAGE_FACT_CONTEXT>
+
+生成一份可拍摄的短内容方案。不要添加事实上下文没有提供的文化事实。"""
+    try:
+        result = active_router.generate_json(
+            "creation_judgement",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.35,
+            max_tokens=4096,
+        )
+    except ModelCallError as exc:
+        exc.retrieval_trace = base.retrieval_trace
+        raise
     data = result.data
 
-    def text_value(key: str, fallback: str) -> str:
-        value = data.get(key)
-        return value.strip() if isinstance(value, str) and value.strip() else fallback
+    def invalid_model_output(message: str, detail: str) -> NoReturn:
+        error = ModelCallError(
+            message,
+            detail=detail,
+            evidence=replace(result.evidence, status="failed"),
+        )
+        error.retrieval_trace = base.retrieval_trace
+        raise error
 
-    def tuple_value(key: str, fallback: tuple[str, ...], minimum: int = 1) -> tuple[str, ...]:
+    def text_value(key: str) -> str:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        invalid_model_output(
+            f"DeepSeek 返回结果缺少必需字段 {key}。",
+            f"Required non-empty string field missing or invalid: {key}",
+        )
+
+    def tuple_value(key: str, minimum: int = 1) -> tuple[str, ...]:
         value = data.get(key)
         if not isinstance(value, list):
-            return fallback
+            invalid_model_output(
+                f"DeepSeek 返回结果中的 {key} 格式不正确。",
+                f"Required array field missing or invalid: {key}",
+            )
         items = tuple(str(item).strip() for item in value if str(item).strip())
-        return items if len(items) >= minimum else fallback
+        if len(items) < minimum:
+            invalid_model_output(
+                f"DeepSeek 返回结果中的 {key} 内容不足。",
+                f"Field {key} requires at least {minimum} non-empty items; got {len(items)}",
+            )
+        return items
 
     return replace(
         base,
-        title=text_value("title", base.title),
-        hook=text_value("hook", base.hook),
-        voiceover=tuple_value("voiceover", base.voiceover, 3),
-        shots=tuple_value("shots", base.shots, 3),
-        caption=text_value("caption", base.caption),
-        tags=tuple_value("tags", base.tags, 2),
+        title=text_value("title"),
+        hook=text_value("hook"),
+        voiceover=tuple_value("voiceover", 3),
+        shots=tuple_value("shots", 3),
+        caption=text_value("caption"),
+        tags=tuple_value("tags", 2),
+        retrieval_trace=(
+            replace(base.retrieval_trace, model=result.evidence.model)
+            if base.retrieval_trace is not None
+            else None
+        ),
         model_evidence=result.evidence,
     )
 
