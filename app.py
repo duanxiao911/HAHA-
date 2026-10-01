@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 import traceback
+from dataclasses import replace
 from html import escape
 from pathlib import Path
 
@@ -20,8 +22,16 @@ sys.path.insert(0, SRC_PATH)
 import streamlit as st  # noqa: E402
 from streamlit.errors import StreamlitSecretNotFoundError  # noqa: E402
 
+from haha_media.asset_context import build_asset_context, extract_asset  # noqa: E402
 from haha_media.feed import STORIES  # noqa: E402
-from haha_media.model_router import ModelCallError, get_model_router  # noqa: E402
+from haha_media.knowledge import load_heritage_facts  # noqa: E402
+from haha_media.model_router import (  # noqa: E402
+    DEFAULT_TEXT_MODEL_LABEL,
+    TEXT_MODEL_OPTIONS,
+    ModelCallError,
+    get_model_router,
+)
+from haha_media.project_store import list_projects, load_project, save_project  # noqa: E402
 from haha_media.script_writer import (  # noqa: E402
     ContentBrief,
     ContentScript,
@@ -30,6 +40,34 @@ from haha_media.script_writer import (  # noqa: E402
     generate_content_script_with_model,
 )
 from haha_media.theme import apply_theme  # noqa: E402
+
+CREATOR_STATE_VERSION = "parameter-pipeline-v6"
+CREATOR_STATE_KEYS = (
+    "generated_script",
+    "creator_messages",
+    "creator_stage",
+    "model_run_mode",
+    "creator_model_status",
+    "creator_model_status_choice",
+    "creator_run_attempt",
+    "creator_brief",
+    "creator_assets",
+    "creator_parameter_sync_pending",
+    "creator_param_craft",
+    "creator_param_story_seed",
+    "creator_param_goals",
+    "creator_param_audience",
+    "creator_param_platform",
+    "creator_param_duration",
+    "creator_param_aspect",
+    "creator_param_tone",
+    "creator_asset_context",
+    "creator_project_id",
+    "creator_first_frames",
+    "creator_image_evidence",
+    "creator_parameter_feedback",
+    "creator_submitted_parameters",
+)
 
 CATEGORY_LABELS = {
     "all": "首页",
@@ -154,31 +192,15 @@ def _install_scroll_navigation() -> None:
 def _install_scroll_state(
     *, selector: str, class_name: str, enter_at: int, exit_at: int, cleanup_name: str
 ) -> None:
-    """Attach trusted scroll behavior without mounting a stateful custom component."""
-    st.html(
-        f"""
-        <script>
-        (() => {{
-          if (window.{cleanup_name}) window.{cleanup_name}();
-          const scroller = document.querySelector('[data-testid="stMain"]');
-          const target = document.querySelector('{selector}');
-          if (!scroller || !target) return;
-          let compact = target.classList.contains('{class_name}') || scroller.scrollTop > {enter_at};
-          const render = () => {{
-            const y = scroller.scrollTop;
-            if (!compact && y > {enter_at}) compact = true;
-            else if (compact && y <= {exit_at}) compact = false;
-            target.classList.toggle('{class_name}', compact);
-          }};
-          scroller.addEventListener('scroll', render, {{ passive: true }});
-          render();
-          window.{cleanup_name} = () => scroller.removeEventListener('scroll', render);
-        }})();
-        </script>
-        """,
-        width="content",
-        unsafe_allow_javascript=True,
-    )
+    """Keep sticky headers stable without injecting rerun-sensitive JavaScript.
+
+    Streamlit owns the page DOM and may replace nodes after a slow model call. A
+    script that retains references to those nodes can race React reconciliation
+    and surface ``removeChild`` errors. Sticky positioning remains handled by the
+    page stylesheet; compact-on-scroll is intentionally disabled until it can be
+    implemented as a lifecycle-safe component.
+    """
+    del selector, class_name, enter_at, exit_at, cleanup_name
 
 
 def _render_module_placeholder(module: str) -> None:
@@ -265,30 +287,23 @@ def _render_creator_route(space: str) -> None:
 
 
 def _render_script_workspace_shell() -> None:
-    if str(st.query_params.get("new", "")) == "1":
-        for key in (
-            "generated_script",
-            "creator_messages",
-            "creator_stage",
-            "model_run_mode",
-            "creator_model_status",
-            "creator_model_status_choice",
-            "creator_run_attempt",
-            "creator_brief",
-            "creator_assets",
-            "creator_parameter_sync_pending",
-            "creator_param_craft",
-            "creator_param_story_seed",
-            "creator_param_goals",
-            "creator_param_audience",
-            "creator_param_platform",
-            "creator_param_duration",
-            "creator_param_aspect",
-            "creator_param_tone",
-        ):
+    stale_state = st.session_state.get("creator_state_version") != CREATOR_STATE_VERSION
+    new_conversation = str(st.query_params.get("new", "")) == "1"
+    if stale_state or new_conversation:
+        for key in CREATOR_STATE_KEYS:
             st.session_state.pop(key, None)
-        st.query_params.pop("new", None)
+        st.session_state["creator_state_version"] = CREATOR_STATE_VERSION
+        if new_conversation:
+            st.query_params.pop("new", None)
         st.rerun()
+    requested_model = str(st.query_params.get("model", ""))
+    model_from_query = {
+        "local": "本地演示",
+        "flash": "DeepSeek-V4.1-Flash",
+        "pro": "DeepSeek-V4-Pro",
+    }.get(requested_model)
+    if model_from_query and "creator_model_choice" not in st.session_state:
+        st.session_state["creator_model_choice"] = model_from_query
     stage = str(st.session_state.get("creator_stage", "settings"))
     stage_order = {"settings": 1, "judgment": 2, "master": 3, "storyboard": 4, "publish": 5, "audit": 6}
     requested_stage = str(st.query_params.get("stage", ""))
@@ -297,7 +312,7 @@ def _render_script_workspace_shell() -> None:
         st.session_state["creator_stage"] = stage
     asset_count = len(st.session_state.get("creator_assets", []) or [])
     model_router = get_model_router()
-    model_choice = st.session_state.get("creator_model_choice", "自动选择")
+    model_choice = st.session_state.get("creator_model_choice", DEFAULT_TEXT_MODEL_LABEL)
     latest_attempt = st.session_state.get("creator_run_attempt")
     try:
         active_model_mode = model_router.resolve_text_mode(model_choice)
@@ -306,7 +321,7 @@ def _render_script_workspace_shell() -> None:
             model_status = latest_attempt.get("status_label")
         if model_status is None:
             model_status = (
-                f"DeepSeek 可用 · {model_router.status().text_model}"
+                f"模型可用 · {model_router.resolve_text_model(model_choice)}"
                 if active_model_mode == "deepseek"
                 else "本地演示 · 未调用模型 API"
             )
@@ -322,16 +337,18 @@ def _render_script_workspace_shell() -> None:
         '<a class="primary" href="?space=script">智能工作台</a></div></details>'
         '<div><b>HAHA AI创作台</b><span>智能对话工作台</span></div></div>'
         '<nav class="workbench-actions"><a href="?space=script&amp;new=1">＋ <i>新建对话</i><em>新建</em></a>'
-        '<a href="#conversation-history"><i>历史会话</i><em>历史</em></a>'
+        '<a href="?space=script&amp;history=1"><i>历史会话</i><em>历史</em></a>'
         '</nav>'
         f'<div class="workbench-meta"><span><i></i><strong>{escape(model_status)}</strong><em>{escape(model_status)}</em></span>'
         f'<b>知识库 <i>3</i></b><b>素材 <i>{asset_count}</i></b>'
         '<details class="compact-more"><summary>•••</summary><div><a href="?space=script&amp;new=1">新建对话</a>'
-        '<a href="#conversation-history">历史会话</a><span>知识库 3</span>'
+        '<a href="?space=script&amp;history=1">历史会话</a><span>知识库 3</span>'
         f'<span>素材 {asset_count}</span></div></details></div></header>',
         unsafe_allow_html=True,
     )
     _install_workbench_header_scroll()
+    if str(st.query_params.get("history", "")) == "1":
+        _render_conversation_history()
     _render_script_creator_horizontal()
 
 
@@ -367,12 +384,20 @@ def _render_script_creator_horizontal() -> None:
                 key="creator_assets",
             )
             if assets:
-                for asset in assets:
+                extracted_assets = [
+                    extract_asset(asset.name, asset.getvalue()) for asset in assets
+                ]
+                st.session_state["creator_asset_context"] = build_asset_context(
+                    extracted_assets
+                )
+                for asset in extracted_assets:
                     st.markdown(
-                        f'<div class="asset-row"><b>{escape(asset.name)}</b><span>已挂载</span></div>',
+                        f'<div class="asset-row"><b>{escape(asset.name)}</b>'
+                        f'<span>{escape(asset.status)}</span></div>',
                         unsafe_allow_html=True,
                     )
             else:
+                st.session_state["creator_asset_context"] = ""
                 st.markdown(
                     '<div class="asset-empty">尚未挂载素材<br><span>参考图、文档和脚本片段会进入当前对话上下文</span></div>',
                     unsafe_allow_html=True,
@@ -392,6 +417,8 @@ def _render_script_creator_horizontal() -> None:
                 f'<span>平台 {escape(brief_state.platform)}</span>'
                 f'<span>{escape(brief_state.goal)}</span>'
                 f'<span>{escape(brief_state.duration)}</span>'
+                f'<span>{escape(brief_state.aspect_ratio)}</span>'
+                f'<span>{escape(brief_state.tone)}</span>'
                 f'<span>{escape(brief_state.audience)}</span>'
             )
         else:
@@ -426,18 +453,18 @@ def _render_script_creator_horizontal() -> None:
             model_option, context_space = st.columns((2, 6), gap="small")
             model_option.selectbox(
                 "生成模型",
-                ("自动选择", "DeepSeek", "本地演示"),
+                (*TEXT_MODEL_OPTIONS.keys(), "本地演示"),
                 key="creator_model_choice",
                 label_visibility="collapsed",
-                help="自动选择会在 DeepSeek 密钥可用时调用 API，否则使用本地演示生成。",
+                help="Flash 响应更快、成本更低；Pro 适合复杂策划。选择会直接控制本次 API 请求使用的模型。",
             )
             context_space.markdown(
                 f'<div class="composer-context">{context_status}：非遗事实库 · 创作方法库 · 运营策略库 · '
                 f'{escape(context_brief.platform)} · {escape(context_brief.duration)} · '
-                f'{escape(context_brief.aspect_ratio)} · 素材 {asset_count}</div>',
+                f'{escape(context_brief.aspect_ratio)} · {escape(context_brief.tone)} · 素材 {asset_count}</div>',
                 unsafe_allow_html=True,
             )
-            prompt = st.chat_input("告诉 HAHA 你想创作什么，或继续修改当前方案……")
+            prompt = st.chat_input("按右侧当前参数生成，或继续修改当前方案……")
 
     if generated:
         _run_creator_generation(draft_brief)
@@ -445,14 +472,9 @@ def _render_script_creator_horizontal() -> None:
         messages.append({"role": "user", "content": prompt})
         current_script = st.session_state.get("generated_script")
         if isinstance(current_script, ContentScript):
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": "收到。我会保留当前知识依据，把你的要求应用到下一轮生成。",
-                }
-            )
+            _run_creator_revision(prompt)
         else:
-            brief = _brief_from_conversation(prompt)
+            brief = _brief_from_conversation(prompt, base=draft_brief)
             _run_creator_generation(brief)
         st.rerun()
 
@@ -483,76 +505,144 @@ def _sync_creator_parameter_state() -> None:
             st.session_state[key] = value
 
 
+def _capture_creator_parameter_submission() -> None:
+    """Freeze the browser widget values before Streamlit starts the submit rerun."""
+    st.session_state["creator_submitted_parameters"] = {
+        "craft": str(st.session_state.get("creator_param_craft", "")),
+        "story_seed": str(st.session_state.get("creator_param_story_seed", "")),
+        "audience": str(st.session_state.get("creator_param_audience", "")),
+        "platform": str(st.session_state.get("creator_param_platform", "")),
+        "tone": str(st.session_state.get("creator_param_tone", "")),
+        "goal": " + ".join(st.session_state.get("creator_param_goals", ())) or "文化科普",
+        "duration": str(st.session_state.get("creator_param_duration", "")),
+        "aspect_ratio": str(st.session_state.get("creator_param_aspect", "")),
+    }
+
+
 def _render_compact_creator_settings(*, has_result: bool) -> tuple[bool, ContentBrief]:
+    st.caption(f"参数链路版本：{CREATOR_STATE_VERSION}")
     st.caption(
-        "这里是待应用参数。修改后点击下方按钮，才会重新检索知识库并调用当前模型。"
+        "每次选择会立即同步；点击按钮时冻结当前参数，再检索知识库并调用模型。"
     )
-    with st.form("conversation_creator_settings", border=False):
-        craft = st.text_input(
-            "创作主题", placeholder="白族扎染、龙泉青瓷、竹编", key="creator_param_craft"
-        )
-        story_seed = st.text_area(
-            "想讲的一个瞬间", height=84, key="creator_param_story_seed"
-        )
-        goals = st.multiselect(
-            "内容目标",
-            ("文化科普", "人物故事", "工艺展示", "情绪表达", "商品故事", "收藏型内容"),
-            max_selections=2,
-            key="creator_param_goals",
-        )
-        audience = st.selectbox(
-            "目标受众",
-            ("第一次接触非遗的人", "年轻学生", "传统文化爱好者", "手作爱好者", "海外中国文化兴趣用户"),
-            key="creator_param_audience",
-        )
-        first, second = st.columns(2)
-        platform = first.selectbox(
-            "发布平台",
-            ("抖音", "小红书", "B站", "视频号", "TikTok"),
-            key="creator_param_platform",
-        )
-        duration = second.selectbox(
-            "时长", ("15秒", "30秒", "45秒", "60秒", "90秒"), key="creator_param_duration"
-        )
-        aspect = first.selectbox(
-            "画幅", ("9:16", "16:9", "1:1", "3:4"), key="creator_param_aspect"
-        )
-        tone = second.selectbox(
-            "表达气质",
-            ("安静观察", "纪录片", "年轻轻快", "人物纪实", "诗意东方", "工艺满足感"),
-            key="creator_param_tone",
-        )
-        generated = st.form_submit_button(
-            "应用参数并重新生成" if has_result else "应用参数并生成创作判断",
-            type="primary",
-            width="stretch",
-        )
-    return generated, ContentBrief(
-        craft,
-        story_seed,
-        audience,
-        platform,
-        tone,
-        " + ".join(goals) or "文化科普",
-        duration,
-        aspect,
+    craft = st.text_input(
+        "创作主题", placeholder="白族扎染、龙泉青瓷、竹编", key="creator_param_craft"
     )
+    story_seed = st.text_area(
+        "想讲的一个瞬间", height=84, key="creator_param_story_seed"
+    )
+    goals = st.multiselect(
+        "内容目标",
+        ("文化科普", "人物故事", "工艺展示", "情绪表达", "商品故事", "收藏型内容"),
+        max_selections=2,
+        key="creator_param_goals",
+    )
+    audience = st.selectbox(
+        "目标受众",
+        ("第一次接触非遗的人", "年轻学生", "传统文化爱好者", "手作爱好者", "海外中国文化兴趣用户"),
+        key="creator_param_audience",
+    )
+    first, second = st.columns(2)
+    platform = first.selectbox(
+        "发布平台",
+        ("抖音", "小红书", "B站", "视频号", "TikTok"),
+        key="creator_param_platform",
+    )
+    duration = second.selectbox(
+        "时长", ("15秒", "30秒", "45秒", "60秒", "90秒"), key="creator_param_duration"
+    )
+    aspect = first.selectbox(
+        "画幅", ("9:16", "16:9", "1:1", "3:4"), key="creator_param_aspect"
+    )
+    tone = second.selectbox(
+        "表达气质",
+        ("安静观察", "纪录片", "年轻轻快", "人物纪实", "诗意东方", "工艺满足感"),
+        key="creator_param_tone",
+    )
+    st.info(
+        f"本次待提交：{platform} · {duration} · {aspect} · {tone}",
+        icon=":material/tune:",
+    )
+    generated = st.button(
+        "应用参数并重新生成" if has_result else "应用参数并生成创作判断",
+        key="apply-creator-parameters",
+        type="primary",
+        width="stretch",
+        on_click=_capture_creator_parameter_submission,
+    )
+    feedback = st.session_state.get("creator_parameter_feedback")
+    if has_result and isinstance(feedback, dict):
+        message = str(feedback.get("message", ""))
+        if message:
+            if feedback.get("status") == "success":
+                st.success(message, icon="✅")
+            else:
+                st.error(message, icon="⚠️")
+    submitted = st.session_state.get("creator_submitted_parameters") if generated else None
+    draft = (
+        ContentBrief(**submitted)
+        if isinstance(submitted, dict)
+        else ContentBrief(
+            craft,
+            story_seed,
+            audience,
+            platform,
+            tone,
+            " + ".join(goals) or "文化科普",
+            duration,
+            aspect,
+        )
+    )
+    return generated, draft
 
 
-def _brief_from_conversation(prompt: str) -> ContentBrief:
-    topic = prompt.strip()[:32]
+def _brief_from_conversation(prompt: str, *, base: ContentBrief | None = None) -> ContentBrief:
+    clean_prompt = prompt.strip()
+    known_names = sorted(
+        (fact.name for fact in load_heritage_facts() if fact.name in clean_prompt),
+        key=len,
+        reverse=True,
+    )
+    topic = known_names[0] if known_names else ((base.craft if base else "") or clean_prompt[:32])
+    platform = next(
+        (name for name in ("小红书", "抖音", "B站", "视频号", "TikTok") if name in clean_prompt),
+        base.platform if base else "小红书",
+    )
+    duration_match = re.search(r"(15|30|45|60|90)\s*秒", clean_prompt)
+    duration = (
+        f"{duration_match.group(1)}秒"
+        if duration_match
+        else (base.duration if base else "45秒")
+    )
+    goal = next(
+        (name for name in ("文化科普", "人物故事", "工艺展示", "情绪表达", "商品故事") if name in clean_prompt),
+        base.goal if base else "文化科普",
+    )
     return ContentBrief(
         topic,
-        prompt.strip(),
-        "第一次接触非遗的人",
-        "小红书",
-        "安静观察",
+        (base.story_seed if base and base.story_seed.strip() else clean_prompt),
+        base.audience if base else "第一次接触非遗的人",
+        platform,
+        base.tone if base else "安静观察",
+        goal,
+        duration,
+        base.aspect_ratio if base else "9:16",
+        base.content_count if base else "单条内容",
+        base.fact_level if base else "平衡",
+        base.model_tier if base else "标准",
+        asset_context=base.asset_context if base else "",
     )
 
 
 def _run_creator_generation(brief: ContentBrief) -> None:
     started = time.perf_counter()
-    choice = st.session_state.get("creator_model_choice", "自动选择")
+    choice = st.session_state.get("creator_model_choice", DEFAULT_TEXT_MODEL_LABEL)
+    had_result = isinstance(st.session_state.get("generated_script"), ContentScript)
+    st.session_state.pop("creator_parameter_feedback", None)
+    st.session_state.pop("creator_submitted_parameters", None)
+    brief = _rebuild_content_brief(
+        brief,
+        asset_context=str(st.session_state.get("creator_asset_context", "")),
+    )
     try:
         router = get_model_router()
         script, run_mode = generate_content_script_for_mode(brief, choice, router=router)
@@ -596,9 +686,23 @@ def _run_creator_generation(brief: ContentBrief) -> None:
         st.session_state["creator_brief"] = brief
         st.session_state["creator_parameter_sync_pending"] = brief
         st.session_state["creator_stage"] = "judgment"
-        st.session_state.setdefault("creator_messages", []).append(
-            {"role": "assistant", "content": "已完成创作判断。请确认方向，或直接告诉我需要怎样修改。"}
+        action = "已应用参数并重新生成" if had_result else "已应用参数并生成"
+        st.session_state["creator_parameter_feedback"] = {
+            "status": "success",
+            "message": (
+                f"{action}：{brief.platform} · {brief.duration} · "
+                f"{brief.aspect_ratio} · {brief.tone}。已创建新的 Run 记录。"
+            ),
+        }
+        completion = (
+            f"已按“{brief.revision_instruction}”完成新版本，并生成了新的 Run 证据。"
+            if brief.revision_instruction
+            else "已完成创作判断。请确认方向，或直接告诉我需要怎样修改。"
         )
+        st.session_state.setdefault("creator_messages", []).append(
+            {"role": "assistant", "content": completion}
+        )
+        _persist_current_project(script, brief)
         st.rerun()
     except (ValueError, ModelCallError) as exc:
         evidence = exc.evidence if isinstance(exc, ModelCallError) else None
@@ -609,7 +713,7 @@ def _run_creator_generation(brief: ContentBrief) -> None:
             selected_mode = "unavailable"
         elapsed_ms = round((time.perf_counter() - started) * 1000)
         st.session_state["creator_model_status_choice"] = st.session_state.get(
-            "creator_model_choice", "自动选择"
+            "creator_model_choice", DEFAULT_TEXT_MODEL_LABEL
         )
         st.session_state["creator_model_status"] = "模型调用失败"
         debug_error = (
@@ -623,7 +727,7 @@ def _run_creator_generation(brief: ContentBrief) -> None:
                 "deepseek" if selected_mode in {"deepseek", "unavailable"} else "local-demo"
             ),
             "model": evidence.model if evidence else (
-                os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
+                get_model_router().resolve_text_model(choice)
                 if selected_mode in {"deepseek", "unavailable"}
                 else "local-demo-generator"
             ),
@@ -646,6 +750,10 @@ def _run_creator_generation(brief: ContentBrief) -> None:
             "created_at": trace.created_at if trace else "",
             "error": str(exc),
             "debug_error": _redact_sensitive_text(debug_error),
+        }
+        st.session_state["creator_parameter_feedback"] = {
+            "status": "failed",
+            "message": f"参数已提交，但生成失败：{exc}",
         }
         st.rerun()
     except Exception:
@@ -671,7 +779,98 @@ def _run_creator_generation(brief: ContentBrief) -> None:
             "error": "生成失败，请查看诊断详情。",
             "debug_error": debug_error,
         }
+        st.session_state["creator_parameter_feedback"] = {
+            "status": "failed",
+            "message": "参数已提交，但生成失败。请在“知识与 Run”中查看诊断详情。",
+        }
         st.rerun()
+
+
+def _run_creator_revision(instruction: str) -> None:
+    """Regenerate the current result through the selected route."""
+    brief = st.session_state.get("creator_brief")
+    if not isinstance(brief, ContentBrief):
+        st.warning("请先生成一版内容，再进行快速调整。")
+        return
+    platform = brief.platform
+    for name in ("抖音", "小红书", "B站", "视频号", "TikTok"):
+        if name in instruction:
+            platform = name
+            break
+    revised = _rebuild_content_brief(
+        brief, platform=platform, revision_instruction=instruction.strip()
+    )
+    _run_creator_generation(revised)
+
+
+def _rebuild_content_brief(value: object, **changes: str) -> ContentBrief:
+    """Upgrade a brief left in Session State by an older hot-reloaded module."""
+    defaults = ContentBrief("", "", "第一次接触非遗的人", "小红书", "安静观察")
+    data = {
+        name: getattr(value, name, getattr(defaults, name))
+        for name in ContentBrief.__dataclass_fields__
+    }
+    data.update(changes)
+    return ContentBrief(**data)
+
+
+def _persist_current_project(
+    script: ContentScript | None = None, brief: ContentBrief | None = None
+) -> str | None:
+    script = script or st.session_state.get("generated_script")
+    brief = brief or st.session_state.get("creator_brief")
+    if not isinstance(script, ContentScript) or not isinstance(brief, ContentBrief):
+        return None
+    project_id = save_project(
+        project_id=st.session_state.get("creator_project_id"),
+        brief=brief,
+        script=script,
+        messages=list(st.session_state.get("creator_messages", [])),
+        run_attempt=st.session_state.get("creator_run_attempt"),
+        model_choice=str(
+            st.session_state.get("creator_model_choice", DEFAULT_TEXT_MODEL_LABEL)
+        ),
+    )
+    st.session_state["creator_project_id"] = project_id
+    return project_id
+
+
+def _render_conversation_history() -> None:
+    with st.container(border=True):
+        heading, close = st.columns((5, 1))
+        heading.markdown("### 历史会话")
+        if close.button("关闭", key="close-history", width="stretch"):
+            st.query_params.pop("history", None)
+            st.rerun()
+        projects = list_projects()
+        if not projects:
+            st.caption("还没有已保存的创作项目。生成第一版内容后会自动保存在这里。")
+            return
+        for project in projects:
+            info, action = st.columns((5, 1))
+            info.markdown(
+                f"**{project['title']}**  \n{project['model_choice']} · {project['updated_at']}"
+            )
+            if action.button(
+                "恢复",
+                key=f"restore-project-{project['id']}",
+                width="stretch",
+            ):
+                restored = load_project(project["id"])
+                if restored is None:
+                    st.error("该历史项目已不存在。")
+                    return
+                st.session_state["creator_project_id"] = restored["project_id"]
+                st.session_state["creator_brief"] = restored["brief"]
+                st.session_state["creator_parameter_sync_pending"] = restored["brief"]
+                st.session_state["generated_script"] = restored["script"]
+                st.session_state["creator_messages"] = restored["messages"]
+                st.session_state["creator_run_attempt"] = restored["run_attempt"]
+                st.session_state["creator_model_choice"] = restored["model_choice"]
+                st.session_state["creator_stage"] = "master"
+                st.session_state["creator_asset_context"] = restored["brief"].asset_context
+                st.query_params.pop("history", None)
+                st.rerun()
 
 
 def _redact_sensitive_text(value: str) -> str:
@@ -683,6 +882,8 @@ def _redact_sensitive_text(value: str) -> str:
 
 
 def _render_visual_production_cards(script: ContentScript) -> None:
+    router = get_model_router()
+    image_ready = router.status().image_ready
     st.markdown("### 继续制作")
     st.markdown(
         '<div class="production-flow">'
@@ -696,9 +897,39 @@ def _render_visual_production_cards(script: ContentScript) -> None:
     shot_count = len(script.storyboard)
     st.caption(f"当前方案包含 {shot_count} 个结构化镜头。先确认参考资产，再批量生成首帧。")
     first, second, third = st.columns(3)
-    first.button("生成全部首帧", width="stretch", disabled=True, help="待接入生图任务队列")
+    generate_frames = first.button(
+        "生成全部首帧",
+        width="stretch",
+        disabled=not image_ready,
+        help="需要配置 ARK_API_KEY" if not image_ready else "调用 Seedream 生成分镜首帧",
+    )
     second.button("创建视频任务", width="stretch", disabled=True, help="待接入视频生成模型")
     third.button("进入成片制作", width="stretch", disabled=True, help="待接入配音与剪辑流水线")
+    if not image_ready:
+        st.caption("首帧生成尚未配置 ARK_API_KEY；脚本、分镜和历史功能不受影响。")
+    if generate_frames:
+        prompt = (
+            f"为非遗短视频《{script.title}》生成 {shot_count} 张连续分镜首帧。"
+            "保持人物、服装、工坊、材料与色彩统一；画面真实克制，不添加文字或水印。\n"
+            + "\n".join(
+                f"镜头 {row[0]}：{row[5]}；景别 {row[3]}；情绪 {row[6]}"
+                for row in script.storyboard
+            )
+        )
+        try:
+            with st.spinner("正在调用 Seedream 生成首帧……"):
+                result = router.generate_image(prompt, count=max(1, min(shot_count, 15)))
+            st.session_state["creator_first_frames"] = result.images
+            st.session_state["creator_image_evidence"] = result.evidence
+            st.success(
+                f"已生成 {len(result.images)} 张首帧 · {result.evidence.model} · "
+                f"{result.evidence.latency_ms} ms"
+            )
+        except (ValueError, ModelCallError) as exc:
+            st.error(str(exc))
+    frames = st.session_state.get("creator_first_frames", ())
+    if frames:
+        st.image(list(frames), caption=[f"首帧 {index}" for index in range(1, len(frames) + 1)])
 
 
 def _render_community_feed() -> None:
@@ -1183,6 +1414,7 @@ def _render_creator_steps(stage: str) -> None:
 
 def _render_script(script: ContentScript) -> None:
     stage = st.session_state.get("creator_stage", "judgment")
+    script_changed = False
     st.markdown("### 本次创作判断")
     st.markdown(
         '<div class="judgment-grid">'
@@ -1203,34 +1435,62 @@ def _render_script(script: ContentScript) -> None:
             st.rerun()
         return
 
+    arc_labels = ("Hook", "建立情境", "工艺过程", "文化信息", "情绪收尾")
+    arc_times = tuple(row[1] for row in script.storyboard[:5])
+    arc_markup = "".join(
+        f"<span><b>{index:02d} {escape(label)}</b><small>{escape(time_range)}</small></span>"
+        for index, (label, time_range) in enumerate(zip(arc_labels, arc_times, strict=True), 1)
+    )
     st.markdown(
-        '<section class="studio-result-card"><h3>内容结构</h3><div class="story-arc">'
-        "<span><b>01 Hook</b><small>0–3 秒</small></span><span><b>02 建立情境</b><small>3–10 秒</small></span>"
-        "<span><b>03 工艺过程</b><small>10–28 秒</small></span><span><b>04 文化信息</b><small>28–38 秒</small></span>"
-        "<span><b>05 情绪收尾</b><small>38–45 秒</small></span></div></section>",
+        f'<section class="studio-result-card"><h3>内容结构</h3><div class="story-arc">{arc_markup}</div></section>',
         unsafe_allow_html=True,
     )
     st.markdown("**快速调整**")
-    st.markdown(
-        '<div class="rewrite-chips"><button>更短一点</button><button>更有故事感</button>'
-        "<button>更年轻</button><button>更克制</button><button>更知识型</button>"
-        "<button>加强前三秒</button><button>减少旁白</button><button>增加画面表现</button>"
-        "<button>改成抖音版</button><button>改成小红书版</button><button>改成 B 站版</button>"
-        "<button>改成视频号版</button></div>",
-        unsafe_allow_html=True,
+    quick_revisions = (
+        "更短一点",
+        "更有故事感",
+        "更年轻",
+        "更克制",
+        "更知识型",
+        "加强前三秒",
+        "减少旁白",
+        "增加画面表现",
+        "改成抖音版",
+        "改成小红书版",
+        "改成 B 站版",
+        "改成视频号版",
     )
+    run_id = script.retrieval_trace.generation_id if script.retrieval_trace else "draft"
+    for row_start in range(0, len(quick_revisions), 4):
+        columns = st.columns(4)
+        for column, instruction in zip(columns, quick_revisions[row_start : row_start + 4], strict=True):
+            if column.button(
+                instruction,
+                key=f"quick-revision-{run_id}-{row_start}-{instruction}",
+                width="stretch",
+            ):
+                st.session_state.setdefault("creator_messages", []).append(
+                    {"role": "user", "content": instruction}
+                )
+                _run_creator_revision(instruction)
     st.markdown(
         '<section class="studio-result-card"><div class="result-card-head"><h3>Master Script</h3><span>复制　编辑　重新生成</span></div>',
         unsafe_allow_html=True,
     )
     st.markdown(f"#### {script.title}")
     st.info(f"前 3 秒 Hook：{script.hook}")
-    master_html = "<br>".join(escape(line) for line in script.voiceover)
-    st.markdown(
-        f'<div class="rich-script" contenteditable="true"><b>一句话主题</b><p>让观众从一个真实动作进入手艺的过程与人物状态。</p>'
-        f"<b>正文</b><p>{master_html}</p><b>结尾</b><p>你还想继续了解哪一步？</p></div></section>",
-        unsafe_allow_html=True,
+    edited_voiceover = st.text_area(
+        "主脚本正文（每行一段）",
+        value="\n".join(script.voiceover),
+        height=220,
+        key=f"master-script-{run_id}",
     )
+    voiceover = tuple(line.strip() for line in edited_voiceover.splitlines() if line.strip())
+    if voiceover and voiceover != script.voiceover:
+        script = replace(script, voiceover=voiceover)
+        st.session_state["generated_script"] = script
+        script_changed = True
+    st.markdown("</section>", unsafe_allow_html=True)
     st.markdown(
         '<div class="zone-note"><b>FACT ZONE</b> 历史、地域、级别和人物必须有来源。<br><b>CREATIVE ZONE</b> 镜头、节奏、情绪与比喻允许创意表达。</div>',
         unsafe_allow_html=True,
@@ -1252,11 +1512,20 @@ def _render_script(script: ContentScript) -> None:
         "素材",
         "事实来源",
     )
-    st.data_editor(
+    edited_storyboard = st.data_editor(
         [dict(zip(headers, row, strict=True)) for row in script.storyboard],
         hide_index=True,
         width="stretch",
+        key=f"storyboard-{run_id}",
     )
+    storyboard = tuple(
+        tuple(str(row.get(header, "")) for header in headers)
+        for row in edited_storyboard
+    )
+    if storyboard != script.storyboard:
+        script = replace(script, storyboard=storyboard)
+        st.session_state["generated_script"] = script
+        script_changed = True
     st.markdown("</section>", unsafe_allow_html=True)
     st.markdown('<section class="studio-result-card"><h3>发布包</h3>', unsafe_allow_html=True)
     st.markdown("**标题建议**")
@@ -1265,25 +1534,41 @@ def _render_script(script: ContentScript) -> None:
     st.markdown("**封面文案**")
     st.write("　/　".join(script.covers))
     st.markdown("**发布简介**")
-    st.text_area(
-        "发布简介（可编辑）", value=script.caption, height=140, label_visibility="collapsed"
+    edited_caption = st.text_area(
+        "发布简介（可编辑）",
+        value=script.caption,
+        height=140,
+        label_visibility="collapsed",
+        key=f"publish-caption-{run_id}",
     )
+    if edited_caption != script.caption:
+        script = replace(script, caption=edited_caption)
+        st.session_state["generated_script"] = script
+        script_changed = True
     st.markdown("**标签**")
     st.code(" ".join(script.tags), language=None)
     st.markdown("</section>", unsafe_allow_html=True)
+    if script_changed:
+        _persist_current_project(script)
     save, export_col, continue_make, publish = st.columns(4)
     if save.button("保存草稿", width="stretch"):
-        projects = st.session_state.setdefault("creator_projects", [])
-        projects.append(script)
-        st.success("项目已保存到本次会话。")
+        _persist_current_project(script)
+        st.success("草稿已保存到本地项目库，重启网页后仍可恢复。")
     export_col.download_button(
         "导出脚本",
-        data=f"{script.title}\n\n" + "\n".join(script.voiceover),
+        data=(
+            f"{script.title}\n\n"
+            + "\n".join(script.voiceover)
+            + f"\n\n发布简介\n{script.caption}\n\n结构化分镜\n"
+            + "\n".join(" | ".join(row) for row in script.storyboard)
+        ),
         file_name="HAHA-Master-Script.txt",
         mime="text/plain",
         width="stretch",
     )
-    continue_make.button("继续制作", width="stretch")
+    if continue_make.button("继续制作", width="stretch"):
+        st.session_state["creator_stage"] = "storyboard"
+        st.rerun()
     if publish.button("进入视频投稿", type="primary", width="stretch"):
         _navigate("publish")
 

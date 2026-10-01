@@ -3,7 +3,21 @@ name = "haha-platform-v2"
 version = "0.1.0"
 description = "A clean-slate cultural media MVP for HAHA"
 requires-python = ">=3.11"
-dependencies = ["streamlit>=1.64,<2"]
+dependencies = [
+    "alembic>=1.16,<2",
+    "dramatiq[redis]>=2,<3",
+    "fastapi>=0.118,<1",
+    "httpx>=0.28,<1",
+    "psycopg[binary]>=3.2,<4",
+    "pydantic>=2.11,<3",
+    "redis>=6,<7",
+    "sqlalchemy>=2.0,<3",
+    "uvicorn[standard]>=0.37,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.12,<1", "streamlit>=1.64,<2"]
+legacy-ui = ["streamlit>=1.64,<2"]
 
 [tool.ruff]
 line-length = 100

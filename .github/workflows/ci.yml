@@ -1,0 +1,121 @@
+name: HAHA CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: haha-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: haha
+          POSTGRES_USER: haha
+          POSTGRES_PASSWORD: ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U haha -d haha"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://haha:ci-password@127.0.0.1:5432/haha
+      HAHA_TEST_POSTGRES_URL: postgresql+psycopg://haha:ci-password@127.0.0.1:5432/haha
+      REDIS_URL: redis://127.0.0.1:6379/0
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install backend dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Static checks
+        run: python -m ruff check src tests scripts
+      - name: Apply database migrations
+        run: python -m alembic upgrade head
+      - name: Test backend with PostgreSQL
+        run: python -m pytest -q
+      - name: Run AI golden-dataset regression gate
+        run: python scripts/run_ai_eval.py
+      - name: Verify real Redis/Dramatiq worker boundary
+        shell: bash
+        run: |
+          python -m dramatiq haha_worker.tasks --processes 1 --threads 2 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" 2>/dev/null || true' EXIT
+          python scripts/redis_worker_integration.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Lint frontend
+        working-directory: web
+        run: pnpm lint
+      - name: Build frontend
+        working-directory: web
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
+        run: pnpm build
+
+  container-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.api
+          push: false
+          tags: haha-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          push: false
+          tags: haha-web:ci
+          build-args: NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

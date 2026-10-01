@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "dataset_version": "phase-b-2026-10-01",
+  "minimum_case_score": 0.9,
+  "minimum_pass_rate": 1.0,
+  "cases": [
+    {"id":"paper-cutting-bilibili","craft":"中国剪纸","story_seed":"剪刀落下形成纹样","audience":"传统文化初学者","platform":"B站","tone":"纪录片","duration":"90秒","aspect_ratio":"16:9","expected_fact_name":"中国剪纸"},
+    {"id":"suzhou-embroidery-xhs","craft":"苏绣","story_seed":"针线在绷架上形成层次","audience":"年轻生活方式用户","platform":"小红书","tone":"诗意东方","duration":"45秒","aspect_ratio":"3:4","expected_fact_name":"苏绣"},
+    {"id":"kunqu-wechat","craft":"昆曲","story_seed":"演员整理水袖准备登台","audience":"第一次接触戏曲的人","platform":"视频号","tone":"安静观察","duration":"60秒","aspect_ratio":"16:9","expected_fact_name":"昆曲"},
+    {"id":"jingdezhen-douyin","craft":"景德镇手工制瓷技艺","story_seed":"拉坯时泥料在手中成形","audience":"工艺爱好者","platform":"抖音","tone":"年轻轻快","duration":"30秒","aspect_ratio":"9:16","expected_fact_name":"景德镇手工制瓷技艺"},
+    {"id":"yangliuqing-bilibili","craft":"杨柳青木版年画","story_seed":"木版套色落在纸面","audience":"艺术设计学生","platform":"B站","tone":"纪录片","duration":"90秒","aspect_ratio":"16:9","expected_fact_name":"杨柳青木版年画"},
+    {"id":"guqin-wechat","craft":"古琴艺术","story_seed":"手指落弦留下余韵","audience":"传统音乐初学者","platform":"视频号","tone":"安静观察","duration":"60秒","aspect_ratio":"16:9","expected_fact_name":"古琴艺术"},
+    {"id":"zhihua-temple-xhs","craft":"智化寺京音乐","story_seed":"笙管在古建筑中合奏","audience":"城市文化旅行者","platform":"小红书","tone":"诗意东方","duration":"45秒","aspect_ratio":"3:4","expected_fact_name":"智化寺京音乐"},
+    {"id":"taohuawu-douyin","craft":"桃花坞木版年画","story_seed":"套版完成最后一层颜色","audience":"年轻视觉创作者","platform":"抖音","tone":"工艺满足感","duration":"30秒","aspect_ratio":"9:16","expected_fact_name":"桃花坞木版年画"},
+    {"id":"miao-ancient-song-bilibili","craft":"苗族古歌","story_seed":"老人开始一段口头传唱","audience":"人类学爱好者","platform":"B站","tone":"人物纪实","duration":"90秒","aspect_ratio":"16:9","expected_fact_name":"苗族古歌"},
+    {"id":"unknown-project-fail-closed","craft":"虚构云纹染色技艺","story_seed":"材料逐渐显色","audience":"文化初学者","platform":"小红书","tone":"安静观察","duration":"45秒","aspect_ratio":"9:16","expected_fact_name":null}
+  ]
+}

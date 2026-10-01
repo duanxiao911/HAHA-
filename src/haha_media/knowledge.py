@@ -156,10 +156,18 @@ def retrieve_heritage_facts(query: str, limit: int = 5) -> tuple[FactRetrievalHi
     query_tokens = _tokens(query)
     query_terms = set(query_tokens)
     normalized_query = re.sub(r"\s+", "", query.lower())
+    eligible_facts = tuple(
+        fact
+        for fact in load_heritage_facts()
+        if fact.review_status == "已核验"
+        and re.sub(r"\s+", "", fact.name.lower()) in normalized_query
+    )
+    # Fact retrieval is fail-closed: generic lexical similarity must never attach
+    # an unrelated cultural fact record to an unknown project name.
+    if not eligible_facts:
+        return ()
     hits: list[FactRetrievalHit] = []
-    for fact in load_heritage_facts():
-        if fact.review_status != "已核验":
-            continue
+    for fact in eligible_facts:
         text = " ".join(
             (
                 fact.name,
@@ -186,8 +194,7 @@ def retrieve_heritage_facts(query: str, limit: int = 5) -> tuple[FactRetrievalHi
             1.0,
             keyword * 0.28 + semantic * 0.27 + entity_bonus + category_bonus + region_bonus,
         )
-        if score >= 0.12:
-            hits.append(FactRetrievalHit(fact, round(score, 3)))
+        hits.append(FactRetrievalHit(fact, round(score, 3)))
     hits.sort(key=lambda hit: (hit.score, hit.fact.id), reverse=True)
     return tuple(hits[:limit])
 

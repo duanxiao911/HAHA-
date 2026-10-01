@@ -12,6 +12,17 @@ from typing import Any, Literal
 
 TaskType = Literal["creation_judgement", "master_script", "storyboard", "publish_pack", "image"]
 
+TEXT_MODEL_OPTIONS: dict[str, str] = {
+    "DeepSeek-V4.1-Flash": "deepseek-flash",
+    "DeepSeek-V4-Pro": "deepseek-v4-pro",
+}
+DEFAULT_TEXT_MODEL_LABEL = "DeepSeek-V4.1-Flash"
+LEGACY_TEXT_MODEL_ALIASES = {
+    "deepseek-chat": "deepseek-flash",
+    "deepseek-reasoner": "deepseek-flash",
+    "deepseek-v4-flash": "deepseek-flash",
+}
+
 
 class ModelCallError(RuntimeError):
     """A sanitized provider error safe to display in the application."""
@@ -70,13 +81,16 @@ class ModelRouter:
         self.deepseek_base_url = os.getenv(
             "DEEPSEEK_BASE_URL", "https://api.deepseek.com"
         ).rstrip("/")
-        self.deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-flash").strip()
+        configured_model = os.getenv("DEEPSEEK_MODEL", "deepseek-flash").strip()
+        self.deepseek_model = LEGACY_TEXT_MODEL_ALIASES.get(
+            configured_model, configured_model
+        )
         self.ark_api_key = os.getenv("ARK_API_KEY", os.getenv("LAS_API_KEY", "")).strip()
         self.seedream_base_url = os.getenv(
             "SEEDREAM_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
         ).rstrip("/")
         self.seedream_model = os.getenv("SEEDREAM_MODEL", "doubao-seedream-4.5").strip()
-        self.timeout = float(os.getenv("MODEL_API_TIMEOUT", "120"))
+        self.timeout = float(os.getenv("MODEL_API_TIMEOUT", "300"))
 
     def status(self) -> RouterStatus:
         return RouterStatus(
@@ -90,13 +104,21 @@ class ModelRouter:
         """Resolve the UI preference to a usable text-generation route."""
         if preference == "本地演示":
             return "local"
-        if preference == "DeepSeek":
+        if preference in TEXT_MODEL_OPTIONS or preference == "DeepSeek":
             if not self.deepseek_api_key:
                 raise ModelCallError("尚未配置 DEEPSEEK_API_KEY，无法使用 DeepSeek。")
             return "deepseek"
         if preference == "自动选择":
             return "deepseek" if self.deepseek_api_key else "local"
         raise ValueError(f"不支持的模型选择：{preference}")
+
+    def resolve_text_model(self, preference: str) -> str:
+        """Return the exact provider model id selected in the UI."""
+        if preference in TEXT_MODEL_OPTIONS:
+            return TEXT_MODEL_OPTIONS[preference]
+        if preference in {"DeepSeek", "自动选择"}:
+            return self.deepseek_model
+        raise ValueError(f"模型选择 {preference!r} 不对应 DeepSeek API 模型。")
 
     def generate_json(
         self,
@@ -106,13 +128,17 @@ class ModelRouter:
         user_prompt: str,
         temperature: float = 0.3,
         max_tokens: int = 4096,
+        model: str | None = None,
     ) -> TextModelResult:
         if task not in self.TEXT_TASKS:
             raise ValueError(f"任务 {task!r} 不是文本生成任务。")
         if not self.deepseek_api_key:
             raise ModelCallError("尚未配置 DEEPSEEK_API_KEY。")
+        selected_model = model or self.deepseek_model
+        if selected_model not in TEXT_MODEL_OPTIONS.values():
+            raise ValueError(f"不支持的 DeepSeek 模型：{selected_model}")
         payload = {
-            "model": self.deepseek_model,
+            "model": selected_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -128,12 +154,12 @@ class ModelRouter:
             self.deepseek_api_key,
             payload,
             provider="deepseek",
-            model=self.deepseek_model,
+            model=selected_model,
         )
         usage = response.get("usage", {})
         evidence = CallEvidence(
             provider="deepseek",
-            model=str(response.get("model", self.deepseek_model)),
+            model=str(response.get("model", selected_model)),
             request_id=str(response.get("id") or headers.get("x-request-id", "")),
             latency_ms=latency,
             input_tokens=int(usage.get("prompt_tokens", 0)),
@@ -249,13 +275,20 @@ class ModelRouter:
                 detail=f"HTTP {exc.code}: {detail or exc.reason}",
                 evidence=evidence,
             ) from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except TimeoutError as exc:
+            latency = round((time.perf_counter() - started) * 1000)
+            raise ModelCallError(
+                f"模型响应超时（已等待 {self.timeout:g} 秒），可切换 Flash 后重试。",
+                detail=f"{type(exc).__name__}: {exc}",
+                evidence=CallEvidence(provider, model, "", latency, status="failed"),
+            ) from exc
+        except urllib.error.URLError as exc:
             latency = round((time.perf_counter() - started) * 1000)
             reason = getattr(exc, "reason", exc)
             detail = f"{type(exc).__name__}: {reason}"
             detail = detail.replace(api_key, "[REDACTED]") if api_key else detail
             raise ModelCallError(
-                "模型服务连接失败或超时，请检查网络与 API 配置。",
+                "模型服务连接失败，请检查网络、代理与 API 地址。",
                 detail=detail,
                 evidence=CallEvidence(provider, model, "", latency, status="failed"),
             ) from exc

@@ -1,0 +1,122 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: haha
+      POSTGRES_USER: haha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - staging-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U haha -d haha"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - staging-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    environment:
+      DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
+      REDIS_URL: redis://redis:6379/0
+      HAHA_ENVIRONMENT: staging
+      HAHA_AUTH_MODE: jwt
+      HAHA_JWT_SECRET: ${HAHA_JWT_SECRET:?set HAHA_JWT_SECRET}
+      HAHA_JWT_ISSUER: ${HAHA_JWT_ISSUER:-haha-auth}
+      HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
+      HAHA_ALLOWED_ORIGINS: http://127.0.0.1:13000
+    ports:
+      - "127.0.0.1:18000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    command: ["python", "-m", "dramatiq", "haha_worker.tasks", "--processes", "2", "--threads", "4"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:18000
+        NEXT_PUBLIC_AUTH_MODE: jwt
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    ports:
+      - "127.0.0.1:13000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    command: ["python", "-m", "haha_api.staging_bootstrap"]
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
+      HAHA_JWT_SECRET: ${HAHA_JWT_SECRET:?set HAHA_JWT_SECRET}
+      HAHA_JWT_ISSUER: ${HAHA_JWT_ISSUER:-haha-auth}
+      HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  staging-postgres-data:
+  staging-redis-data:

@@ -1,0 +1,6 @@
+node_modules
+.next
+.appdata
+.env*
+*.log
+.git

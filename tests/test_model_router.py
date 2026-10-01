@@ -1,6 +1,11 @@
 import pytest
 
-from haha_media.model_router import CallEvidence, ModelCallError, ModelRouter, TextModelResult
+from haha_media.model_router import (
+    CallEvidence,
+    ModelCallError,
+    ModelRouter,
+    TextModelResult,
+)
 from haha_media.script_writer import ContentBrief, generate_content_script_for_mode
 
 
@@ -45,6 +50,10 @@ def test_text_model_preference_resolves_to_actual_route(monkeypatch: pytest.Monk
     ready_router = ModelRouter()
     assert ready_router.resolve_text_mode("自动选择") == "deepseek"
     assert ready_router.resolve_text_mode("DeepSeek") == "deepseek"
+    assert ready_router.resolve_text_mode("DeepSeek-V4.1-Flash") == "deepseek"
+    assert ready_router.resolve_text_mode("DeepSeek-V4-Pro") == "deepseek"
+    assert ready_router.resolve_text_model("DeepSeek-V4.1-Flash") == "deepseek-flash"
+    assert ready_router.resolve_text_model("DeepSeek-V4-Pro") == "deepseek-v4-pro"
 
 
 def test_script_generation_uses_selected_route(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -54,8 +63,10 @@ def test_script_generation_uses_selected_route(monkeypatch: pytest.MonkeyPatch) 
     router = ModelRouter()
     calls: list[str] = []
 
-    def fake_model_generation(_brief: ContentBrief, *, router: ModelRouter) -> object:
-        calls.append("deepseek")
+    def fake_model_generation(
+        _brief: ContentBrief, *, router: ModelRouter, model: str | None = None
+    ) -> object:
+        calls.append(str(model))
         return script_writer.generate_content_script(_brief)
 
     monkeypatch.setattr(script_writer, "generate_content_script_with_model", fake_model_generation)
@@ -68,10 +79,12 @@ def test_script_generation_uses_selected_route(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
     router = ModelRouter()
-    api_script, api_mode = generate_content_script_for_mode(brief, "DeepSeek", router)
+    api_script, api_mode = generate_content_script_for_mode(
+        brief, "DeepSeek-V4-Pro", router
+    )
     assert api_mode == "api"
     assert api_script.model_evidence is None
-    assert calls == ["deepseek"]
+    assert calls == ["deepseek-v4-pro"]
 
 
 def test_failed_deepseek_selection_does_not_fall_back_to_local(
@@ -127,6 +140,40 @@ def test_api_run_records_provider_evidence_and_knowledge_retrieval(
     assert script.model_evidence == evidence
     assert script.retrieval_trace is not None
     assert script.retrieval_trace.model == "deepseek-test-model"
+
+
+def test_api_output_cannot_override_submitted_delivery_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    brief = ContentBrief(
+        "中国剪纸", "剪刀沿着红纸移动", "传统文化爱好者", "B站", "人物纪实", duration="30秒", aspect_ratio="16:9"
+    )
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
+    router = ModelRouter()
+    evidence = CallEvidence("deepseek", "deepseek-test-model", "request-wrong-output", 123)
+
+    def fake_generate_json(*_args: object, **_kwargs: object) -> TextModelResult:
+        return TextModelResult(
+            {
+                "title": "小红书45秒剪纸",
+                "hook": "小红书用户请看这45秒",
+                "voiceover": ["小红书旁白45秒", "旁白二", "旁白三"],
+                "shots": ["0–3秒", "3–40秒", "40–45秒"],
+                "caption": "小红书45秒发布说明",
+                "tags": ["#小红书", "#45秒"],
+            },
+            evidence,
+        )
+
+    monkeypatch.setattr(router, "generate_json", fake_generate_json)
+    script, mode = generate_content_script_for_mode(brief, "DeepSeek", router)
+
+    assert mode == "api"
+    assert "小红书" not in " ".join((script.title, script.hook, *script.voiceover, script.caption, *script.tags))
+    assert "45秒" not in " ".join((script.title, script.hook, *script.voiceover, script.caption, *script.tags))
+    assert script.shots[-1].startswith("26–30 秒")
+    assert ("推荐平台", "B站") in script.judgment
+    assert ("表达气质", "人物纪实") in script.judgment
 
 
 def test_failed_api_run_keeps_provider_and_knowledge_evidence(
