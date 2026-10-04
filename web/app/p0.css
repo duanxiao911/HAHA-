@@ -1,0 +1,143 @@
+/* P0 layout and interaction corrections from the 2026-10-04 UI audit. */
+.pageContent {
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+}
+
+.workPanel {
+  grid-column: 1;
+  min-height: 440px;
+  scroll-margin-top: 150px;
+}
+
+.reviewPanel {
+  grid-column: 2;
+  min-height: 440px;
+  scroll-margin-top: 150px;
+}
+
+.controlConsole {
+  grid-column: 1 / -1;
+  scroll-margin-top: 150px;
+}
+
+.emptyState {
+  min-height: 340px;
+  padding: 28px 40px;
+}
+
+.emptyState h3 {
+  margin-top: 14px;
+}
+
+.capabilityGrid {
+  margin-top: 16px;
+}
+
+.capabilityGrid > div {
+  min-height: 62px;
+}
+
+.startButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 148px;
+  min-height: 44px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform .18s ease, background .18s ease;
+}
+
+.startButton:hover {
+  background: var(--accent-dark);
+  transform: translateY(-1px);
+}
+
+.startButton:focus-visible,
+.drawer nav button:focus-visible {
+  outline: 3px solid rgba(200, 77, 66, .22);
+  outline-offset: 2px;
+}
+
+.drawer nav button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  padding: 11px 12px;
+  color: #5f5953;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drawer nav button:hover,
+.drawer nav button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.drawer nav button:disabled {
+  color: #aaa39b;
+  cursor: not-allowed;
+}
+
+.drawer nav button:disabled:hover {
+  background: transparent;
+  font-weight: 400;
+}
+
+.drawer nav button small {
+  font-size: 8px;
+  font-weight: 500;
+}
+
+@media (max-width: 1180px) {
+  .pageContent {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+}
+
+@media (max-width: 860px) {
+  .pageContent {
+    grid-template-columns: 1fr;
+  }
+
+  .workPanel {
+    grid-column: 1;
+    order: 1;
+  }
+
+  .controlConsole {
+    grid-column: 1;
+    order: 2;
+  }
+
+  .reviewPanel {
+    grid-column: 1;
+    order: 3;
+  }
+}
+
+@media (max-width: 560px) {
+  .emptyState {
+    min-height: 300px;
+    padding: 24px;
+  }
+
+  .capabilityGrid {
+    display: none;
+  }
+}
