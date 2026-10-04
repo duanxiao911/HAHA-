@@ -25,6 +25,10 @@ class IdempotencyConflictError(ValueError):
     """The same scoped key was reused with a different request body."""
 
 
+class RunNotCancellableError(ValueError):
+    """A terminal Run cannot transition to CANCELLED."""
+
+
 class CreatorService:
     max_run_attempts = 3
 
@@ -123,6 +127,8 @@ class CreatorService:
             raise LookupError("运行记录不存在")
         if run.status is RunStatus.PASSED:
             return run
+        if run.status is RunStatus.CANCELLED:
+            return run
         if run.status is RunStatus.FAILED:
             if run.attempt >= self.max_run_attempts:
                 return run
@@ -155,6 +161,9 @@ class CreatorService:
             generated, mode = generate_content_script_for_mode(
                 content_brief, run.model_preference
             )
+            persisted = self.repository.get_run(run.id)
+            if persisted and persisted.status is RunStatus.CANCELLED:
+                return persisted
             run = run.transition(RunStatus.VALIDATING)
             self.repository.save_run(run)
             verification = verify_script(brief, generated)
@@ -187,6 +196,9 @@ class CreatorService:
             self.repository.complete_run_with_script(run, script)
             return run
         except Exception as exc:
+            persisted = self.repository.get_run(run.id)
+            if persisted and persisted.status is RunStatus.CANCELLED:
+                return persisted
             if run.status not in {RunStatus.PASSED, RunStatus.FAILED, RunStatus.CANCELLED}:
                 run = run.transition(
                     RunStatus.FAILED,
@@ -195,3 +207,21 @@ class CreatorService:
                 )
                 self.repository.save_run(run)
             return run
+
+    def cancel_run(self, run_id: str) -> Run:
+        run = self.repository.get_run(run_id)
+        if not run:
+            raise LookupError("运行记录不存在")
+        if run.status is RunStatus.CANCELLED:
+            return run
+        if run.status in {RunStatus.PASSED, RunStatus.FAILED}:
+            raise RunNotCancellableError(f"终态运行不能取消：{run.status.value}")
+        cancelled = self.repository.cancel_run(run_id)
+        if cancelled:
+            return cancelled
+        current = self.repository.get_run(run_id)
+        if current and current.status is RunStatus.CANCELLED:
+            return current
+        if current:
+            raise RunNotCancellableError(f"运行状态已变化，不能取消：{current.status.value}")
+        raise LookupError("运行记录不存在")

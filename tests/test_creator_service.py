@@ -10,7 +10,11 @@ import pytest
 
 from haha_core.domain import RunStatus, ScriptVersion, new_id, utc_now
 from haha_core.repository import SQLiteCreatorRepository
-from haha_core.service import CreatorService, IdempotencyConflictError
+from haha_core.service import (
+    CreatorService,
+    IdempotencyConflictError,
+    RunNotCancellableError,
+)
 from haha_core.verifier import verify_script
 from haha_media.script_writer import ContentBrief, generate_content_script
 
@@ -365,3 +369,47 @@ def test_sqlite_repository_migrates_legacy_run_schema(tmp_path: Path) -> None:
 
     assert is_new is True
     assert reopened.get_run(created.id) == created
+
+
+def test_cancelled_run_is_idempotent_and_cannot_be_overwritten() -> None:
+    service = _service()
+    project = service.create_project(title="取消测试", workspace_id="ws-cancel")
+    brief = _brief(service, project.id)
+    run, _ = service.create_run(
+        workspace_id="ws-cancel",
+        project_id=project.id,
+        brief_version_id=brief.id,
+        model_preference="本地演示",
+        idempotency_key="cancel-run-once",
+    )
+    claimed = service.repository.claim_run(run.id, "worker-before-cancel")
+    assert claimed is not None
+
+    cancelled = service.cancel_run(run.id)
+    assert cancelled.status is RunStatus.CANCELLED
+    assert cancelled.claimed_by == ""
+    assert cancelled.lease_until == ""
+    assert service.cancel_run(run.id) == cancelled
+
+    service.repository.save_run(claimed.transition(RunStatus.RUNNING))
+    persisted = service.repository.get_run(run.id)
+    assert persisted is not None
+    assert persisted.status is RunStatus.CANCELLED
+    assert service.execute_run(run.id).status is RunStatus.CANCELLED
+
+
+def test_passed_run_cannot_be_cancelled() -> None:
+    service = _service()
+    project = service.create_project(title="终态测试", workspace_id="ws-terminal")
+    brief = _brief(service, project.id)
+    run, _ = service.create_run(
+        workspace_id="ws-terminal",
+        project_id=project.id,
+        brief_version_id=brief.id,
+        model_preference="本地演示",
+        idempotency_key="passed-run-cancel",
+    )
+    assert service.execute_run(run.id).status is RunStatus.PASSED
+
+    with pytest.raises(RunNotCancellableError, match="PASSED"):
+        service.cancel_run(run.id)

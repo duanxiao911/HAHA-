@@ -40,7 +40,9 @@ ALLOWED_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.RUNNING: frozenset({RunStatus.RETRIEVING, RunStatus.FAILED, RunStatus.CANCELLED}),
     RunStatus.RETRIEVING: frozenset({RunStatus.GENERATING, RunStatus.FAILED, RunStatus.CANCELLED}),
     RunStatus.GENERATING: frozenset({RunStatus.VALIDATING, RunStatus.FAILED, RunStatus.CANCELLED}),
-    RunStatus.VALIDATING: frozenset({RunStatus.PASSED, RunStatus.FAILED, RunStatus.RETRYING}),
+    RunStatus.VALIDATING: frozenset(
+        {RunStatus.PASSED, RunStatus.FAILED, RunStatus.RETRYING, RunStatus.CANCELLED}
+    ),
     RunStatus.RETRYING: frozenset({RunStatus.CLAIMED, RunStatus.FAILED, RunStatus.CANCELLED}),
     RunStatus.PASSED: frozenset(),
     RunStatus.FAILED: frozenset({RunStatus.RETRYING}),
@@ -178,10 +180,10 @@ class Run:
             error_message=error_message,
             created_at=self.created_at,
             updated_at=utc_now(),
-            claimed_by=self.claimed_by,
-            claimed_at=self.claimed_at,
+            claimed_by="" if target in TERMINAL_RUN_STATUSES else self.claimed_by,
+            claimed_at="" if target in TERMINAL_RUN_STATUSES else self.claimed_at,
             lease_until="" if target in TERMINAL_RUN_STATUSES else self.lease_until,
-            heartbeat_at=self.heartbeat_at,
+            heartbeat_at="" if target in TERMINAL_RUN_STATUSES else self.heartbeat_at,
             lock_version=self.lock_version,
         )
 

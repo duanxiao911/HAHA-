@@ -37,7 +37,11 @@ from haha_api.observability import log_event, metrics, request_id_context
 from haha_core.bootstrap import build_repository, enqueue_run
 from haha_core.domain import TERMINAL_RUN_STATUSES
 from haha_core.repository import CreatorRepository
-from haha_core.service import CreatorService, IdempotencyConflictError
+from haha_core.service import (
+    CreatorService,
+    IdempotencyConflictError,
+    RunNotCancellableError,
+)
 
 
 class ProjectCreate(BaseModel):
@@ -328,6 +332,31 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @application.post("/api/runs/{run_id}/cancel")
+    def cancel_run(
+        run_id: str, principal: Principal = Depends(resolve_membership)
+    ) -> dict[str, object]:
+        run = active_repository.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="运行记录不存在")
+        project = active_repository.get_project(run.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        require_project_access(principal, project.workspace_id)
+        require_write_access(principal)
+        try:
+            cancelled = service.cancel_run(run_id)
+        except RunNotCancellableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        metrics.add("haha_runs_cancelled_total")
+        log_event(
+            "run.cancelled",
+            run_id=cancelled.id,
+            workspace_id=principal.workspace_id,
+            user_id=principal.user_id,
+        )
+        return asdict(cancelled)
 
     return application
 

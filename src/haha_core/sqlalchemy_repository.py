@@ -265,8 +265,13 @@ class SQLAlchemyCreatorRepository:
             with self.engine.begin() as connection:
                 exists = connection.scalar(select(runs.c.id).where(runs.c.id == run.id))
                 if exists:
+                    statement = runs.update().where(runs.c.id == run.id)
+                    if run.status is not RunStatus.CANCELLED:
+                        statement = statement.where(
+                            runs.c.status != RunStatus.CANCELLED.value
+                        )
                     connection.execute(
-                        runs.update().where(runs.c.id == run.id).values(
+                        statement.values(
                             status=run.status.value,
                             attempt=run.attempt,
                             error_code=run.error_code,
@@ -296,6 +301,31 @@ class SQLAlchemyCreatorRepository:
         with self.engine.connect() as connection:
             row = connection.execute(select(runs).where(runs.c.id == run_id)).mappings().first()
         return self._to_run(row)
+
+    def cancel_run(self, run_id: str) -> Run | None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        cancellable = [
+            status.value
+            for status in RunStatus
+            if status not in {RunStatus.PASSED, RunStatus.FAILED, RunStatus.CANCELLED}
+        ]
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                runs.update()
+                .where(runs.c.id == run_id, runs.c.status.in_(cancellable))
+                .values(
+                    status=RunStatus.CANCELLED.value,
+                    error_code="",
+                    error_message="",
+                    claimed_by="",
+                    claimed_at="",
+                    lease_until="",
+                    heartbeat_at="",
+                    updated_at=now,
+                    lock_version=runs.c.lock_version + 1,
+                )
+            )
+        return self.get_run(run_id) if result.rowcount == 1 else None
 
     def find_run_by_idempotency_key(
         self, workspace_id: str, project_id: str, key: str
@@ -366,8 +396,13 @@ class SQLAlchemyCreatorRepository:
                     created_at=script.created_at,
                 )
             )
-            connection.execute(
-                runs.update().where(runs.c.id == run.id).values(
+            result = connection.execute(
+                runs.update()
+                .where(
+                    runs.c.id == run.id,
+                    runs.c.status != RunStatus.CANCELLED.value,
+                )
+                .values(
                     status=run.status.value,
                     attempt=run.attempt,
                     error_code=run.error_code,
@@ -377,6 +412,8 @@ class SQLAlchemyCreatorRepository:
                     lock_version=runs.c.lock_version + 1,
                 )
             )
+            if result.rowcount != 1:
+                raise RepositoryConflictError("cancelled run cannot be completed")
 
     def claim_run(self, run_id: str, worker_id: str, lease_seconds: int = 120) -> Run | None:
         now = datetime.now(UTC)

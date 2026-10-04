@@ -20,13 +20,13 @@ Phase C does not declare the product Production Candidate or Production Ready.
 
 ## Delivery order
 
-| Slice | Deliverable | Exit evidence |
-|---|---|---|
-| C1 | Workspace-protected Run SSE endpoint | API contract and authorization tests |
-| C2 | Cancellation API and worker cooperation | concurrency and terminal-state tests |
-| C3 | Failed-job operations API | workspace isolation and bounded retry tests |
-| C4 | Next.js operational UI | browser E2E without polling-only progress |
-| C5 | External staging/release package | deployment, rollback and ownership evidence |
+| Slice | Deliverable | Status | Exit evidence |
+|---|---|---|---|
+| C1 | Workspace-protected Run SSE endpoint | Complete | API contract and authorization tests |
+| C2 | Cancellation API and worker cooperation | Complete | concurrency and terminal-state tests |
+| C3 | Failed-job operations API | Pending | workspace isolation and bounded retry tests |
+| C4 | Next.js operational UI | Pending | browser E2E without polling-only progress |
+| C5 | External staging/release package | Pending | deployment, rollback and ownership evidence |
 
 ## Deferred security work
 

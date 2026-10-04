@@ -8,7 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from haha_api.main import create_app
+from haha_core.domain import RunStatus
 from haha_core.repository import SQLiteCreatorRepository
+from haha_core.service import CreatorService
 
 
 def _client(repository: SQLiteCreatorRepository | None = None) -> TestClient:
@@ -124,6 +126,72 @@ def test_run_event_stream_enforces_workspace_boundary(monkeypatch) -> None:
         headers={"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_b')}"},
     )
     assert cross_workspace.status_code == 403
+
+
+def test_run_cancellation_api_is_idempotent() -> None:
+    repository = SQLiteCreatorRepository(":memory:")
+    service = CreatorService(repository)
+    project = service.create_project(title="取消接口", workspace_id="local")
+    brief = service.create_brief(
+        project.id,
+        craft="中国剪纸",
+        audience="文化爱好者",
+        platform="B站",
+        tone="纪录片",
+        duration="30秒",
+        aspect_ratio="16:9",
+    )
+    run, _ = service.create_run(
+        workspace_id="local",
+        project_id=project.id,
+        brief_version_id=brief.id,
+        model_preference="本地演示",
+        idempotency_key="api-cancel-run",
+    )
+    client = _client(repository)
+
+    first = client.post(f"/api/runs/{run.id}/cancel")
+    second = client.post(f"/api/runs/{run.id}/cancel")
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "CANCELLED"
+    assert second.status_code == 200
+    assert second.json()["status"] == "CANCELLED"
+
+
+def test_viewer_cannot_cancel_run(monkeypatch) -> None:
+    secret = "test-secret-that-is-at-least-32-characters-long"
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", secret)
+    repository = SQLiteCreatorRepository(":memory:")
+    repository.ensure_identity("user_a", "ws_a", role="viewer")
+    service = CreatorService(repository)
+    project = service.create_project(title="只读工作区", workspace_id="ws_a")
+    brief = service.create_brief(
+        project.id,
+        craft="中国剪纸",
+        audience="文化爱好者",
+        platform="B站",
+        tone="纪录片",
+        duration="30秒",
+        aspect_ratio="16:9",
+    )
+    run, _ = service.create_run(
+        workspace_id="ws_a",
+        project_id=project.id,
+        brief_version_id=brief.id,
+        model_preference="本地演示",
+        idempotency_key="viewer-cancel-run",
+    )
+    client = _client(repository)
+
+    response = client.post(
+        f"/api/runs/{run.id}/cancel",
+        headers={"Authorization": f"Bearer {_jwt(secret)}"},
+    )
+
+    assert response.status_code == 403
+    assert repository.get_run(run.id).status is RunStatus.PENDING
 
 
 def test_health_and_readiness_have_distinct_contracts(

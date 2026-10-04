@@ -98,6 +98,26 @@ def test_postgres_worker_claim_and_expired_lease(repository) -> None:
     assert reclaimed.lock_version > claimed.lock_version
 
 
+def test_postgres_cancel_is_atomic_and_blocks_stale_worker_write(repository) -> None:
+    service, project, brief = _prepared_service(repository)
+    run, _ = service.create_run(
+        workspace_id="pg-workspace",
+        project_id=project.id,
+        brief_version_id=brief.id,
+        model_preference="本地演示",
+        idempotency_key="postgres-cancel",
+    )
+    claimed = repository.claim_run(run.id, "worker-before-cancel")
+    assert claimed is not None
+
+    cancelled = service.cancel_run(run.id)
+    assert cancelled.status is RunStatus.CANCELLED
+    repository.save_run(claimed.transition(RunStatus.RUNNING))
+    persisted = repository.get_run(run.id)
+    assert persisted is not None
+    assert persisted.status is RunStatus.CANCELLED
+
+
 def test_postgres_completion_failure_rolls_back_script_and_run(repository) -> None:
     service, project, brief = _prepared_service(repository)
     run, _ = service.create_run(

@@ -42,6 +42,8 @@ class CreatorRepository(Protocol):
 
     def get_run(self, run_id: str) -> Run | None: ...
 
+    def cancel_run(self, run_id: str) -> Run | None: ...
+
     def find_run_by_idempotency_key(
         self, workspace_id: str, project_id: str, key: str
     ) -> Run | None: ...
@@ -263,7 +265,8 @@ class SQLiteCreatorRepository:
                     error_code=excluded.error_code, error_message=excluded.error_message,
                     updated_at=excluded.updated_at, claimed_by=excluded.claimed_by,
                     claimed_at=excluded.claimed_at, lease_until=excluded.lease_until,
-                    heartbeat_at=excluded.heartbeat_at, lock_version=excluded.lock_version""",
+                    heartbeat_at=excluded.heartbeat_at, lock_version=excluded.lock_version
+                    WHERE runs.status != 'CANCELLED' OR excluded.status = 'CANCELLED'""",
                     values,
                 )
         except sqlite3.IntegrityError as exc:
@@ -280,6 +283,27 @@ class SQLiteCreatorRepository:
         with closing(self._connect()) as connection, connection:
             row = connection.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
         return self._row_to_run(row)
+
+    def cancel_run(self, run_id: str) -> Run | None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        cancellable = tuple(
+            status.value
+            for status in RunStatus
+            if status not in {RunStatus.PASSED, RunStatus.FAILED, RunStatus.CANCELLED}
+        )
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                f"""UPDATE runs SET status = ?, error_code = '', error_message = '',
+                       claimed_by = '', claimed_at = '', lease_until = '', heartbeat_at = '',
+                       updated_at = ?, lock_version = lock_version + 1
+                       WHERE id = ? AND status IN ({','.join('?' for _ in cancellable)})""",
+                (RunStatus.CANCELLED.value, now, run_id, *cancellable),
+            )
+            connection.commit()
+            if cursor.rowcount != 1:
+                return None
+        return self.get_run(run_id)
 
     def find_run_by_idempotency_key(
         self, workspace_id: str, project_id: str, key: str
@@ -332,10 +356,20 @@ class SQLiteCreatorRepository:
                     json.dumps(script.evidence, ensure_ascii=False), script.created_at,
                 ),
             )
-            connection.execute(
-                "UPDATE runs SET status = ?, attempt = ?, error_code = ?, error_message = ?, updated_at = ?, lease_until = '', lock_version = lock_version + 1 WHERE id = ?",
-                (run.status.value, run.attempt, run.error_code, run.error_message, run.updated_at, run.id),
+            cursor = connection.execute(
+                "UPDATE runs SET status = ?, attempt = ?, error_code = ?, error_message = ?, updated_at = ?, lease_until = '', lock_version = lock_version + 1 WHERE id = ? AND status != ?",
+                (
+                    run.status.value,
+                    run.attempt,
+                    run.error_code,
+                    run.error_message,
+                    run.updated_at,
+                    run.id,
+                    RunStatus.CANCELLED.value,
+                ),
             )
+            if cursor.rowcount != 1:
+                raise RepositoryConflictError("cancelled run cannot be completed")
 
     def claim_run(self, run_id: str, worker_id: str, lease_seconds: int = 120) -> Run | None:
         now = datetime.now(UTC)
