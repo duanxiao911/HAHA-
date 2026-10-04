@@ -109,8 +109,9 @@ python scripts/run_ai_eval.py
 ```
 
 Phase B 的可观测性、CI、staging、真实浏览器 E2E 与 AI Eval 证据见
-[`docs/evidence/phase-b-summary.md`](docs/evidence/phase-b-summary.md)。这些证据不等同于
-Production Ready 宣告；托管 CI、staging 镜像构建和线上模型评测仍按发布门禁独立验收。
+[`docs/evidence/phase-b-summary.md`](docs/evidence/phase-b-summary.md)。托管 CI、staging 镜像构建和
+小预算线上模型评测均已通过；这些证据仍不等同于 Production Candidate 或 Production Ready
+宣告，正式发布资格需通过后续独立门禁。
 
 ## 项目结构
 
