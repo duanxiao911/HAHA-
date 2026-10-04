@@ -311,3 +311,57 @@ def test_failed_run_can_enter_a_bounded_retry_attempt() -> None:
     assert third.attempt == 3
     assert final.attempt == 3
     assert final.status is RunStatus.FAILED
+
+
+def test_sqlite_repository_migrates_legacy_run_schema(tmp_path: Path) -> None:
+    database = tmp_path / "legacy.db"
+    now = utc_now()
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE runs (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, brief_version_id TEXT NOT NULL,
+                status TEXT NOT NULL, model_preference TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL, attempt INTEGER NOT NULL,
+                error_code TEXT NOT NULL, error_message TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO projects VALUES (?, ?, ?, ?, ?)",
+            ("prj_legacy", "ws_legacy", "旧项目", now, now),
+        )
+        connection.execute(
+            "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "run_legacy", "prj_legacy", "brief_legacy", "PENDING", "本地演示",
+                "legacy-key", 0, "", "", now, now,
+            ),
+        )
+
+    repository = SQLiteCreatorRepository(database)
+    migrated = repository.get_run("run_legacy")
+
+    assert migrated is not None
+    assert migrated.workspace_id == "ws_legacy"
+    assert migrated.request_fingerprint == ""
+
+    reopened = SQLiteCreatorRepository(database)
+    service = CreatorService(reopened)
+    project = service.create_project(title="迁移后项目", workspace_id="ws_legacy")
+    brief = _brief(service, project.id)
+    created, is_new = service.create_run(
+        workspace_id="ws_legacy",
+        project_id=project.id,
+        brief_version_id=brief.id,
+        model_preference="本地演示",
+        idempotency_key="post-migration-run",
+    )
+
+    assert is_new is True
+    assert reopened.get_run(created.id) == created

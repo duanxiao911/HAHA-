@@ -155,6 +155,8 @@ class SQLiteCreatorRepository:
                 row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
             }
             for name, definition in {
+                "workspace_id": "TEXT NOT NULL DEFAULT ''",
+                "request_fingerprint": "TEXT NOT NULL DEFAULT ''",
                 "claimed_by": "TEXT NOT NULL DEFAULT ''",
                 "claimed_at": "TEXT NOT NULL DEFAULT ''",
                 "lease_until": "TEXT NOT NULL DEFAULT ''",
@@ -163,6 +165,15 @@ class SQLiteCreatorRepository:
             }.items():
                 if name not in existing_columns:
                     connection.execute(f"ALTER TABLE runs ADD COLUMN {name} {definition}")
+            connection.execute(
+                """UPDATE runs SET workspace_id = COALESCE(
+                       (SELECT workspace_id FROM projects WHERE projects.id = runs.project_id), ''
+                   ) WHERE workspace_id = ''"""
+            )
+            connection.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS uq_runs_workspace_project_key
+                   ON runs(workspace_id, project_id, idempotency_key)"""
+            )
 
     def ensure_identity(
         self, user_id: str, workspace_id: str, *, role: str, email: str = "",
@@ -242,7 +253,12 @@ class SQLiteCreatorRepository:
         try:
             with closing(self._connect()) as connection, connection:
                 connection.execute(
-                    """INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """INSERT INTO runs (
+                       id, workspace_id, project_id, brief_version_id, status,
+                       model_preference, idempotency_key, request_fingerprint, attempt,
+                       error_code, error_message, created_at, updated_at, claimed_by,
+                       claimed_at, lease_until, heartbeat_at, lock_version
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET status=excluded.status, attempt=excluded.attempt,
                     error_code=excluded.error_code, error_message=excluded.error_message,
                     updated_at=excluded.updated_at, claimed_by=excluded.claimed_by,
