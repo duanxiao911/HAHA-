@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import time
 from dataclasses import asdict
@@ -13,11 +15,13 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
+    Query,
     Request,
     Response,
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from redis import Redis
 
@@ -31,6 +35,7 @@ from haha_api.auth import (
 )
 from haha_api.observability import log_event, metrics, request_id_context
 from haha_core.bootstrap import build_repository, enqueue_run
+from haha_core.domain import TERMINAL_RUN_STATUSES
 from haha_core.repository import CreatorRepository
 from haha_core.service import CreatorService, IdempotencyConflictError
 
@@ -259,7 +264,83 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         result["script"] = asdict(script) if script else None
         return result
 
+    @application.get("/api/runs/{run_id}/events", response_class=StreamingResponse)
+    def stream_run_events(
+        run_id: str,
+        principal: Principal = Depends(resolve_membership),
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+        timeout_seconds: int = Query(default=30, ge=1, le=30),
+    ) -> StreamingResponse:
+        run = active_repository.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="运行记录不存在")
+        project = active_repository.get_project(run.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        require_project_access(principal, project.workspace_id)
+
+        async def event_stream():  # type: ignore[no-untyped-def]
+            deadline = time.monotonic() + timeout_seconds
+            seen_event_id = last_event_id
+            yield "retry: 1000\n\n"
+            while True:
+                current = active_repository.get_run(run_id)
+                if current is None:
+                    yield _sse_event(
+                        "run.deleted",
+                        {"run_id": run_id, "terminal": True},
+                        event_id=f"deleted:{run_id}",
+                    )
+                    return
+                terminal = current.status in TERMINAL_RUN_STATUSES
+                event_id = current.updated_at
+                if event_id != seen_event_id or terminal:
+                    yield _sse_event(
+                        "run.terminal" if terminal else "run.status",
+                        {
+                            "run_id": current.id,
+                            "status": current.status.value,
+                            "attempt": current.attempt,
+                            "updated_at": current.updated_at,
+                            "error_code": current.error_code,
+                            "error_message": current.error_message,
+                            "terminal": terminal,
+                        },
+                        event_id=event_id,
+                    )
+                    seen_event_id = event_id
+                    if terminal:
+                        return
+                if time.monotonic() >= deadline:
+                    yield _sse_event(
+                        "run.timeout",
+                        {"run_id": run_id, "terminal": False},
+                    )
+                    return
+                await asyncio.sleep(0.5)
+
+        metrics.add("haha_run_event_streams_total")
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     return application
+
+
+def _sse_event(event: str, payload: dict[str, object], *, event_id: str = "") -> str:
+    lines = []
+    if event_id:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event}")
+    lines.append(
+        "data: " + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    )
+    return "\n".join(lines) + "\n\n"
 
 
 app = create_app()

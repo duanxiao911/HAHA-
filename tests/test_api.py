@@ -71,6 +71,60 @@ def test_project_brief_run_http_pipeline(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result.json()["status"] == "PASSED"
     assert result.json()["script"]["payload"]["judgment"][3] == ["推荐平台", "B站"]
 
+    events = client.get(f"/api/runs/{run_id}/events?timeout_seconds=1")
+    assert events.status_code == 200
+    assert events.headers["content-type"].startswith("text/event-stream")
+    assert "event: run.terminal" in events.text
+    assert '"status":"PASSED"' in events.text
+    assert '"terminal":true' in events.text
+
+
+def test_run_event_stream_enforces_workspace_boundary(monkeypatch) -> None:
+    secret = "test-secret-that-is-at-least-32-characters-long"
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", secret)
+    repository = SQLiteCreatorRepository(":memory:")
+    repository.ensure_identity("user_a", "ws_a", role="owner")
+    repository.ensure_identity("user_a", "ws_b", role="owner")
+    client = _client(repository)
+    token_a = _jwt(secret, workspace_id="ws_a")
+    project = client.post(
+        "/api/projects",
+        headers={"Authorization": f"Bearer {token_a}"},
+        json={"title": "流式状态项目"},
+    ).json()
+    denied = client.get(
+        "/api/runs/run_missing/events",
+        headers={"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_b')}"},
+    )
+    assert denied.status_code == 404
+
+    brief = client.post(
+        f"/api/projects/{project['id']}/briefs",
+        headers={"Authorization": f"Bearer {token_a}"},
+        json={
+            "craft": "中国剪纸",
+            "audience": "文化爱好者",
+            "platform": "B站",
+            "tone": "纪录片",
+            "duration": "30秒",
+            "aspect_ratio": "16:9",
+        },
+    ).json()
+    run = client.post(
+        f"/api/projects/{project['id']}/runs",
+        headers={
+            "Authorization": f"Bearer {token_a}",
+            "Idempotency-Key": "phase-c-events-run",
+        },
+        json={"brief_version_id": brief["id"], "model_preference": "本地演示"},
+    ).json()
+    cross_workspace = client.get(
+        f"/api/runs/{run['id']}/events?timeout_seconds=1",
+        headers={"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_b')}"},
+    )
+    assert cross_workspace.status_code == 403
+
 
 def test_health_and_readiness_have_distinct_contracts(
     monkeypatch: pytest.MonkeyPatch,
