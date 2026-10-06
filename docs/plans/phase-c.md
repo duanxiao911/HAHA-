@@ -28,6 +28,16 @@ Phase C does not declare the product Production Candidate or Production Ready.
 | C4 | Next.js operational UI | Pending | browser E2E without polling-only progress |
 | C5 | External staging/release package | Pending | deployment, rollback and ownership evidence |
 
+## Real-environment gate
+
+The clean containerized staging validation for completed slices C1 and C2 passed on 2026-10-06. It
+covered JWT rejection, PostgreSQL/Redis readiness, Dramatiq delivery, browser generation, bounded SSE,
+cancellation during worker downtime and state persistence across service restarts. The validation also
+found and closed an inherited API health-check defect on the worker container. See
+`docs/evidence/phase-c-real-environment-validation.md`.
+
+C3 remains Pending until the validation commit passes GitHub Actions.
+
 ## Deferred security work
 
 The separately reported authentication defaults, prompt-boundary injection, XML expansion and ZIP

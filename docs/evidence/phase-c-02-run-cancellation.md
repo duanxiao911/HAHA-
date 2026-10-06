@@ -26,3 +26,10 @@ The five skipped tests require the opt-in PostgreSQL integration environment. CI
 with its PostgreSQL service, including the new atomic cancellation and stale-worker protection case.
 This evidence completes C2 only; it does not claim full Phase C completion or Production Candidate
 status.
+
+## Full staging confirmation
+
+On 2026-10-06, a clean Docker staging stack confirmed cancellation while the worker was offline. After
+the worker restarted and received the queued message, it skipped the cancelled Run, left the terminal
+state unchanged and did not create a script version. API and worker restart persistence also passed.
+See `docs/evidence/phase-c-real-environment-validation.md`.

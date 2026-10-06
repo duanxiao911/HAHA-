@@ -79,6 +79,12 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
       REDIS_URL: redis://redis:6379/0
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; assert b'dramatiq' in Path('/proc/1/cmdline').read_bytes()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     depends_on:
       migrate:
         condition: service_completed_successfully

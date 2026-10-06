@@ -17,8 +17,9 @@ import websockets
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts" / "e2e"
-SCREENSHOT = ARTIFACTS / "phase-b-next-pipeline.png"
-REPORT = ARTIFACTS / "phase-b-next-pipeline.json"
+ARTIFACT_PREFIX = os.getenv("HAHA_E2E_ARTIFACT_PREFIX", "phase-b-next-pipeline")
+SCREENSHOT = ARTIFACTS / f"{ARTIFACT_PREFIX}.png"
+REPORT = ARTIFACTS / f"{ARTIFACT_PREFIX}.json"
 CHROME = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 DEBUG_PORT = 9340
 APP_URL = os.getenv("HAHA_E2E_WEB_URL", "http://127.0.0.1:3000")
@@ -66,7 +67,7 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
             {"width": 1680, "height": 1050, "deviceScaleFactor": 1, "mobile": False},
         )
         await command("Page.navigate", {"url": APP_URL})
-        await wait_for("生成完整创作方案")
+        await wait_for("生成本次创作判断")
         token_saved = await evaluate(
             f"(() => {{sessionStorage.setItem('haha_access_token',{json.dumps(token)});return Boolean(sessionStorage.getItem('haha_access_token'));}})()"
         )
@@ -88,9 +89,9 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
               };
               return {
                 craft:setInput('创作主题','中国剪纸'),
-                story:setInput('想讲的瞬间','剪刀落下形成纹样'),
+                story:setInput('想讲的一个瞬间','剪刀落下形成纹样'),
                 platform:setSelect('发布平台','B站'),
-                duration:setSelect('时长','90秒'),
+                duration:setSelect('成片时长','90秒'),
                 ratio:setSelect('画幅','16:9'),
                 tone:setSelect('表达气质','纪录片')
               };
@@ -100,7 +101,7 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
             raise RuntimeError(f"Could not prepare form: {prepared}")
         await asyncio.sleep(0.75)
         clicked = await evaluate(
-            "(() => {const button=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('生成完整创作方案'));button?.click();return !!button;})()"
+            "(() => {const button=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('生成本次创作判断'));button?.click();return !!button;})()"
         )
         if not clicked:
             raise RuntimeError("Submit button not found")
@@ -109,8 +110,8 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
             "platform": "推荐平台 · B站" in body,
             "spec": "推荐规格 · 90秒 · 16:9" in body,
             "tone": "表达气质 · 纪录片" in body,
-            "verification": "独立验证通过" in body,
-            "evidence": "知识证据" in body,
+            "verification": "独立验收已通过" in body,
+            "evidence": "事实来源" in body,
         }
         if not all(checks.values()):
             raise RuntimeError(f"Generated result did not follow parameters: {checks}")
