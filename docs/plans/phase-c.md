@@ -24,7 +24,7 @@ Phase C does not declare the product Production Candidate or Production Ready.
 |---|---|---|---|
 | C1 | Workspace-protected Run SSE endpoint | Complete | API contract and authorization tests |
 | C2 | Cancellation API and worker cooperation | Complete | concurrency and terminal-state tests |
-| C3 | Failed-job operations API | Pending | workspace isolation and bounded retry tests |
+| C3 | Failed-job operations API | Complete | workspace isolation and bounded retry tests |
 | C4 | Next.js operational UI | Pending | browser E2E without polling-only progress |
 | C5 | External staging/release package | Pending | deployment, rollback and ownership evidence |
 
@@ -36,7 +36,10 @@ cancellation during worker downtime and state persistence across service restart
 found and closed an inherited API health-check defect on the worker container. See
 `docs/evidence/phase-c-real-environment-validation.md`.
 
-C3 remains Pending until the validation commit passes GitHub Actions.
+C3 remained Pending until the validation commit passed GitHub Actions on 2026-10-06. C3 then
+completed with workspace-scoped failed-job listing, idempotent resolution, atomic bounded retry and
+PostgreSQL integration evidence.
+See `docs/evidence/phase-c-03-failed-job-operations.md`.
 
 ## Deferred security work
 
@@ -50,3 +53,9 @@ security upgrade is paused, and must be resolved before any Production Candidate
 workspace authorization boundary, emits a current `run.status` event, and closes with a
 `run.terminal` event for `PASSED`, `FAILED` or `CANCELLED`. A stream is bounded to 30 seconds so
 clients reconnect instead of holding an unbounded API worker.
+
+## C3 contract
+
+`GET /api/failed-jobs` is workspace-scoped and read-only for viewers. Retry and resolution endpoints
+require owner/editor write access. Retry atomically consumes one attempt, resolves the current failure
+record and enqueues the Run; later failure reopens the record. A Run never exceeds three attempts.

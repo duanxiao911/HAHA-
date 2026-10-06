@@ -39,6 +39,7 @@ from haha_core.domain import TERMINAL_RUN_STATUSES
 from haha_core.repository import CreatorRepository
 from haha_core.service import (
     CreatorService,
+    FailedJobNotRetryableError,
     IdempotencyConflictError,
     RunNotCancellableError,
 )
@@ -123,6 +124,13 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
             auth_mode=principal.auth_mode,
         )
         return principal
+
+    def execute_run_locally(run_id: str) -> None:
+        completed = service.execute_run(run_id)
+        if completed.status.value == "FAILED":
+            active_repository.record_failed_job(
+                completed.id, completed.error_code or "run_failed"
+            )
 
     @application.middleware("http")
     async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -244,7 +252,7 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         queued = created and enqueue_run(run.id, request_id_context.get())
         if created and not queued:
-            background_tasks.add_task(service.execute_run, run.id)
+            background_tasks.add_task(execute_run_locally, run.id)
         response = asdict(run)
         response["created"] = created
         response["execution"] = "worker" if queued else "local-background"
@@ -357,6 +365,81 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
             user_id=principal.user_id,
         )
         return asdict(cancelled)
+
+    @application.get("/api/failed-jobs")
+    def list_failed_jobs(
+        principal: Principal = Depends(resolve_membership),
+        include_resolved: bool = Query(default=False),
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        jobs = active_repository.list_failed_jobs(
+            principal.workspace_id,
+            include_resolved=include_resolved,
+            limit=limit,
+        )
+        items: list[dict[str, object]] = []
+        for job in jobs:
+            run = active_repository.get_run(job.run_id)
+            if not run:
+                continue
+            item = asdict(job)
+            item["run"] = asdict(run)
+            items.append(item)
+        return {"items": items, "count": len(items)}
+
+    @application.post(
+        "/api/failed-jobs/{failed_job_id}/retry",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def retry_failed_job(
+        failed_job_id: str,
+        background_tasks: BackgroundTasks,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        require_write_access(principal)
+        try:
+            retrying = service.retry_failed_job(failed_job_id, principal.workspace_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FailedJobNotRetryableError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        queued = enqueue_run(retrying.id, request_id_context.get())
+        if not queued:
+            background_tasks.add_task(execute_run_locally, retrying.id)
+        metrics.add("haha_failed_jobs_retried_total")
+        log_event(
+            "failed_job.retried",
+            failed_job_id=failed_job_id,
+            run_id=retrying.id,
+            workspace_id=principal.workspace_id,
+            user_id=principal.user_id,
+        )
+        job = active_repository.get_failed_job(failed_job_id, principal.workspace_id)
+        return {
+            "failed_job": asdict(job) if job else None,
+            "run": asdict(retrying),
+            "execution": "worker" if queued else "local-background",
+        }
+
+    @application.post("/api/failed-jobs/{failed_job_id}/resolve")
+    def resolve_failed_job(
+        failed_job_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        require_write_access(principal)
+        try:
+            job = service.resolve_failed_job(failed_job_id, principal.workspace_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        metrics.add("haha_failed_jobs_resolved_total")
+        log_event(
+            "failed_job.resolved",
+            failed_job_id=failed_job_id,
+            run_id=job.run_id,
+            workspace_id=principal.workspace_id,
+            user_id=principal.user_id,
+        )
+        return asdict(job)
 
     return application
 

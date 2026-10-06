@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-from haha_core.domain import BriefVersion, Project, Run, RunStatus, ScriptVersion
+from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptVersion
 
 
 class RepositoryConflictError(RuntimeError):
@@ -61,6 +61,20 @@ class CreatorRepository(Protocol):
     def heartbeat_run(self, run_id: str, worker_id: str, lease_seconds: int = 120) -> bool: ...
 
     def record_failed_job(self, run_id: str, reason: str) -> None: ...
+
+    def list_failed_jobs(
+        self, workspace_id: str, *, include_resolved: bool = False, limit: int = 100
+    ) -> list[FailedJob]: ...
+
+    def get_failed_job(self, failed_job_id: str, workspace_id: str) -> FailedJob | None: ...
+
+    def retry_failed_job(
+        self, failed_job_id: str, workspace_id: str, *, max_attempts: int
+    ) -> Run | None: ...
+
+    def resolve_failed_job(
+        self, failed_job_id: str, workspace_id: str
+    ) -> FailedJob | None: ...
 
     def reconcile_expired_runs(
         self, *, max_attempts: int, limit: int = 100
@@ -414,10 +428,113 @@ class SQLiteCreatorRepository:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with closing(self._connect()) as connection, connection:
             connection.execute(
-                """INSERT OR IGNORE INTO failed_jobs(id, run_id, reason, created_at, resolved_at)
-                   VALUES (?, ?, ?, ?, '')""",
+                """INSERT INTO failed_jobs(id, run_id, reason, created_at, resolved_at)
+                   VALUES (?, ?, ?, ?, '')
+                   ON CONFLICT(run_id) DO UPDATE SET reason = excluded.reason,
+                   created_at = excluded.created_at, resolved_at = ''""",
                 (f"failed_{uuid4().hex}", run_id, reason[:4000], now),
             )
+
+    @staticmethod
+    def _row_to_failed_job(row: sqlite3.Row | None) -> FailedJob | None:
+        return FailedJob(**dict(row)) if row else None
+
+    def list_failed_jobs(
+        self, workspace_id: str, *, include_resolved: bool = False, limit: int = 100
+    ) -> list[FailedJob]:
+        resolved_clause = "" if include_resolved else "AND failed_jobs.resolved_at = ''"
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"""SELECT failed_jobs.* FROM failed_jobs
+                    JOIN runs ON runs.id = failed_jobs.run_id
+                    WHERE runs.workspace_id = ? {resolved_clause}
+                    ORDER BY failed_jobs.created_at DESC, failed_jobs.id DESC
+                    LIMIT ?""",
+                (workspace_id, limit),
+            ).fetchall()
+        return [FailedJob(**dict(row)) for row in rows]
+
+    def get_failed_job(self, failed_job_id: str, workspace_id: str) -> FailedJob | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT failed_jobs.* FROM failed_jobs
+                   JOIN runs ON runs.id = failed_jobs.run_id
+                   WHERE failed_jobs.id = ? AND runs.workspace_id = ?""",
+                (failed_job_id, workspace_id),
+            ).fetchone()
+        return self._row_to_failed_job(row)
+
+    def retry_failed_job(
+        self, failed_job_id: str, workspace_id: str, *, max_attempts: int
+    ) -> Run | None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                if "locked" in str(exc).lower():
+                    return None
+                raise
+            row = connection.execute(
+                """SELECT failed_jobs.run_id FROM failed_jobs
+                   JOIN runs ON runs.id = failed_jobs.run_id
+                   WHERE failed_jobs.id = ? AND runs.workspace_id = ?
+                     AND failed_jobs.resolved_at = '' AND runs.status = ?
+                     AND runs.attempt < ?""",
+                (failed_job_id, workspace_id, RunStatus.FAILED.value, max_attempts),
+            ).fetchone()
+            if not row:
+                connection.rollback()
+                return None
+            run_id = str(row["run_id"])
+            run_update = connection.execute(
+                """UPDATE runs SET status = ?, attempt = attempt + 1,
+                   error_code = '', error_message = '', claimed_by = '', claimed_at = '',
+                   lease_until = '', heartbeat_at = '', updated_at = ?,
+                   lock_version = lock_version + 1
+                   WHERE id = ? AND workspace_id = ? AND status = ? AND attempt < ?""",
+                (
+                    RunStatus.RETRYING.value,
+                    now,
+                    run_id,
+                    workspace_id,
+                    RunStatus.FAILED.value,
+                    max_attempts,
+                ),
+            )
+            job_update = connection.execute(
+                """UPDATE failed_jobs SET resolved_at = ?
+                   WHERE id = ? AND resolved_at = ''""",
+                (now, failed_job_id),
+            )
+            if run_update.rowcount != 1 or job_update.rowcount != 1:
+                connection.rollback()
+                return None
+            connection.commit()
+        return self.get_run(run_id)
+
+    def resolve_failed_job(
+        self, failed_job_id: str, workspace_id: str
+    ) -> FailedJob | None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """SELECT failed_jobs.resolved_at FROM failed_jobs
+                   JOIN runs ON runs.id = failed_jobs.run_id
+                   WHERE failed_jobs.id = ? AND runs.workspace_id = ?""",
+                (failed_job_id, workspace_id),
+            ).fetchone()
+            if not row:
+                connection.rollback()
+                return None
+            if not row["resolved_at"]:
+                connection.execute(
+                    "UPDATE failed_jobs SET resolved_at = ? WHERE id = ?",
+                    (now, failed_job_id),
+                )
+            connection.commit()
+        return self.get_failed_job(failed_job_id, workspace_id)
 
     def reconcile_expired_runs(
         self, *, max_attempts: int, limit: int = 100

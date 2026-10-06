@@ -286,3 +286,102 @@ def test_production_authentication_fails_closed(monkeypatch) -> None:
     monkeypatch.setenv("HAHA_AUTH_MODE", "dev")
     with pytest.raises(RuntimeError, match="必须启用"):
         create_app(SQLiteCreatorRepository(":memory:"))
+
+
+def _record_failed_job(
+    repository: SQLiteCreatorRepository,
+    *,
+    workspace_id: str,
+    key: str,
+) -> str:
+    service = CreatorService(repository)
+    project = service.create_project(title=key, workspace_id=workspace_id)
+    brief = service.create_brief(
+        project.id,
+        craft="中国剪纸",
+        audience="文化爱好者",
+        platform="B站",
+        tone="纪录片",
+        duration="30秒",
+        aspect_ratio="16:9",
+    )
+    run, _ = service.create_run(
+        workspace_id=workspace_id,
+        project_id=project.id,
+        brief_version_id=brief.id,
+        model_preference="不存在的模型",
+        idempotency_key=key,
+    )
+    failed = service.execute_run(run.id)
+    repository.record_failed_job(failed.id, failed.error_code)
+    return repository.list_failed_jobs(workspace_id)[0].id
+
+
+def test_failed_job_api_is_workspace_scoped_and_retry_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "test-secret-that-is-at-least-32-characters-long"
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", secret)
+    monkeypatch.setattr("haha_api.main.enqueue_run", lambda *_: True)
+    repository = SQLiteCreatorRepository(":memory:")
+    repository.ensure_identity("user_a", "ws_a", role="owner")
+    repository.ensure_identity("user_a", "ws_b", role="owner")
+    job_a = _record_failed_job(repository, workspace_id="ws_a", key="api-failed-a")
+    job_b = _record_failed_job(repository, workspace_id="ws_b", key="api-failed-b")
+    client = _client(repository)
+    auth_a = {"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_a')}"}
+
+    listed = client.get("/api/failed-jobs", headers=auth_a)
+    assert listed.status_code == 200
+    assert listed.json()["count"] == 1
+    assert listed.json()["items"][0]["id"] == job_a
+    assert listed.json()["items"][0]["run"]["workspace_id"] == "ws_a"
+    denied = client.post(f"/api/failed-jobs/{job_b}/retry", headers=auth_a)
+    assert denied.status_code == 404
+
+    retried = client.post(f"/api/failed-jobs/{job_a}/retry", headers=auth_a)
+    assert retried.status_code == 202
+    assert retried.json()["execution"] == "worker"
+    assert retried.json()["run"]["status"] == "RETRYING"
+    assert retried.json()["run"]["attempt"] == 2
+    repeated = client.post(f"/api/failed-jobs/{job_a}/retry", headers=auth_a)
+    assert repeated.status_code == 409
+
+
+def test_failed_job_api_allows_viewers_to_list_but_not_mutate(monkeypatch) -> None:
+    secret = "test-secret-that-is-at-least-32-characters-long"
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", secret)
+    repository = SQLiteCreatorRepository(":memory:")
+    repository.ensure_identity("user_a", "ws_a", role="viewer")
+    job_id = _record_failed_job(repository, workspace_id="ws_a", key="api-viewer-failed")
+    client = _client(repository)
+    auth = {"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_a')}"}
+
+    assert client.get("/api/failed-jobs", headers=auth).status_code == 200
+    assert client.post(f"/api/failed-jobs/{job_id}/retry", headers=auth).status_code == 403
+    assert client.post(f"/api/failed-jobs/{job_id}/resolve", headers=auth).status_code == 403
+
+
+def test_failed_job_resolve_api_is_idempotent(monkeypatch) -> None:
+    secret = "test-secret-that-is-at-least-32-characters-long"
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", secret)
+    repository = SQLiteCreatorRepository(":memory:")
+    repository.ensure_identity("user_a", "ws_a", role="owner")
+    job_id = _record_failed_job(repository, workspace_id="ws_a", key="api-resolve-failed")
+    client = _client(repository)
+    auth = {"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_a')}"}
+
+    first = client.post(f"/api/failed-jobs/{job_id}/resolve", headers=auth)
+    second = client.post(f"/api/failed-jobs/{job_id}/resolve", headers=auth)
+    assert first.status_code == 200
+    assert first.json()["resolved_at"]
+    assert second.status_code == 200
+    assert second.json()["resolved_at"] == first.json()["resolved_at"]
+    assert client.get("/api/failed-jobs", headers=auth).json()["count"] == 0
+    with_resolved = client.get(
+        "/api/failed-jobs?include_resolved=true", headers=auth
+    ).json()
+    assert with_resolved["count"] == 1

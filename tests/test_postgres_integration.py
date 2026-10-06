@@ -197,3 +197,34 @@ def test_postgres_reconciler_is_bounded_and_persists_exhaustion(repository) -> N
             {"run_id": run.id},
         )
     assert reason == "lease_exhausted"
+
+
+def test_postgres_failed_job_operations_are_scoped_and_atomic(repository) -> None:
+    service, project, brief = _prepared_service(repository)
+    run, _ = service.create_run(
+        workspace_id="pg-workspace",
+        project_id=project.id,
+        brief_version_id=brief.id,
+        model_preference="不存在的模型",
+        idempotency_key="postgres-failed-job-operations",
+    )
+    failed = service.execute_run(run.id)
+    repository.record_failed_job(failed.id, failed.error_code)
+    job = repository.list_failed_jobs("pg-workspace")[0]
+
+    assert repository.list_failed_jobs("another-workspace") == []
+    def retry_once():
+        return repository.retry_failed_job(
+            job.id, "pg-workspace", max_attempts=service.max_run_attempts
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        attempts = list(executor.map(lambda _: retry_once(), range(2)))
+    successful = [attempt for attempt in attempts if attempt is not None]
+    assert len(successful) == 1
+    retrying = successful[0]
+    assert retrying.status is RunStatus.RETRYING
+    assert retrying.attempt == 2
+    resolved = repository.get_failed_job(job.id, "pg-workspace")
+    assert resolved is not None
+    assert resolved.resolved_at

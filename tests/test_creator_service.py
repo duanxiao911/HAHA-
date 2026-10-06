@@ -12,6 +12,7 @@ from haha_core.domain import RunStatus, ScriptVersion, new_id, utc_now
 from haha_core.repository import SQLiteCreatorRepository
 from haha_core.service import (
     CreatorService,
+    FailedJobNotRetryableError,
     IdempotencyConflictError,
     RunNotCancellableError,
 )
@@ -315,6 +316,82 @@ def test_failed_run_can_enter_a_bounded_retry_attempt() -> None:
     assert third.attempt == 3
     assert final.attempt == 3
     assert final.status is RunStatus.FAILED
+
+
+def test_failed_job_operations_are_workspace_scoped_and_idempotent() -> None:
+    repository = SQLiteCreatorRepository(":memory:")
+    service = CreatorService(repository)
+    jobs = {}
+    for workspace_id in ("ws_a", "ws_b"):
+        project = service.create_project(title=workspace_id, workspace_id=workspace_id)
+        brief = _brief(service, project.id)
+        run, _ = service.create_run(
+            workspace_id=workspace_id,
+            project_id=project.id,
+            brief_version_id=brief.id,
+            model_preference="不存在的模型",
+            idempotency_key=f"failed-job-{workspace_id}",
+        )
+        failed = service.execute_run(run.id)
+        repository.record_failed_job(failed.id, failed.error_code)
+        jobs[workspace_id] = repository.list_failed_jobs(workspace_id)[0]
+
+    assert [job.id for job in repository.list_failed_jobs("ws_a")] == [jobs["ws_a"].id]
+    assert repository.get_failed_job(jobs["ws_b"].id, "ws_a") is None
+    resolved = service.resolve_failed_job(jobs["ws_a"].id, "ws_a")
+    repeated = service.resolve_failed_job(jobs["ws_a"].id, "ws_a")
+    assert resolved.resolved_at
+    assert repeated.resolved_at == resolved.resolved_at
+    assert repository.list_failed_jobs("ws_a") == []
+    assert repository.list_failed_jobs("ws_a", include_resolved=True) == [resolved]
+
+
+def test_failed_job_retry_is_atomic_reopens_and_stays_bounded() -> None:
+    repository = SQLiteCreatorRepository(":memory:")
+    service = CreatorService(repository)
+    project = service.create_project(title="失败任务重试", workspace_id="ws_test")
+    brief = _brief(service, project.id)
+    run, _ = service.create_run(
+        workspace_id="ws_test",
+        project_id=project.id,
+        brief_version_id=brief.id,
+        model_preference="不存在的模型",
+        idempotency_key="failed-job-retry",
+    )
+    failed = service.execute_run(run.id)
+    repository.record_failed_job(failed.id, failed.error_code)
+    job = repository.list_failed_jobs("ws_test")[0]
+
+    def retry_once():
+        try:
+            return service.retry_failed_job(job.id, "ws_test")
+        except FailedJobNotRetryableError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        attempts = list(executor.map(lambda _: retry_once(), range(2)))
+    successful = [attempt for attempt in attempts if attempt is not None]
+    assert len(successful) == 1
+    retrying = successful[0]
+    assert retrying.status is RunStatus.RETRYING
+    assert retrying.attempt == 2
+    assert repository.get_failed_job(job.id, "ws_test").resolved_at
+    with pytest.raises(FailedJobNotRetryableError, match="已处理"):
+        service.retry_failed_job(job.id, "ws_test")
+
+    failed_again = service.execute_run(run.id)
+    repository.record_failed_job(failed_again.id, failed_again.error_code)
+    reopened = repository.get_failed_job(job.id, "ws_test")
+    assert reopened is not None
+    assert reopened.resolved_at == ""
+    assert reopened.reason == "ValueError"
+
+    final_retry = service.retry_failed_job(job.id, "ws_test")
+    assert final_retry.attempt == 3
+    terminal = service.execute_run(run.id)
+    repository.record_failed_job(terminal.id, terminal.error_code)
+    with pytest.raises(FailedJobNotRetryableError, match="最大尝试次数"):
+        service.retry_failed_job(job.id, "ws_test")
 
 
 def test_sqlite_repository_migrates_legacy_run_schema(tmp_path: Path) -> None:

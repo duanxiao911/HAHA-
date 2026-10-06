@@ -25,7 +25,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
-from haha_core.domain import BriefVersion, Project, Run, RunStatus, ScriptVersion
+from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptVersion
 from haha_core.repository import RepositoryConflictError
 
 metadata = MetaData()
@@ -474,17 +474,134 @@ class SQLAlchemyCreatorRepository:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         try:
             with self.engine.begin() as connection:
-                connection.execute(
-                    failed_jobs.insert().values(
-                        id=f"failed_{uuid4().hex}",
-                        run_id=run_id,
-                        reason=reason[:4000],
-                        created_at=now,
-                        resolved_at="",
+                result = connection.execute(
+                    failed_jobs.update().where(failed_jobs.c.run_id == run_id).values(
+                        reason=reason[:4000], created_at=now, resolved_at=""
                     )
                 )
+                if result.rowcount == 0:
+                    connection.execute(
+                        failed_jobs.insert().values(
+                            id=f"failed_{uuid4().hex}",
+                            run_id=run_id,
+                            reason=reason[:4000],
+                            created_at=now,
+                            resolved_at="",
+                        )
+                    )
         except IntegrityError:
-            return
+            with self.engine.begin() as connection:
+                connection.execute(
+                    failed_jobs.update().where(failed_jobs.c.run_id == run_id).values(
+                        reason=reason[:4000], created_at=now, resolved_at=""
+                    )
+                )
+
+    @staticmethod
+    def _to_failed_job(row: Any) -> FailedJob | None:
+        return FailedJob(**dict(row)) if row else None
+
+    def list_failed_jobs(
+        self, workspace_id: str, *, include_resolved: bool = False, limit: int = 100
+    ) -> list[FailedJob]:
+        statement = (
+            select(failed_jobs)
+            .join(runs, runs.c.id == failed_jobs.c.run_id)
+            .where(runs.c.workspace_id == workspace_id)
+            .order_by(failed_jobs.c.created_at.desc(), failed_jobs.c.id.desc())
+            .limit(limit)
+        )
+        if not include_resolved:
+            statement = statement.where(failed_jobs.c.resolved_at == "")
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).mappings().all()
+        return [FailedJob(**dict(row)) for row in rows]
+
+    def get_failed_job(self, failed_job_id: str, workspace_id: str) -> FailedJob | None:
+        statement = (
+            select(failed_jobs)
+            .join(runs, runs.c.id == failed_jobs.c.run_id)
+            .where(
+                failed_jobs.c.id == failed_job_id,
+                runs.c.workspace_id == workspace_id,
+            )
+        )
+        with self.engine.connect() as connection:
+            row = connection.execute(statement).mappings().first()
+        return self._to_failed_job(row)
+
+    def retry_failed_job(
+        self, failed_job_id: str, workspace_id: str, *, max_attempts: int
+    ) -> Run | None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                select(failed_jobs.c.run_id)
+                .join(runs, runs.c.id == failed_jobs.c.run_id)
+                .where(
+                    failed_jobs.c.id == failed_job_id,
+                    runs.c.workspace_id == workspace_id,
+                    failed_jobs.c.resolved_at == "",
+                    runs.c.status == RunStatus.FAILED.value,
+                    runs.c.attempt < max_attempts,
+                )
+                .with_for_update()
+            ).mappings().first()
+            if not row:
+                return None
+            run_id = str(row["run_id"])
+            run_update = connection.execute(
+                runs.update().where(
+                    runs.c.id == run_id,
+                    runs.c.workspace_id == workspace_id,
+                    runs.c.status == RunStatus.FAILED.value,
+                    runs.c.attempt < max_attempts,
+                ).values(
+                    status=RunStatus.RETRYING.value,
+                    attempt=runs.c.attempt + 1,
+                    error_code="",
+                    error_message="",
+                    claimed_by="",
+                    claimed_at="",
+                    lease_until="",
+                    heartbeat_at="",
+                    updated_at=now,
+                    lock_version=runs.c.lock_version + 1,
+                )
+            )
+            job_update = connection.execute(
+                failed_jobs.update().where(
+                    failed_jobs.c.id == failed_job_id,
+                    failed_jobs.c.resolved_at == "",
+                ).values(resolved_at=now)
+            )
+            if run_update.rowcount != 1 or job_update.rowcount != 1:
+                raise RepositoryConflictError("failed job retry conflict")
+        return self.get_run(run_id)
+
+    def resolve_failed_job(
+        self, failed_job_id: str, workspace_id: str
+    ) -> FailedJob | None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                select(failed_jobs.c.resolved_at)
+                .join(runs, runs.c.id == failed_jobs.c.run_id)
+                .where(
+                    failed_jobs.c.id == failed_job_id,
+                    runs.c.workspace_id == workspace_id,
+                )
+                .with_for_update()
+            ).mappings().first()
+            if not row:
+                return None
+            if not row["resolved_at"]:
+                connection.execute(
+                    failed_jobs.update()
+                    .where(failed_jobs.c.id == failed_job_id)
+                    .values(resolved_at=now)
+                )
+        return self.get_failed_job(failed_job_id, workspace_id)
 
     def reconcile_expired_runs(
         self, *, max_attempts: int, limit: int = 100

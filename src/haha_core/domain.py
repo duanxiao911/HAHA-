@@ -204,6 +204,15 @@ class VerificationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class FailedJob:
+    id: str
+    run_id: str
+    reason: str
+    created_at: str
+    resolved_at: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ScriptVersion:
     id: str
     project_id: str

@@ -9,6 +9,7 @@ from typing import Any
 
 from haha_core.domain import (
     BriefVersion,
+    FailedJob,
     Project,
     Run,
     RunStatus,
@@ -27,6 +28,10 @@ class IdempotencyConflictError(ValueError):
 
 class RunNotCancellableError(ValueError):
     """A terminal Run cannot transition to CANCELLED."""
+
+
+class FailedJobNotRetryableError(ValueError):
+    """A failed job cannot consume another bounded retry attempt."""
 
 
 class CreatorService:
@@ -225,3 +230,34 @@ class CreatorService:
         if current:
             raise RunNotCancellableError(f"运行状态已变化，不能取消：{current.status.value}")
         raise LookupError("运行记录不存在")
+
+    def retry_failed_job(self, failed_job_id: str, workspace_id: str) -> Run:
+        job = self.repository.get_failed_job(failed_job_id, workspace_id)
+        if not job:
+            raise LookupError("失败任务不存在")
+        run = self.repository.get_run(job.run_id)
+        if not run:
+            raise LookupError("运行记录不存在")
+        if job.resolved_at:
+            raise FailedJobNotRetryableError("失败任务已处理")
+        if run.status is not RunStatus.FAILED:
+            raise FailedJobNotRetryableError(f"运行状态不能重试：{run.status.value}")
+        if run.attempt >= self.max_run_attempts:
+            raise FailedJobNotRetryableError("运行已达到最大尝试次数")
+        try:
+            retrying = self.repository.retry_failed_job(
+                failed_job_id,
+                workspace_id,
+                max_attempts=self.max_run_attempts,
+            )
+        except RepositoryConflictError as exc:
+            raise FailedJobNotRetryableError("失败任务状态已变化") from exc
+        if not retrying:
+            raise FailedJobNotRetryableError("失败任务状态已变化")
+        return retrying
+
+    def resolve_failed_job(self, failed_job_id: str, workspace_id: str) -> FailedJob:
+        job = self.repository.resolve_failed_job(failed_job_id, workspace_id)
+        if not job:
+            raise LookupError("失败任务不存在")
+        return job
