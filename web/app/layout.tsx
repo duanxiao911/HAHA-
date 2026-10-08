@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./styles.css";
 import "./p0.css";
+import "./community.css";
+import "./demo.css";
 
 export const metadata: Metadata = {
   title: "HAHA 非遗创作平台",

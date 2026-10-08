@@ -1,4 +1,5 @@
 .appdata/
 .next/
+out/
 node_modules/
 *.tsbuildinfo

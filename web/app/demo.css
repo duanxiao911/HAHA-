@@ -1,0 +1,25 @@
+.demoNotice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 20px;
+  background: #29241f;
+  color: #e9ded2;
+  font-size: 9px;
+}
+
+.demoNotice b {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #c9473c;
+  color: #fff;
+}
+
+@media (max-width: 560px) {
+  .demoNotice {
+    align-items: flex-start;
+    padding-inline: 14px;
+    line-height: 1.55;
+  }
+}
