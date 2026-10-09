@@ -1,0 +1,109 @@
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:?set immutable POSTGRES_IMAGE digest}
+    environment:
+      POSTGRES_DB: haha
+      POSTGRES_USER: haha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - release-postgres-data:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U haha -d haha"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: ${REDIS_IMAGE:?set immutable REDIS_IMAGE digest}
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - release-redis-data:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    image: ${HAHA_API_IMAGE:?set immutable HAHA_API_IMAGE digest}
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
+    networks: [data]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: ${HAHA_API_IMAGE:?set immutable HAHA_API_IMAGE digest}
+    environment:
+      DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
+      REDIS_URL: redis://redis:6379/0
+      HAHA_ENVIRONMENT: staging
+      HAHA_AUTH_MODE: jwt
+      HAHA_JWT_SECRET: ${HAHA_JWT_SECRET:?set HAHA_JWT_SECRET}
+      HAHA_JWT_ISSUER: ${HAHA_JWT_ISSUER:-haha-auth}
+      HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
+      HAHA_ALLOWED_ORIGINS: ${HAHA_ALLOWED_ORIGINS:?set HAHA_ALLOWED_ORIGINS}
+      HAHA_RELEASE_ID: ${HAHA_RELEASE_ID:?set HAHA_RELEASE_ID}
+    ports:
+      - "${HAHA_API_BIND:?set HAHA_API_BIND}:8000"
+    networks: [edge, data]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: ${HAHA_API_IMAGE:?set immutable HAHA_API_IMAGE digest}
+    command: ["python", "-m", "dramatiq", "haha_worker.tasks", "--processes", "2", "--threads", "4"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
+      REDIS_URL: redis://redis:6379/0
+      HAHA_RELEASE_ID: ${HAHA_RELEASE_ID:?set HAHA_RELEASE_ID}
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; assert b'dramatiq' in Path('/proc/1/cmdline').read_bytes()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    image: ${HAHA_WEB_IMAGE:?set immutable HAHA_WEB_IMAGE digest}
+    environment:
+      HAHA_RELEASE_ID: ${HAHA_RELEASE_ID:?set HAHA_RELEASE_ID}
+    ports:
+      - "${HAHA_WEB_BIND:?set HAHA_WEB_BIND}:3000"
+    networks: [edge]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  edge:
+  data:
+    internal: true
+
+volumes:
+  release-postgres-data:
+  release-redis-data:

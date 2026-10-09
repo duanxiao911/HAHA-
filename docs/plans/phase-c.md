@@ -26,7 +26,7 @@ Phase C does not declare the product Production Candidate or Production Ready.
 | C2 | Cancellation API and worker cooperation | Complete | concurrency and terminal-state tests |
 | C3 | Failed-job operations API | Complete | workspace isolation and bounded retry tests |
 | C4 | Next.js operational UI | Complete | authenticated SSE, cancellation and failed-job browser E2E |
-| C5 | External staging/release package | Pending | deployment, rollback and ownership evidence |
+| C5 | External staging/release package | Complete | immutable deployment, rollback and ownership rehearsal |
 
 ## Real-environment gate
 
@@ -47,6 +47,13 @@ generation, cancellation across Worker restart and failed-job resolution in a re
 made one terminal Run GET and did not return to interval polling.
 See `docs/evidence/phase-c-04-operational-ui.md`.
 
+C5 completed on 2026-10-09 as a release package and isolated deployment/rollback rehearsal. External
+staging now has an immutable-image Compose definition, fail-closed environment preflight, public smoke
+gate, named ownership contract and separate release/rollback runbooks. The rehearsal deployed the
+candidate, verified backup readability, rolled API/Web/Worker back to the previous image identities,
+preserved data and passed the real browser pipeline after rollback.
+See `docs/evidence/phase-c-05-release-package.md`.
+
 ## Deferred security work
 
 The separately reported authentication defaults, prompt-boundary injection, XML expansion and ZIP
@@ -65,3 +72,10 @@ clients reconnect instead of holding an unbounded API worker.
 `GET /api/failed-jobs` is workspace-scoped and read-only for viewers. Retry and resolution endpoints
 require owner/editor write access. Retry atomically consumes one attempt, resolves the current failure
 record and enqueues the Run; later failure reopens the record. A Run never exceeds three attempts.
+
+## C5 contract
+
+External deployment accepts only digest-pinned images, HTTPS public origins, exact non-wildcard CORS,
+loopback container binds, sufficiently long runtime secrets and explicit accountable owners. Local
+image IDs and HTTP loopback URLs are accepted only behind explicit rehearsal flags. A successful C5
+package does not override the deferred security release blockers or constitute a Production Candidate.

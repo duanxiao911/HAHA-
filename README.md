@@ -113,6 +113,10 @@ Phase B 的可观测性、CI、staging、真实浏览器 E2E 与 AI Eval 证据�
 小预算线上模型评测均已通过；这些证据仍不等同于 Production Candidate 或 Production Ready
 宣告，正式发布资格需通过后续独立门禁。
 
+Phase C 已补齐运行 SSE、取消、失败任务运维界面，以及基于不可变镜像的外部 staging 发布与
+回滚包。发布操作从 [`docs/operations/release-runbook.md`](docs/operations/release-runbook.md)
+开始；四项展缓安全问题仍是发布阻断项，因此当前状态不是 Production Candidate。
+
 ## 项目结构
 
 ```text

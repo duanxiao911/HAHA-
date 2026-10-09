@@ -165,7 +165,12 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
 
     @application.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "service": "haha-creator-api", "version": "0.2.0"}
+        return {
+            "status": "ok",
+            "service": "haha-creator-api",
+            "version": "0.2.0",
+            "release_id": os.getenv("HAHA_RELEASE_ID", "development"),
+        }
 
     @application.get("/ready")
     def ready() -> dict[str, object]:

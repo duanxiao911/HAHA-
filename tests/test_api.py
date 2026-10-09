@@ -29,10 +29,12 @@ def _jwt(secret: str, *, workspace_id: str = "ws_a", role: str = "owner") -> str
     return f"{header}.{payload}.{signature}"
 
 
-def test_health_endpoint() -> None:
+def test_health_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HAHA_RELEASE_ID", "release-test-001")
     response = _client().get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["release_id"] == "release-test-001"
     assert response.headers["X-Request-ID"]
 
 

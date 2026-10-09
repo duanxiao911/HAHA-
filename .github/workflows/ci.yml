@@ -55,6 +55,28 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Static checks
         run: python -m ruff check src tests scripts
+      - name: Validate external release package
+        env:
+          POSTGRES_IMAGE: postgres:17-alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          REDIS_IMAGE: redis:8-alpine@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          HAHA_API_IMAGE: ghcr.io/example/haha-api@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          HAHA_WEB_IMAGE: ghcr.io/example/haha-web@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+          HAHA_PUBLIC_API_URL: https://api.staging.example.invalid
+          HAHA_PUBLIC_WEB_ORIGIN: https://staging.example.invalid
+          HAHA_ALLOWED_ORIGINS: https://staging.example.invalid
+          HAHA_API_BIND: 127.0.0.1:18000
+          HAHA_WEB_BIND: 127.0.0.1:13000
+          POSTGRES_PASSWORD: ci-release-password-value
+          HAHA_JWT_SECRET: ci-release-jwt-secret-at-least-32-characters
+          HAHA_RELEASE_ID: ci-release-package
+          HAHA_RELEASE_OWNER: ci-release-team
+          HAHA_ROLLBACK_OWNER: ci-platform-oncall
+          HAHA_SECURITY_OWNER: ci-security-team
+          HAHA_DATA_OWNER: ci-data-team
+          HAHA_ONCALL_CONTACT: ci-oncall
+        run: |
+          python scripts/release_preflight.py
+          docker compose -f compose.release.yaml config --quiet
       - name: Apply database migrations
         run: python -m alembic upgrade head
       - name: Test backend with PostgreSQL
