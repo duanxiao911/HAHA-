@@ -36,6 +36,22 @@ def test_health_endpoint() -> None:
     assert response.headers["X-Request-ID"]
 
 
+def test_sse_reconnect_header_is_allowed_by_cors() -> None:
+    response = _client().options(
+        "/api/runs/run-1/events",
+        headers={
+            "Origin": "http://127.0.0.1:3000",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,last-event-id",
+        },
+    )
+
+    assert response.status_code == 200
+    allowed = response.headers["access-control-allow-headers"].lower()
+    assert "authorization" in allowed
+    assert "last-event-id" in allowed
+
+
 def test_project_brief_run_http_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     # This unit-level HTTP contract intentionally exercises the local fallback.
     # The real Redis/Dramatiq boundary is covered by redis_worker_integration.py.

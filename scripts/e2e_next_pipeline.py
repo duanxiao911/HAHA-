@@ -22,7 +22,10 @@ SCREENSHOT = ARTIFACTS / f"{ARTIFACT_PREFIX}.png"
 REPORT = ARTIFACTS / f"{ARTIFACT_PREFIX}.json"
 CHROME = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 DEBUG_PORT = 9340
-APP_URL = os.getenv("HAHA_E2E_WEB_URL", "http://127.0.0.1:3000")
+WEB_BASE_URL = os.getenv("HAHA_E2E_WEB_URL", "http://127.0.0.1:3000").rstrip("/")
+APP_URL = WEB_BASE_URL if WEB_BASE_URL.endswith("/creator") else f"{WEB_BASE_URL}/creator"
+CANCEL_MODE = os.getenv("HAHA_E2E_CANCEL_MODE", "false").lower() == "true"
+OPERATIONS_MODE = os.getenv("HAHA_E2E_OPERATIONS_MODE", "false").lower() == "true"
 
 
 async def run(websocket_url: str, token: str) -> dict[str, Any]:
@@ -59,9 +62,20 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
                 await asyncio.sleep(0.5)
             raise TimeoutError(f"Timed out waiting for {fragment!r}; body tail: {body[-1600:]}")
 
+        async def wait_until_missing(fragment: str, timeout: float = 20) -> str:
+            deadline = time.monotonic() + timeout
+            body = ""
+            while time.monotonic() < deadline:
+                body = str(await evaluate("document.body?.innerText || ''"))
+                if fragment not in body:
+                    return body
+                await asyncio.sleep(0.5)
+            raise TimeoutError(f"Timed out waiting for {fragment!r} to disappear")
+
         await command("Runtime.enable")
         await command("Page.enable")
         await command("Log.enable")
+        await command("Network.enable")
         await command(
             "Emulation.setDeviceMetricsOverride",
             {"width": 1680, "height": 1050, "deviceScaleFactor": 1, "mobile": False},
@@ -73,6 +87,57 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
         )
         if not token_saved:
             raise RuntimeError("Could not store the short-lived staging token")
+        if OPERATIONS_MODE:
+            refreshed = await evaluate(
+                "(() => {const button=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('刷新列表'));button?.click();return !!button;})()"
+            )
+            if not refreshed:
+                raise RuntimeError("Failed-job refresh button not found")
+            body = await wait_for("C4_E2E_FAILURE", 20)
+            resolved = await evaluate(
+                "(() => {const button=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('标记已处理'));button?.click();return !!button;})()"
+            )
+            if not resolved:
+                raise RuntimeError("Failed-job resolve button not found")
+            body = await wait_until_missing("C4_E2E_FAILURE", 20)
+            requests = [
+                event.get("params", {}).get("request", {})
+                for event in events
+                if event.get("method") == "Network.requestWillBeSent"
+            ]
+            checks = {
+                "operations_ui": "失败任务运维" in body,
+                "failed_job_list": any(
+                    str(request.get("url", "")).endswith("/api/failed-jobs")
+                    and request.get("method") == "GET"
+                    for request in requests
+                ),
+                "failed_job_resolve": any(
+                    str(request.get("url", "")).endswith("/resolve")
+                    and request.get("method") == "POST"
+                    for request in requests
+                ),
+                "resolved_removed": "C4_E2E_FAILURE" not in body,
+            }
+            if not all(checks.values()):
+                raise RuntimeError(f"Failed-job operations UI check failed: {checks}")
+            shot = await command(
+                "Page.captureScreenshot",
+                {"format": "png", "captureBeyondViewport": True, "fromSurface": True},
+            )
+            SCREENSHOT.write_bytes(base64.b64decode(shot["data"]))
+            exceptions = [
+                event for event in events
+                if event.get("method") in {"Runtime.exceptionThrown", "Log.entryAdded"}
+            ]
+            return {
+                "status": "passed",
+                "url": APP_URL,
+                "mode": "operations",
+                "checks": checks,
+                "browser_exceptions": exceptions,
+                "screenshot": str(SCREENSHOT),
+            }
         prepared = await evaluate(
             """(() => {
               const setInput=(labelText,value)=>{
@@ -105,14 +170,53 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
         )
         if not clicked:
             raise RuntimeError("Submit button not found")
-        body = await wait_for("验收通过", 60)
+        if CANCEL_MODE:
+            await wait_for("取消本次运行", 20)
+            cancelled = await evaluate(
+                "(() => {const button=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('取消本次运行'));button?.click();return !!button;})()"
+            )
+            if not cancelled:
+                raise RuntimeError("Cancel button not found")
+            body = await wait_for("运行已取消", 20)
+        else:
+            body = await wait_for("验收通过", 60)
+        requests = [
+            event.get("params", {}).get("request", {})
+            for event in events
+            if event.get("method") == "Network.requestWillBeSent"
+        ]
+        run_status_requests = [
+            request for request in requests
+            if request.get("method") == "GET"
+            and "/api/runs/" in str(request.get("url", ""))
+            and "/events" not in str(request.get("url", ""))
+        ]
         checks = {
-            "platform": "推荐平台 · B站" in body,
-            "spec": "推荐规格 · 90秒 · 16:9" in body,
-            "tone": "表达气质 · 纪录片" in body,
-            "verification": "独立验收已通过" in body,
-            "evidence": "事实来源" in body,
+            "sse_progress": any(
+                "/api/runs/" in str(request.get("url", ""))
+                and "/events" in str(request.get("url", ""))
+                for request in requests
+            ),
+            "polling_replaced": len(run_status_requests) <= 1,
+            "operations_ui": "失败任务运维" in body,
         }
+        if CANCEL_MODE:
+            checks.update({
+                "cancelled_ui": "运行已取消" in body,
+                "cancel_request": any(
+                    str(request.get("url", "")).endswith("/cancel")
+                    and request.get("method") == "POST"
+                    for request in requests
+                ),
+            })
+        else:
+            checks.update({
+                "platform": "推荐平台 · B站" in body,
+                "spec": "推荐规格 · 90秒 · 16:9" in body,
+                "tone": "表达气质 · 纪录片" in body,
+                "verification": "独立验收已通过" in body,
+                "evidence": "事实来源" in body,
+            })
         if not all(checks.values()):
             raise RuntimeError(f"Generated result did not follow parameters: {checks}")
         shot = await command(
@@ -127,7 +231,9 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
         return {
             "status": "passed",
             "url": APP_URL,
+            "mode": "cancel" if CANCEL_MODE else "generate",
             "checks": checks,
+            "run_status_request_count": len(run_status_requests),
             "browser_exceptions": exceptions,
             "screenshot": str(SCREENSHOT),
         }

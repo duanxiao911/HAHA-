@@ -104,6 +104,217 @@
   font-weight: 500;
 }
 
+.runProgress {
+  margin: 20px 24px 0;
+  padding: 16px;
+  border: 1px solid #e6ddd2;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.progressSummary,
+.progressSummary > div {
+  display: flex;
+  align-items: center;
+}
+
+.progressSummary {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.progressSummary > div {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.progressSummary b {
+  font-size: 11px;
+}
+
+.progressSummary small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.liveDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #aaa39b;
+}
+
+.liveDot.connected {
+  background: #4aad76;
+  box-shadow: 0 0 0 4px rgba(74, 173, 118, .13);
+}
+
+.progressSummary button,
+.refreshJobs,
+.failedJobList button {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  padding: 8px 11px;
+  color: #665f58;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.progressSummary button:hover,
+.failedJobList button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.runProgress ol {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  margin: 15px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.runProgress li {
+  display: grid;
+  gap: 6px;
+  color: #aaa39b;
+  font-size: 8px;
+}
+
+.runProgress li span {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 1px solid #ddd5cb;
+  border-radius: 50%;
+  font-size: 8px;
+}
+
+.runProgress li.active,
+.runProgress li.done {
+  color: var(--accent);
+}
+
+.runProgress li.active span {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.runProgress li.done {
+  color: var(--green);
+}
+
+.runProgress li.done span {
+  border-color: #b9cdbf;
+  background: #e9f4ec;
+}
+
+.terminalNote {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 10px;
+}
+
+.terminalNote.cancelled {
+  background: #f0eeeb;
+  color: #625c56;
+}
+
+.terminalNote.failed {
+  background: #ffe9e7;
+  color: #a82626;
+}
+
+.operationsAnchor {
+  grid-column: 1 / -1;
+  scroll-margin-top: 160px;
+}
+
+.operationsPanel {
+  overflow: hidden;
+}
+
+.operationsPanel .sectionHeading {
+  align-items: center;
+}
+
+.refreshJobs {
+  margin-left: auto;
+}
+
+.refreshJobs:disabled,
+.failedJobList button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.operationsEmpty {
+  padding: 28px;
+  text-align: center;
+}
+
+.operationsEmpty b {
+  font-size: 12px;
+}
+
+.operationsEmpty p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.failedJobList {
+  display: grid;
+  gap: 12px;
+  padding: 20px 24px 24px;
+}
+
+.failedJobList article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px;
+  border: 1px solid #e6ddd2;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.failedJobList article > div:last-child {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.failedJobList span {
+  color: var(--accent);
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.failedJobList h3 {
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.failedJobList p,
+.failedJobList small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.failedJobList .quietAction {
+  background: var(--soft);
+}
+
 @media (max-width: 1180px) {
   .pageContent {
     grid-template-columns: minmax(0, 1fr) 320px;
@@ -129,6 +340,14 @@
     grid-column: 1;
     order: 3;
   }
+
+  .operationsAnchor {
+    order: 4;
+  }
+
+  .runProgress ol {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }
 
 @media (max-width: 560px) {
@@ -139,5 +358,18 @@
 
   .capabilityGrid {
     display: none;
+  }
+
+  .runProgress {
+    margin: 15px;
+  }
+
+  .runProgress ol {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .failedJobList article {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

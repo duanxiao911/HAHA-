@@ -86,7 +86,7 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=("GET", "POST", "OPTIONS"),
-        allow_headers=("Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID", "X-User-ID", "X-Workspace-ID"),
+        allow_headers=("Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "X-Request-ID", "X-User-ID", "X-Workspace-ID"),
     )
 
     def resolve_membership(

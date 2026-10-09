@@ -25,7 +25,7 @@ Phase C does not declare the product Production Candidate or Production Ready.
 | C1 | Workspace-protected Run SSE endpoint | Complete | API contract and authorization tests |
 | C2 | Cancellation API and worker cooperation | Complete | concurrency and terminal-state tests |
 | C3 | Failed-job operations API | Complete | workspace isolation and bounded retry tests |
-| C4 | Next.js operational UI | Pending | browser E2E without polling-only progress |
+| C4 | Next.js operational UI | Complete | authenticated SSE, cancellation and failed-job browser E2E |
 | C5 | External staging/release package | Pending | deployment, rollback and ownership evidence |
 
 ## Real-environment gate
@@ -40,6 +40,12 @@ C3 remained Pending until the validation commit passed GitHub Actions on 2026-10
 completed with workspace-scoped failed-job listing, idempotent resolution, atomic bounded retry and
 PostgreSQL integration evidence.
 See `docs/evidence/phase-c-03-failed-job-operations.md`.
+
+C4 completed on 2026-10-09 with an authenticated fetch-stream SSE client, visible run stages,
+cancellation controls and workspace-scoped failed-job actions. A clean staging stack exercised normal
+generation, cancellation across Worker restart and failed-job resolution in a real browser. The UI
+made one terminal Run GET and did not return to interval polling.
+See `docs/evidence/phase-c-04-operational-ui.md`.
 
 ## Deferred security work
 
