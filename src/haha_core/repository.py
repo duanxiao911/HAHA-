@@ -8,6 +8,7 @@ from contextlib import closing
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Lock
 from typing import Protocol
 from uuid import uuid4
 
@@ -86,6 +87,7 @@ class SQLiteCreatorRepository:
 
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
+        self._failed_job_retry_lock = Lock()
         self._memory_uri = ""
         self._memory_keeper: sqlite3.Connection | None = None
         if self.path == ":memory:":
@@ -467,14 +469,19 @@ class SQLiteCreatorRepository:
     def retry_failed_job(
         self, failed_job_id: str, workspace_id: str, *, max_attempts: int
     ) -> Run | None:
+        with self._failed_job_retry_lock:
+            return self._retry_failed_job_transaction(
+                failed_job_id,
+                workspace_id,
+                max_attempts=max_attempts,
+            )
+
+    def _retry_failed_job_transaction(
+        self, failed_job_id: str, workspace_id: str, *, max_attempts: int
+    ) -> Run | None:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with closing(self._connect()) as connection:
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-            except sqlite3.OperationalError as exc:
-                if "locked" in str(exc).lower():
-                    return None
-                raise
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """SELECT failed_jobs.run_id FROM failed_jobs
                    JOIN runs ON runs.id = failed_jobs.run_id

@@ -37,3 +37,10 @@ verification.
 
 This evidence completes C3 only. C4 and C5 remain pending, the deferred security findings remain
 release blockers, and no Production Candidate status is claimed.
+
+## CI concurrency hardening
+
+On 2026-10-09, a Linux CI run exposed an additional SQLite shared-cache lock window before the atomic
+retry transaction. The service now enters the repository operation before reading diagnostic state,
+and each SQLite repository instance serializes retry-attempt consumption. Verification passed 500
+consecutive two-thread races, the full local suite and all six PostgreSQL integration tests.

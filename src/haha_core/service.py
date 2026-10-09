@@ -232,6 +232,16 @@ class CreatorService:
         raise LookupError("运行记录不存在")
 
     def retry_failed_job(self, failed_job_id: str, workspace_id: str) -> Run:
+        try:
+            retrying = self.repository.retry_failed_job(
+                failed_job_id,
+                workspace_id,
+                max_attempts=self.max_run_attempts,
+            )
+        except RepositoryConflictError as exc:
+            raise FailedJobNotRetryableError("失败任务状态已变化") from exc
+        if retrying:
+            return retrying
         job = self.repository.get_failed_job(failed_job_id, workspace_id)
         if not job:
             raise LookupError("失败任务不存在")
@@ -244,17 +254,7 @@ class CreatorService:
             raise FailedJobNotRetryableError(f"运行状态不能重试：{run.status.value}")
         if run.attempt >= self.max_run_attempts:
             raise FailedJobNotRetryableError("运行已达到最大尝试次数")
-        try:
-            retrying = self.repository.retry_failed_job(
-                failed_job_id,
-                workspace_id,
-                max_attempts=self.max_run_attempts,
-            )
-        except RepositoryConflictError as exc:
-            raise FailedJobNotRetryableError("失败任务状态已变化") from exc
-        if not retrying:
-            raise FailedJobNotRetryableError("失败任务状态已变化")
-        return retrying
+        raise FailedJobNotRetryableError("失败任务状态已变化")
 
     def resolve_failed_job(self, failed_job_id: str, workspace_id: str) -> FailedJob:
         job = self.repository.resolve_failed_job(failed_job_id, workspace_id)
