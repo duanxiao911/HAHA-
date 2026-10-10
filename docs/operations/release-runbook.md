@@ -14,6 +14,8 @@ a Production Candidate or production deployment.
 
 The Web image must be built with `NEXT_PUBLIC_API_BASE_URL` equal to `HAHA_PUBLIC_API_URL` and
 `NEXT_PUBLIC_AUTH_MODE=jwt`. Do not put JWT or database secrets in image build arguments.
+The image records both non-secret values in `io.haha.web.api-base-url` and
+`io.haha.web.auth-mode` labels so the release owner can verify the immutable artifact.
 
 ## Preflight
 
@@ -22,6 +24,14 @@ $releaseEnv = "C:\secure\haha-staging.env"
 python scripts/release_preflight.py --env-file $releaseEnv
 docker compose --env-file $releaseEnv -f compose.release.yaml config --quiet
 docker compose --env-file $releaseEnv -f compose.release.yaml pull
+$releaseValues = @{}
+Get-Content $releaseEnv | Where-Object { $_ -match '^[^#][^=]*=' } | ForEach-Object {
+  $key, $value = $_.Split('=', 2); $releaseValues[$key.Trim()] = $value.Trim()
+}
+$webImage = $releaseValues['HAHA_WEB_IMAGE']
+$webApi = docker image inspect $webImage --format '{{ index .Config.Labels "io.haha.web.api-base-url" }}'
+$webAuth = docker image inspect $webImage --format '{{ index .Config.Labels "io.haha.web.auth-mode" }}'
+if ($webApi -ne $releaseValues['HAHA_PUBLIC_API_URL'] -or $webAuth -ne 'jwt') { throw 'Web image API/auth labels do not match release configuration' }
 ```
 
 Stop if the preflight reports a placeholder, mutable image tag, non-HTTPS origin, wildcard CORS,

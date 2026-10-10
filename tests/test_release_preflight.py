@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from scripts.release_preflight import validate
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _valid_values() -> dict[str, str]:
@@ -57,3 +61,18 @@ def test_release_preflight_allows_local_image_ids_only_for_rehearsal() -> None:
 
     assert "HAHA_API_IMAGE must use an immutable @sha256 digest" in validate(values)
     assert validate(values, allow_local_image_ids=True) == []
+
+
+def test_web_container_requires_explicit_api_url_and_defaults_to_jwt() -> None:
+    dockerfile = (ROOT / "web" / "Dockerfile").read_text(encoding="utf-8")
+    assert "ARG NEXT_PUBLIC_API_BASE_URL\n" in dockerfile
+    assert "ARG NEXT_PUBLIC_AUTH_MODE=jwt" in dockerfile
+    assert 'test -n "${NEXT_PUBLIC_API_BASE_URL}"' in dockerfile
+    assert "io.haha.web.api-base-url" in dockerfile
+    assert "io.haha.web.auth-mode" in dockerfile
+
+
+def test_ci_web_image_is_built_with_jwt_contract() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "NEXT_PUBLIC_API_BASE_URL=https://api.staging.example.invalid" in workflow
+    assert "NEXT_PUBLIC_AUTH_MODE=jwt" in workflow

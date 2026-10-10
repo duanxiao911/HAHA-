@@ -116,7 +116,8 @@ Phase B 的可观测性、CI、staging、真实浏览器 E2E 与 AI Eval 证据�
 
 Phase C 已补齐运行 SSE、取消、失败任务运维界面，以及基于不可变镜像的外部 staging 发布与
 回滚包。发布操作从 [`docs/operations/release-runbook.md`](docs/operations/release-runbook.md)
-开始；四项展缓安全问题仍是发布阻断项，因此当前状态不是 Production Candidate。
+开始。P0 安全阻断项已经修复并有回归证据；独立 Production Readiness Gate 尚未执行，
+因此当前状态仍不是 Production Candidate。
 
 ## 项目结构
 
@@ -126,7 +127,6 @@ haha-platform-v2/
 ├─ data/heritage_facts.json       # 非遗事实知识库
 ├─ scripts/import_heritage_facts.py
 ├─ src/haha_media/
-│  ├─ feed.py                     # 社区演示数据
 │  ├─ knowledge.py                # 三类知识检索与轨迹
 │  ├─ model_router.py             # 文本/图像模型路由与调用证据
 │  └─ script_writer.py            # 创作生成链路

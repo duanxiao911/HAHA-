@@ -12,16 +12,22 @@ RUN corepack enable \
 
 FROM ${NODE_BASE_IMAGE} AS builder
 WORKDIR /app
-ARG NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
-ARG NEXT_PUBLIC_AUTH_MODE=dev
+ARG NEXT_PUBLIC_API_BASE_URL
+ARG NEXT_PUBLIC_AUTH_MODE=jwt
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 ENV NEXT_PUBLIC_AUTH_MODE=$NEXT_PUBLIC_AUTH_MODE
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
-RUN ./node_modules/.bin/next build
+RUN test -n "${NEXT_PUBLIC_API_BASE_URL}" \
+    && test "${NEXT_PUBLIC_AUTH_MODE}" = "jwt" -o "${NEXT_PUBLIC_AUTH_MODE}" = "dev" \
+    && ./node_modules/.bin/next build
 
 FROM ${NODE_BASE_IMAGE} AS runner
+ARG NEXT_PUBLIC_API_BASE_URL
+ARG NEXT_PUBLIC_AUTH_MODE=jwt
 ENV NODE_ENV=production
+LABEL io.haha.web.api-base-url=$NEXT_PUBLIC_API_BASE_URL \
+      io.haha.web.auth-mode=$NEXT_PUBLIC_AUTH_MODE
 WORKDIR /app
 COPY --from=builder --chown=65532:65532 /app/.next/standalone ./
 COPY --from=builder --chown=65532:65532 /app/.next/static ./.next/static

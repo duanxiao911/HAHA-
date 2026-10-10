@@ -114,6 +114,7 @@ jobs:
         working-directory: web
         env:
           NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
+          NEXT_PUBLIC_AUTH_MODE: jwt
         run: pnpm build
 
   container-build:
@@ -138,6 +139,8 @@ jobs:
           context: web
           push: false
           tags: haha-web:ci
-          build-args: NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=https://api.staging.example.invalid
+            NEXT_PUBLIC_AUTH_MODE=jwt
           cache-from: type=gha
           cache-to: type=gha,mode=max
