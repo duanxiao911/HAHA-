@@ -74,6 +74,9 @@ pnpm start
 ### 5. 启动 API
 
 ```powershell
+$env:HAHA_ENVIRONMENT = "development"
+$env:HAHA_AUTH_MODE = "dev"
+$env:HAHA_ALLOW_DEV_AUTH = "true"
 python -m uvicorn haha_api.main:app --app-dir src --port 8000 --reload
 ```
 
@@ -98,7 +101,9 @@ docker compose up --build
 - FastAPI：<http://localhost:8000/docs>
 - PostgreSQL 和 Redis 只在容器网络中开放。
 
-`compose.yaml` 默认关闭认证以便本地联调；任何公网或共享环境都必须启用正式身份服务，不能沿用该设置。
+`compose.yaml` 通过三项显式变量开启仅限本机的开发认证，并把 Web/API 端口绑定到
+`127.0.0.1`。源码默认值为 production + JWT；漏配认证变量或密钥时 API 会拒绝启动。
+任何公网或共享环境都不得设置 `HAHA_ALLOW_DEV_AUTH=true`。
 
 ## 验证
 

@@ -6,7 +6,63 @@ import re
 from dataclasses import asdict
 
 from haha_core.domain import BriefVersion, VerificationIssue, VerificationResult
+from haha_media.knowledge import load_heritage_facts
 from haha_media.script_writer import ContentScript
+
+_CRITICAL_ATOM_PATTERNS = (
+    re.compile(r"(?:世界级|国家级|省级|市级|县级)(?:\+联合国人类非遗)?"),
+    re.compile(r"公元前?\s*\d{1,4}\s*年?"),
+    re.compile(r"\d{1,2}\s*世纪(?:前后)?"),
+    re.compile(r"(?<!\d)\d{3,4}\s*年(?!\d)"),
+    re.compile(r"(?:位于|来自|流传于|发源于|起源于)([^，。；！？\n]{2,30})"),
+    re.compile(r"([\u4e00-\u9fff·]{2,12})(?:是|为)(?:国家级|省级|市级|县级)?(?:代表性)?传承人"),
+)
+
+
+def _normalized(value: str) -> str:
+    return re.sub(r"[\s，。；：、（）()“”‘’·+-]", "", value).lower()
+
+
+def _critical_atoms(script: ContentScript) -> tuple[str, ...]:
+    public_text = "\n".join(
+        (script.title, script.hook, *script.voiceover, script.caption, *script.tags)
+    )
+    atoms: list[str] = []
+    for pattern in _CRITICAL_ATOM_PATTERNS:
+        for match in pattern.finditer(public_text):
+            atom = match.group(1) if match.lastindex else match.group(0)
+            if atom.strip():
+                atoms.append(atom.strip())
+    return tuple(dict.fromkeys(atoms))
+
+
+def _ungrounded_critical_atoms(script: ContentScript) -> tuple[str, ...]:
+    atoms = _critical_atoms(script)
+    if not atoms:
+        return ()
+    allowed_ids = set(script.retrieval_trace.fact_chunks_used) if script.retrieval_trace else set()
+    trusted_facts = tuple(fact for fact in load_heritage_facts() if fact.id in allowed_ids)
+    trusted_text = _normalized(
+        " ".join(
+            " ".join(
+                (
+                    fact.name,
+                    fact.category,
+                    fact.region,
+                    fact.level,
+                    fact.summary,
+                    fact.history,
+                    fact.core_craft,
+                    fact.characteristics,
+                    fact.representative_bearers,
+                    fact.misconceptions,
+                    fact.visual_points,
+                )
+            )
+            for fact in trusted_facts
+        )
+    )
+    return tuple(atom for atom in atoms if _normalized(atom) not in trusted_text)
 
 
 def verify_script(brief: BriefVersion, script: ContentScript) -> VerificationResult:
@@ -38,6 +94,15 @@ def verify_script(brief: BriefVersion, script: ContentScript) -> VerificationRes
         issues.append(VerificationIssue("timeline_mismatch", "shots", "分镜终点与目标时长不一致"))
     if not script.retrieval_trace:
         issues.append(VerificationIssue("missing_evidence", "retrieval_trace", "缺少检索证据"))
+    ungrounded_atoms = _ungrounded_critical_atoms(script)
+    if ungrounded_atoms:
+        issues.append(
+            VerificationIssue(
+                "ungrounded_fact",
+                "content",
+                f"关键事实缺少已检索来源支持：{'、'.join(ungrounded_atoms)}",
+            )
+        )
     return VerificationResult(not issues, tuple(issues))
 
 

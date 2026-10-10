@@ -188,7 +188,7 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         else:
             checks["redis"] = "not_configured"
         required = [checks["database"] == "ok"]
-        if os.getenv("HAHA_ENVIRONMENT", "development").lower() in {"staging", "production"}:
+        if os.getenv("HAHA_ENVIRONMENT", "production").lower() in {"staging", "production"}:
             required.append(checks["redis"] == "ok")
         if not all(required):
             raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})

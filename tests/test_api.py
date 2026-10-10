@@ -306,6 +306,40 @@ def test_production_authentication_fails_closed(monkeypatch) -> None:
         create_app(SQLiteCreatorRepository(":memory:"))
 
 
+def test_missing_auth_configuration_defaults_to_locked_jwt(monkeypatch) -> None:
+    for key in (
+        "HAHA_ENVIRONMENT",
+        "HAHA_AUTH_MODE",
+        "HAHA_ALLOW_DEV_AUTH",
+        "HAHA_JWT_SECRET",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with pytest.raises(RuntimeError, match="HAHA_JWT_SECRET"):
+        create_app(SQLiteCreatorRepository(":memory:"))
+
+
+def test_dev_auth_requires_explicit_opt_in(monkeypatch) -> None:
+    monkeypatch.setenv("HAHA_ENVIRONMENT", "development")
+    monkeypatch.setenv("HAHA_AUTH_MODE", "dev")
+    monkeypatch.delenv("HAHA_ALLOW_DEV_AUTH", raising=False)
+
+    with pytest.raises(RuntimeError, match="显式设置"):
+        create_app(SQLiteCreatorRepository(":memory:"))
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_shared_environments_cannot_enable_dev_auth_even_with_opt_in(
+    monkeypatch, environment: str
+) -> None:
+    monkeypatch.setenv("HAHA_ENVIRONMENT", environment)
+    monkeypatch.setenv("HAHA_AUTH_MODE", "dev")
+    monkeypatch.setenv("HAHA_ALLOW_DEV_AUTH", "true")
+
+    with pytest.raises(RuntimeError, match="必须启用"):
+        create_app(SQLiteCreatorRepository(":memory:"))
+
+
 def _record_failed_job(
     repository: SQLiteCreatorRepository,
     *,

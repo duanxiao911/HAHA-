@@ -279,6 +279,25 @@ def test_independent_verifier_rejects_delivery_mismatch() -> None:
     assert "platform_mismatch" in {issue.code for issue in result.issues}
 
 
+def test_independent_verifier_rejects_ungrounded_critical_facts() -> None:
+    service = _service()
+    project = service.create_project(title="事实接地验证", workspace_id="ws_test")
+    brief = _brief(service, project.id)
+    generated = generate_content_script(
+        ContentBrief("中国剪纸", "剪刀落下", "初学者", "B站", "纪录片", duration="90秒", aspect_ratio="16:9")
+    )
+    poisoned = replace(
+        generated,
+        title="世界级中国剪纸",
+        caption="这项技艺始于公元前3000年。",
+    )
+
+    result = verify_script(brief, poisoned)
+
+    assert result.passed is False
+    assert "ungrounded_fact" in {issue.code for issue in result.issues}
+
+
 def test_run_failure_is_persisted_without_fallback() -> None:
     service = _service()
     project = service.create_project(title="失败专题", workspace_id="ws_test")

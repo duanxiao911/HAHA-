@@ -44,9 +44,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       HAHA_ENVIRONMENT: development
       HAHA_AUTH_MODE: dev
+      HAHA_ALLOW_DEV_AUTH: "true"
       HAHA_ALLOWED_ORIGINS: http://localhost:3000
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -79,7 +80,7 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       api:
         condition: service_started

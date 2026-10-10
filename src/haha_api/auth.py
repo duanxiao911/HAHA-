@@ -28,15 +28,35 @@ class Principal:
     auth_mode: str
 
 
+def _environment() -> str:
+    return os.getenv("HAHA_ENVIRONMENT", "production").strip().lower()
+
+
+def _auth_mode() -> str:
+    return os.getenv("HAHA_AUTH_MODE", "jwt").strip().lower()
+
+
+def _dev_auth_enabled() -> bool:
+    return os.getenv("HAHA_ALLOW_DEV_AUTH", "").strip().lower() == "true"
+
+
 def validate_security_configuration() -> None:
-    environment = os.getenv("HAHA_ENVIRONMENT", "development").strip().lower()
-    mode = os.getenv("HAHA_AUTH_MODE", "dev").strip().lower()
-    if environment in {"staging", "production"} and mode != "jwt":
-        raise RuntimeError("staging/production 必须启用 HAHA_AUTH_MODE=jwt")
-    if mode == "jwt" and len(os.getenv("HAHA_JWT_SECRET", "")) < 32:
-        raise RuntimeError("HAHA_JWT_SECRET 至少需要 32 个字符")
+    environment = _environment()
+    mode = _auth_mode()
+    if environment not in {"development", "staging", "production"}:
+        raise RuntimeError(f"不支持的运行环境：{environment}")
     if mode not in {"dev", "jwt"}:
         raise RuntimeError(f"不支持的认证模式：{mode}")
+    if environment in {"staging", "production"} and mode != "jwt":
+        raise RuntimeError("staging/production 必须启用 HAHA_AUTH_MODE=jwt")
+    if mode == "dev" and (
+        environment != "development" or not _dev_auth_enabled()
+    ):
+        raise RuntimeError(
+            "dev 认证仅允许在 development 环境显式设置 HAHA_ALLOW_DEV_AUTH=true 后启用"
+        )
+    if mode == "jwt" and len(os.getenv("HAHA_JWT_SECRET", "")) < 32:
+        raise RuntimeError("HAHA_JWT_SECRET 至少需要 32 个字符")
 
 
 def _decode_segment(value: str) -> bytes:
@@ -75,10 +95,10 @@ def authenticate(
     dev_user_id: str = Header(default="local-user", alias="X-User-ID"),
     dev_workspace_id: str = Header(default="local", alias="X-Workspace-ID"),
 ) -> Principal:
-    mode = os.getenv("HAHA_AUTH_MODE", "dev").strip().lower()
+    mode = _auth_mode()
     if mode == "dev":
-        if os.getenv("HAHA_ENVIRONMENT", "development").lower() != "development":
-            raise HTTPException(status_code=500, detail="非开发环境禁止 dev 认证")
+        if _environment() != "development" or not _dev_auth_enabled():
+            raise HTTPException(status_code=500, detail="dev 认证未显式启用")
         return Principal(dev_user_id.strip(), dev_workspace_id.strip(), Role.OWNER, "dev")
     supplied = authorization.removeprefix("Bearer ").strip()
     if not supplied:
