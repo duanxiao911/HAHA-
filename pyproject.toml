@@ -16,8 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "ruff>=0.12,<1", "streamlit>=1.64,<2"]
-legacy-ui = ["streamlit>=1.64,<2"]
+dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
 
 [tool.ruff]
 line-length = 100

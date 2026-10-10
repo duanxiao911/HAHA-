@@ -1,6 +1,6 @@
 # HAHA 飞颐
 
-HAHA 飞颐正在从本地 Streamlit MVP 迁移为可上线的前后端分离产品。当前仓库同时包含旧界面和第一阶段生产后端核心；Streamlit 仅作为迁移期客户端，新的业务权威状态不再设计为依赖 `st.session_state`。
+HAHA 飞颐是采用 Next.js、FastAPI、PostgreSQL、Redis 与 Dramatiq 构建的非遗内容社区和 AI 创作平台。
 
 ## 当前能力
 
@@ -21,7 +21,6 @@ HAHA 飞颐正在从本地 Streamlit MVP 迁移为可上线的前后端分离产
 - PostgreSQL/SQLAlchemy + Alembic；SQLite 仅作本地开发适配器
 - Redis + Dramatiq 独立 Worker
 - Next.js 16 正式 Web 前端（`web/`）
-- Streamlit（迁移期旧界面）
 - pytest
 - Ruff
 
@@ -46,9 +45,6 @@ python -m pip install -e ".[dev]"
 
 环境变量名称参见 [`config/model.env.example`](config/model.env.example)。不要把真实 API Key 写进仓库。
 
-推荐把 [`.streamlit/secrets.toml.example`](.streamlit/secrets.toml.example) 复制为
-`.streamlit/secrets.toml`，然后只在本机填写密钥。真实文件已被 Git 忽略，应用启动时会自动读取。
-
 当前 PowerShell 会话可这样设置：
 
 ```powershell
@@ -69,7 +65,7 @@ pnpm start
 
 浏览器访问：<http://localhost:3000>
 
-这是当前正式前端。`app.py` 的 Streamlit 页面仅保留作迁移期兼容入口，不再作为生产网页。
+这是当前唯一正式 Web 前端。
 
 ### 5. 启动 API
 
@@ -126,7 +122,6 @@ Phase C 已补齐运行 SSE、取消、失败任务运维界面，以及基于�
 
 ```text
 haha-platform-v2/
-├─ app.py                         # Streamlit 页面与交互入口
 ├─ config/model.env.example       # 模型环境变量示例
 ├─ data/heritage_facts.json       # 非遗事实知识库
 ├─ scripts/import_heritage_facts.py
@@ -134,8 +129,7 @@ haha-platform-v2/
 │  ├─ feed.py                     # 社区演示数据
 │  ├─ knowledge.py                # 三类知识检索与轨迹
 │  ├─ model_router.py             # 文本/图像模型路由与调用证据
-│  ├─ script_writer.py            # 创作生成链路
-│  └─ theme.py                    # 页面视觉样式
+│  └─ script_writer.py            # 创作生成链路
 ├─ src/haha_core/
 │  ├─ domain.py                   # 项目、参数版本、Run 与脚本版本
 │  ├─ repository.py               # 持久化接口与开发适配器
