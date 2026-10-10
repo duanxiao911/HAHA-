@@ -11,6 +11,7 @@ venv/
 .env.*
 !.env.example
 .streamlit/*
+!.streamlit/config.toml
 !.streamlit/secrets.toml.example
 model-config.ps1
 artifacts/

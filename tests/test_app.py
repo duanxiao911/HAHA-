@@ -50,6 +50,53 @@ def test_script_workspace_renders_without_exception() -> None:
     assert not app.exception
 
 
+def test_all_public_routes_render_without_exception() -> None:
+    routes = (
+        {"module": "media"},
+        {"module": "map"},
+        {"module": "gift"},
+        {"module": "learn"},
+        {"module": "profile"},
+        {"space": "publish"},
+    )
+    for query_params in routes:
+        app = AppTest.from_file(str(APP_PATH), default_timeout=10)
+        for key, value in query_params.items():
+            app.query_params[key] = value
+        app.run()
+        assert not app.exception, query_params
+
+
+def test_theme_exposes_shared_design_tokens() -> None:
+    theme_path = APP_PATH.parent / "src" / "haha_media" / "theme.py"
+    css = theme_path.read_text(encoding="utf-8")
+    for token in (
+        "--canvas",
+        "--surface",
+        "--brand",
+        "--space-4",
+        "--radius-control",
+        "--radius-card",
+        "--shadow-s",
+        "--z-header",
+        "--page-max",
+    ):
+        assert token in css
+
+
+def test_placeholder_copy_is_removed_from_public_pages() -> None:
+    source = APP_PATH.read_text(encoding="utf-8")
+    assert "该板块当前为预留入口" not in source
+
+
+def test_homepage_contains_carousel_and_compact_scroll_navigation() -> None:
+    source = APP_PATH.read_text(encoding="utf-8")
+    assert 'class="hero-carousel"' in source
+    assert "unsafe_allow_javascript=True" in source
+    assert "requestAnimationFrame(apply)" in source
+    assert "classList.toggle" in source
+
+
 def test_parameter_board_values_drive_the_next_generation() -> None:
     app = AppTest.from_file(str(APP_PATH), default_timeout=10)
     app.query_params["space"] = "script"

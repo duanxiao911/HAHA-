@@ -192,26 +192,168 @@ def _install_scroll_navigation() -> None:
 def _install_scroll_state(
     *, selector: str, class_name: str, enter_at: int, exit_at: int, cleanup_name: str
 ) -> None:
-    """Keep sticky headers stable without injecting rerun-sensitive JavaScript.
-
-    Streamlit owns the page DOM and may replace nodes after a slow model call. A
-    script that retains references to those nodes can race React reconciliation
-    and surface ``removeChild`` errors. Sticky positioning remains handled by the
-    page stylesheet; compact-on-scroll is intentionally disabled until it can be
-    implemented as a lifecycle-safe component.
-    """
-    del selector, class_name, enter_at, exit_at, cleanup_name
+    """Toggle a compact header without retaining Streamlit-owned DOM nodes."""
+    st.html(
+        f"""
+        <script>
+        (() => {{
+          const cleanupKey = {cleanup_name!r};
+          window[cleanupKey]?.abort();
+          const controller = new AbortController();
+          window[cleanupKey] = controller;
+          let compact = window.scrollY > {enter_at};
+          let scheduled = false;
+          const apply = () => {{
+            scheduled = false;
+            const y = window.scrollY;
+            if (!compact && y > {enter_at}) compact = true;
+            else if (compact && y < {exit_at}) compact = false;
+            const header = document.querySelector({selector!r});
+            if (header) header.classList.toggle({class_name!r}, compact);
+          }};
+          const onScroll = () => {{
+            if (!scheduled) {{ scheduled = true; requestAnimationFrame(apply); }}
+          }};
+          window.addEventListener('scroll', onScroll, {{passive:true, signal:controller.signal}});
+          apply();
+        }})();
+        </script>
+        """,
+        unsafe_allow_javascript=True,
+    )
 
 
 def _render_module_placeholder(module: str) -> None:
-    content = {
-        "gift": ("非遗礼遇", "从一段故事进入一件有文化来处的礼物。"),
-        "learn": ("AI 学习对话", "在这里提问、理解与继续探索非遗。"),
-        "profile": ("我的文化档案", "收藏、观看足迹与文化兴趣将在这里沉淀。"),
+    renderers = {
+        "gift": _render_gift_page,
+        "learn": _render_learning_page,
+        "profile": _render_profile_page,
     }
-    title, copy = content.get(module, content["gift"])
-    st.markdown(f"## {title}")
-    st.info(f"{copy} 该板块当前为预留入口。")
+    renderers.get(module, _render_gift_page)()
+
+
+def _render_page_intro(kicker: str, title: str, copy: str, *, meta: str = "") -> None:
+    meta_markup = f"<span>{escape(meta)}</span>" if meta else ""
+    st.markdown(
+        '<section class="product-page-head">'
+        f'<div><b>{escape(kicker)}</b><h1>{escape(title)}</h1><p>{escape(copy)}</p></div>'
+        f"{meta_markup}</section>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_feature_cards(items: tuple[tuple[str, str, str], ...]) -> None:
+    st.markdown(
+        '<section class="feature-grid">'
+        + "".join(
+            '<article class="feature-card">'
+            f'<i aria-hidden="true">{escape(icon)}</i><div><h3>{escape(title)}</h3>'
+            f'<p>{escape(copy)}</p></div></article>'
+            for icon, title, copy in items
+        )
+        + "</section>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_gift_page() -> None:
+    _render_page_intro(
+        "HAHA GIFT",
+        "非遗礼遇",
+        "从文化来处、使用场景和收礼人的关系出发，找到一件讲得清故事的礼物。",
+        meta="策展推荐 · 来源可核验",
+    )
+    st.markdown('<div class="page-section-title"><h2>按送礼场景发现</h2><span>先选关系，再看手艺</span></div>', unsafe_allow_html=True)
+    _render_feature_cards(
+        (
+            ("礼", "正式往来", "适合商务、师友与重要纪念，优先呈现工艺来源与作品规格。"),
+            ("友", "朋友与同好", "从共同兴趣出发，选择可以被使用、被分享的当代非遗作品。"),
+            ("家", "家人与长辈", "关注寓意、日常使用与照护成本，避免只讲华丽包装。"),
+        )
+    )
+    left, right = st.columns((1.35, 0.65), gap="large")
+    with left:
+        with st.container(border=True):
+            st.subheader("礼物偏好", icon=":material/tune:")
+            occasion = st.segmented_control("送礼场景", ("纪念", "探访", "商务", "节庆"), default="纪念")
+            interests = st.pills("偏好方向", ("织染", "陶瓷", "木作", "纸艺"), selection_mode="multi")
+            budget = st.select_slider("预算区间", options=("300 元内", "300–800 元", "800–2000 元", "2000 元以上"))
+            if st.button("生成礼遇建议", type="primary", width="stretch"):
+                st.success(f"已记录：{occasion} · {budget} · {len(interests or [])} 个偏好方向。")
+    with right:
+        st.markdown(
+            '<aside class="page-note"><b>选择原则</b><p>先核验工艺与作者，再判断是否适合送礼。'
+            '不以“非遗”标签代替材质、尺寸、维护和交付信息。</p>'
+            '<a href="?module=media">查看非遗影像 →</a></aside>',
+            unsafe_allow_html=True,
+        )
+
+
+def _render_learning_page() -> None:
+    _render_page_intro(
+        "HAHA LEARN",
+        "AI 学习",
+        "用提问、对照和可核验来源理解非遗；AI 负责组织线索，不替代传承人口述与权威资料。",
+        meta="学习路径 · 知识来源",
+    )
+    _render_feature_cards(
+        (
+            ("问", "从一个问题开始", "比较技艺、理解术语，或把一段复杂资料讲得更清楚。"),
+            ("看", "跟着影像学习", "把视频里的材料、步骤、人物和地域线索串成学习笔记。"),
+            ("证", "回到原始来源", "区分事实、推断与创作表达，为重要信息保留核验入口。"),
+        )
+    )
+    conversation, sources = st.columns((1.4, 0.6), gap="large")
+    with conversation:
+        with st.container(border=True):
+            st.subheader("开始探索", icon=":material/chat:")
+            example = st.pills(
+                "示例问题",
+                ("苗绣和苏绣有什么不同？", "蓝染为什么会形成冰裂纹？", "怎么看懂一段工艺视频？"),
+                label_visibility="collapsed",
+            )
+            question = st.text_area("你的问题", value=example or "", placeholder="输入一个关于非遗的问题", height=112)
+            if st.button("开始学习", type="primary", width="stretch", disabled=not question.strip()):
+                st.session_state["learning_question"] = question.strip()
+                st.info("学习对话入口已准备好；下一阶段可接入知识检索与来源引用。", icon=":material/info:")
+    with sources:
+        st.markdown(
+            '<aside class="page-note"><b>回答边界</b><ul><li>标出事实与推断</li><li>优先展示可核验来源</li>'
+            '<li>不编造传承谱系</li><li>不替代专业鉴定</li></ul>'
+            '<a href="?module=map">从文化地图开始 →</a></aside>',
+            unsafe_allow_html=True,
+        )
+
+
+def _render_profile_page() -> None:
+    _render_page_intro(
+        "MY HAHA",
+        "我的文化档案",
+        "把收藏、观看足迹、学习问题和创作项目放在同一个清晰的个人空间。",
+        meta="本地演示档案",
+    )
+    st.markdown(
+        '<section class="profile-summary"><div><i>12</i><span>收藏内容</span></div>'
+        '<div><i>7</i><span>观看足迹</span></div><div><i>3</i><span>学习主题</span></div>'
+        '<div><i>1</i><span>创作项目</span></div></section>',
+        unsafe_allow_html=True,
+    )
+    activity, settings = st.columns((1.35, 0.65), gap="large")
+    with activity:
+        st.subheader("最近活动", icon=":material/history:")
+        _render_feature_cards(
+            (
+                ("藏", "收藏了《竹丝在指尖慢慢成形》", "今天 · 竹编 · 四川"),
+                ("学", "学习了“蓝染与地域生活”", "昨天 · 染织 · 西南地区"),
+                ("创", "保存了一个 45 秒视频脚本", "3 天前 · AI 创作台"),
+            )
+        )
+    with settings:
+        with st.container(border=True):
+            st.subheader("内容偏好", icon=":material/interests:")
+            st.pills("关注的技艺", ("竹编", "染织", "陶瓷", "戏曲"), default=("竹编", "染织"), selection_mode="multi")
+            st.toggle("优先展示有来源说明的内容", value=True)
+            st.button("保存偏好", width="stretch")
 
 
 def _render_culture_map() -> None:
@@ -231,8 +373,12 @@ def _render_culture_map() -> None:
         f'<a class="{"active" if key == region else ""}" href="?module=map&region={key}">{label}</a>'
         for key, label in regions.items()
     )
-    st.markdown("## 文化地图")
-    st.caption("先选择一个地方，再发现当地的手艺、表演与生活传统。")
+    _render_page_intro(
+        "HAHA MAP",
+        "文化地图",
+        "先选择一个地方，再发现当地的手艺、表演与生活传统。",
+        meta="地域优先 · 分类辅助",
+    )
     st.markdown(
         f'<nav class="filter-row region-first"><b>地域</b>{region_links}</nav>'
         '<nav class="filter-row"><b>内容类型</b><span>刺绣</span><span>染织</span>'
@@ -1008,17 +1154,23 @@ def _render_daily_feature() -> None:
         '<div class="section-title"><h2>今日非遗</h2><span>编辑精选</span></div>',
         unsafe_allow_html=True,
     )
-    featured, recommendations = st.columns((1.15, 1.85), gap="large")
+    featured, recommendations = st.columns((1.18, 1.82), gap="large")
     with featured:
-        story = STORIES[0]
-        with st.container(border=True):
-            st.markdown(_video_thumbnail(story, featured=True), unsafe_allow_html=True)
-            st.caption(f"今日大推荐 · {story.duration}")
-            st.markdown(f"### {story.title}")
-            st.caption(
-                f"{getattr(story, 'author', 'HAHA 文化记录者')} · "
-                f"{getattr(story, 'region', '中国')}"
-            )
+        carousel_stories = (STORIES + STORIES)[:4]
+        slides = "".join(
+            '<article class="carousel-slide" style="--slide-index:'
+            f'{index}">{_video_thumbnail(story, featured=True)}'
+            '<div class="carousel-copy"><span>热点播报 · '
+            f'{escape(getattr(story, "region", "中国"))}</span>'
+            f'<h3>{escape(story.title)}</h3><p>{escape(story.summary)}</p></div></article>'
+            for index, story in enumerate(carousel_stories)
+        )
+        dots = "".join('<i aria-hidden="true"></i>' for _ in carousel_stories)
+        st.markdown(
+            f'<section class="hero-carousel" aria-label="热点视频轮播">{slides}'
+            f'<div class="carousel-dots">{dots}</div></section>',
+            unsafe_allow_html=True,
+        )
     with recommendations:
         stories = (STORIES[1:] + STORIES[:2])[:6]
         columns = st.columns(3, gap="medium")
