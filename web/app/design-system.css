@@ -1,0 +1,228 @@
+:root {
+  --color-canvas: #f3eee6;
+  --color-surface: #fffdf9;
+  --color-surface-subtle: #faf7f2;
+  --color-surface-muted: #f1ece4;
+  --color-border: #ded4c7;
+  --color-border-strong: #cbbdad;
+  --color-text: #252321;
+  --color-text-secondary: #6f6861;
+  --color-text-disabled: #9e9790;
+  --color-brand: #c84d42;
+  --color-brand-hover: #a63f36;
+  --color-brand-soft: #f7e8e3;
+  --color-success: #296d4d;
+  --color-success-soft: #e9f4ec;
+  --color-warning: #8b5b16;
+  --color-error: #a82626;
+  --color-error-soft: #ffe9e7;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --radius-badge: 6px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
+  --shadow-s: 0 4px 16px rgba(52, 40, 28, .06);
+  --shadow-m: 0 16px 44px rgba(52, 40, 28, .1);
+  --page-max: 1520px;
+  --page-padding: clamp(24px, 3.4vw, 48px);
+  --header-height: 72px;
+  --z-sticky: 50;
+  --z-overlay: 90;
+  --z-dialog: 100;
+  --focus-ring: 0 0 0 3px rgba(200, 77, 66, .2);
+  --ink: var(--color-text);
+  --muted: var(--color-text-secondary);
+  --line: var(--color-border);
+  --paper: var(--color-surface);
+  --soft: var(--color-surface-subtle);
+  --accent: var(--color-brand);
+  --accent-dark: var(--color-brand-hover);
+  --accent-soft: var(--color-brand-soft);
+  --green: var(--color-success);
+  --cream: var(--color-canvas);
+}
+
+html { scroll-padding-top: 136px; }
+body { min-width: 320px; font-size: 14px; line-height: 1.55; }
+a, button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button, a, input, select, textarea { outline: none; }
+:where(a, button, input, select, textarea):focus-visible { box-shadow: var(--focus-ring); outline: 2px solid transparent; }
+button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: not-allowed; opacity: .58; }
+p, h1, h2, h3, b, span, small, a, button, label { overflow-wrap: anywhere; }
+
+.skipLink {
+  position: fixed;
+  z-index: 999;
+  top: var(--space-3);
+  left: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-text);
+  color: #fff;
+  text-decoration: none;
+  transform: translateY(-160%);
+}
+.skipLink:focus { transform: translateY(0); }
+
+/* Creator workspace: stable grid, readable type and a restrained elevation system. */
+.appHeader, .stepNav, .pageContent, .appShell > footer { max-width: var(--page-max); }
+.appHeader { min-height: var(--header-height); gap: var(--space-4); padding: var(--space-3) var(--page-padding); }
+.stepNav { padding-inline: var(--page-padding); }
+.pageContent { gap: var(--space-6); padding: var(--space-6) var(--page-padding) var(--space-10); }
+.surface { border-radius: var(--radius-panel); box-shadow: var(--shadow-s); }
+.menuButton { width: 40px; height: 40px; border-radius: var(--radius-control); }
+.headerBrand b { font-size: 18px; }
+.headerBrand small { font-size: 11px; }
+.headerCopy strong { font-size: 14px; }
+.headerCopy span, .headerActions > b, .saveState { font-size: 12px; }
+.stepNav > div { height: 48px; font-size: 12px; }
+.sectionHeading { gap: var(--space-3); padding: var(--space-6); }
+.sectionHeading h1, .sectionHeading h2, .consoleHeading h2 { font-size: 22px; line-height: 1.3; }
+.sectionHeading p, .consoleHeading p { font-size: 13px; line-height: 1.6; }
+.runStatus { padding: 6px 10px; font-size: 12px; }
+.workPanel, .reviewPanel { min-height: 440px; }
+.reviewPanel, .controlConsole { padding: var(--space-6); }
+.emptyState { min-height: 320px; padding: var(--space-8); }
+.emptyState h3 { font-size: 20px; }
+.emptyState > p { font-size: 14px; line-height: 1.7; }
+.startButton, .generateButton, .primaryAction, .secondaryAction, .refreshJobs, .failedJobList button { min-height: 40px; border-radius: var(--radius-control); font-size: 13px; }
+.resultStack { gap: var(--space-4); padding: var(--space-6); }
+.resultCard, .auditCard { border-radius: var(--radius-card); box-shadow: none; }
+.cardHead h3 { font-size: 16px; }
+.resultCard p, .scriptLines { font-size: 14px; }
+.shotList li { font-size: 13px; }
+.chips span, .tags span { padding: 5px 8px; border-radius: var(--radius-badge); font-size: 12px; }
+.auditCard b { font-size: 14px; }
+.auditCard p { font-size: 12px; }
+.auditCard small { font-size: 11px; }
+.consoleGrid { gap: var(--space-6); }
+.consoleGrid legend { font-size: 15px; }
+.consoleGrid label, .authGate { gap: var(--space-2); margin-bottom: var(--space-4); font-size: 12px; }
+.consoleGrid input, .consoleGrid select, .authGate input { min-height: 44px; }
+input, textarea, select { border-color: var(--color-border); border-radius: var(--radius-control); background: #f5f3f0; padding: 10px 12px; font-size: 14px; }
+textarea { min-height: 96px; line-height: 1.55; }
+input:focus, textarea:focus, select:focus { box-shadow: var(--focus-ring); }
+.segment { border-radius: 10px; }
+.segment button { min-height: 36px; border-radius: 7px; font-size: 12px; }
+.parameterPill { font-size: 12px; }
+.runProgress { border-radius: var(--radius-card); }
+.progressSummary b { font-size: 13px; }
+.progressSummary small { font-size: 12px; }
+.runProgress li { font-size: 11px; }
+.terminalNote, .operationsEmpty p, .failedJobList p, .failedJobList small { font-size: 12px; }
+.operationsEmpty b, .failedJobList h3 { font-size: 14px; }
+.failedJobList article { border-radius: var(--radius-card); }
+.drawerBackdrop { z-index: var(--z-overlay); margin: 0; padding: 0; border: 0; }
+.drawer { z-index: var(--z-dialog); border-radius: 0 var(--radius-panel) var(--radius-panel) 0; }
+.drawer:not(.open) { visibility: hidden; }
+.drawer nav button, .drawer nav a { min-height: 40px; border-radius: var(--radius-control); font-size: 14px; }
+.drawer nav button small { font-size: 11px; }
+.appShell > footer { padding-inline: var(--page-padding); font-size: 11px; }
+
+/* Community remains editorial, while sharing the product grid and controls. */
+.communityHeader, .communityHero, .sectionTitle, .storyGrid, .regionSection { max-width: var(--page-max); }
+.communityHeader { min-height: var(--header-height); padding-inline: var(--page-padding); }
+.communityHeader nav a { font-size: 13px; }
+.communityActions button { width: 40px; height: 40px; border-radius: var(--radius-control); }
+.communityActions > a, .heroButtons > a:first-child, .creatorBanner > a { min-height: 40px; border-radius: var(--radius-control); font-size: 13px; }
+.communityHero { gap: clamp(32px, 4vw, 64px); padding: 64px var(--page-padding) 72px; }
+.heroCopy > p:not(.kicker) { font-size: 16px; line-height: 1.75; }
+.kicker, .sectionTitle p, .regionSection > div:first-child > p { font-size: 11px; }
+.heroButtons > a:last-child, .sectionTitle > a { font-size: 13px; }
+.heroFacts { font-size: 12px; }
+.heroFeature { min-height: 520px; border-radius: var(--radius-card); box-shadow: var(--shadow-m); transform: none; }
+.heroFeatureCopy > small, .storyText > small { font-size: 11px; }
+.heroFeatureCopy p { font-size: 14px; }
+.heroFeatureCopy > div { font-size: 12px; }
+.storySection { padding: 72px var(--page-padding); }
+.storyGrid { gap: var(--space-6); }
+.storyText p { font-size: 13px; }
+.storyText > div { font-size: 11px; }
+.regionSection { gap: var(--space-12); padding: 80px var(--page-padding); }
+.regionSection > div:first-child > span { font-size: 14px; }
+.regionList small, .regionList span { font-size: 11px; }
+.regionList b { font-size: 15px; }
+.creatorBanner { margin-inline: var(--page-padding); padding: var(--space-12); border-radius: var(--radius-panel); }
+.creatorBanner small { font-size: 11px; }
+.creatorBanner p { font-size: 14px; }
+.communityFooter { padding-inline: var(--page-padding); font-size: 11px; }
+.demoNotice { font-size: 12px; }
+
+@media (max-width: 1280px) {
+  :root { --page-padding: 24px; }
+  .appHeader { grid-template-columns: auto 210px 1fr auto; }
+  .pageContent { grid-template-columns: minmax(0, 1fr) 320px; }
+  .communityHero { grid-template-columns: minmax(0, .8fr) minmax(480px, 1.2fr); }
+}
+
+@media (max-width: 1024px) {
+  .appHeader { grid-template-columns: auto 1fr auto; }
+  .headerCopy { display: none; }
+  .pageContent { grid-template-columns: minmax(0, 1fr) 288px; }
+  .consoleGrid { grid-template-columns: 1fr 1fr; }
+  .communityHero { grid-template-columns: 1fr; padding-top: 48px; }
+  .heroFeature { min-height: 440px; }
+  .storyGrid { grid-template-columns: 1fr 1fr; }
+  .regionSection { grid-template-columns: 1fr 1fr; }
+  .regionList { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; gap: 0 var(--space-6); }
+}
+
+@media (max-width: 768px) {
+  :root { --page-padding: 16px; }
+  html { scroll-padding-top: 112px; }
+  .pageContent { grid-template-columns: 1fr; }
+  .workPanel, .reviewPanel, .controlConsole { grid-column: 1; }
+  .workPanel { order: 1; }
+  .controlConsole { order: 2; }
+  .reviewPanel { order: 3; }
+  .operationsAnchor { order: 4; }
+  .stepNav b, .headerActions { display: none; }
+  .sectionHeading { align-items: flex-start; flex-wrap: wrap; padding: var(--space-5); }
+  .runStatus { margin-left: 43px; }
+  .consoleGrid, .storyGrid, .regionSection, .regionList { grid-template-columns: 1fr; }
+  .consoleGrid fieldset { padding: 0 0 var(--space-5); border-right: 0; border-bottom: 1px solid var(--color-border); }
+  .consoleGrid fieldset:last-child { border-bottom: 0; }
+  .communityHeader { grid-template-columns: 1fr auto; }
+  .communityHeader nav { display: none; }
+  .communityHero { padding-block: 40px 56px; }
+  .heroFeature { grid-template-columns: 1fr; }
+  .heroVisual { min-height: 260px; }
+  .regionList { grid-column: auto; }
+  .creatorBanner { align-items: flex-start; flex-direction: column; padding: var(--space-8); }
+  .communityFooter { grid-template-columns: 1fr; gap: var(--space-2); }
+  .communityFooter > span { text-align: left; }
+}
+
+@media (max-width: 480px) {
+  .headerBrand b { font-size: 16px; }
+  .headerBrand small { display: none; }
+  .stepNav > div { height: 42px; }
+  .sectionHeading h1, .sectionHeading h2, .consoleHeading h2 { font-size: 20px; }
+  .resultStack, .reviewPanel, .controlConsole { padding: var(--space-4); }
+  .publishPack { grid-template-columns: 1fr; }
+  .publishPack .tags { justify-content: flex-start; }
+  .runProgress { margin-inline: var(--space-4); }
+  .runProgress ol { grid-template-columns: 1fr 1fr; }
+  .communityBrand small, .communityActions button { display: none; }
+  .communityActions > a { padding-inline: var(--space-3); }
+  .heroCopy h1 { font-size: 40px; }
+  .heroFacts { gap: var(--space-4); }
+  .heroFeature { min-height: 0; }
+  .heroFeatureCopy { padding: var(--space-6); }
+  .storySection, .regionSection { padding-block: var(--space-12); }
+  .sectionTitle { align-items: flex-start; flex-direction: column; gap: var(--space-4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
