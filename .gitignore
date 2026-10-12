@@ -14,3 +14,4 @@ model-config.ps1
 artifacts/
 data/*.db
 %SystemDrive%/
+web/.contract-test-build/

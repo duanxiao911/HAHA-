@@ -1,0 +1,355 @@
+:root {
+  --product-canvas: var(--color-canvas, #f3eee6);
+  --product-surface: var(--color-surface, #fffdf9);
+  --product-muted: var(--color-surface-muted, #f1ece4);
+  --product-ink: var(--color-text, #252321);
+  --product-ink-soft: var(--color-text-secondary, #6f6861);
+  --product-line: var(--color-border, #ded4c7);
+  --product-brand: var(--color-brand, #c84d42);
+  --product-brand-soft: var(--color-brand-soft, #f7e8e3);
+  --product-green: var(--color-success, #296d4d);
+  --product-green-soft: var(--color-success-soft, #e9f4ec);
+  --product-amber: var(--color-warning, #8b5b16);
+}
+
+.productVisuallyHidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.productHeader {
+  position: sticky;
+  z-index: 70;
+  top: 0;
+  border-bottom: 1px solid var(--product-line);
+  background: color-mix(in srgb, var(--product-surface) 94%, transparent);
+  box-shadow: 0 4px 18px rgba(54, 39, 25, .05);
+  backdrop-filter: blur(16px);
+}
+
+.productHeaderMain {
+  display: grid;
+  width: min(100%, 1520px);
+  min-height: 68px;
+  grid-template-columns: auto auto minmax(480px, 1fr) minmax(240px, 420px) auto;
+  align-items: center;
+  gap: 16px;
+  margin-inline: auto;
+  padding: 10px clamp(20px, 3vw, 48px);
+}
+
+.productBrand {
+  color: var(--product-ink);
+  font-size: 23px;
+  font-weight: 950;
+  letter-spacing: -.055em;
+  text-decoration: none;
+}
+
+.productBrand span { color: var(--product-brand); }
+
+.productEnvironmentBadge {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--product-green) 28%, transparent);
+  border-radius: 999px;
+  background: var(--product-green-soft);
+  color: var(--product-green);
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.productEnvironmentBadge i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.productPrimaryNav,
+.productUtilityNav {
+  display: flex;
+  align-items: center;
+}
+
+.productPrimaryNav { gap: 2px; }
+
+.productPrimaryNav a,
+.productUtilityNav a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--product-ink-soft);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.productPrimaryNav a { padding-inline: 10px; }
+.productUtilityNav { justify-content: flex-end; gap: 2px; }
+.productUtilityNav a { padding-inline: 9px; }
+
+.productPrimaryNav a:hover,
+.productUtilityNav a:hover,
+.productPrimaryNav a[aria-current="page"],
+.productUtilityNav a[aria-current="page"] {
+  background: var(--product-brand-soft);
+  color: var(--product-brand);
+}
+
+.productSearch {
+  position: relative;
+  min-width: 0;
+}
+
+.productSearch input {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 48px 9px 14px;
+  border: 1px solid var(--product-line);
+  border-radius: 10px;
+  outline: none;
+  background: var(--product-muted);
+  color: var(--product-ink);
+  font-size: 14px;
+}
+
+.productSearch input:focus {
+  border-color: var(--product-brand);
+  background: var(--product-surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--product-brand) 18%, transparent);
+}
+
+.productSearch button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 0 10px 10px 0;
+  background: transparent;
+  color: var(--product-ink-soft);
+  cursor: pointer;
+}
+
+.productSearch svg,
+.productMobileNav svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.productSubmitAction {
+  background: var(--product-brand) !important;
+  color: #fff !important;
+}
+
+.productSubmitAction:hover { background: #a63f36 !important; }
+
+.productLoginAction {
+  border: 1px solid var(--product-line);
+  background: var(--product-surface);
+  color: var(--product-ink) !important;
+}
+
+.productMobileNav { display: none; }
+
+.productStateNotice {
+  display: grid;
+  min-height: 260px;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 36px 24px;
+  border: 1px dashed var(--product-line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--product-surface) 82%, transparent);
+  text-align: center;
+}
+
+.productStateNotice.is-compact {
+  min-height: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  place-content: stretch;
+  justify-items: start;
+  align-items: center;
+  padding: 16px;
+  text-align: left;
+}
+
+.productStateIcon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 15px;
+  background: var(--product-brand-soft);
+  color: var(--product-brand);
+  font-size: 19px;
+  font-weight: 850;
+}
+
+.productStateNotice--loading .productStateIcon,
+.productStateNotice--empty .productStateIcon {
+  background: var(--product-green-soft);
+  color: var(--product-green);
+}
+
+.productStateNotice--offline .productStateIcon,
+.productStateNotice--rate-limited .productStateIcon {
+  background: #f8edda;
+  color: var(--product-amber);
+}
+
+.productStateNotice h2 {
+  margin: 0;
+  color: var(--product-ink);
+  font-size: 19px;
+}
+
+.productStateNotice p {
+  max-width: 520px;
+  margin: 6px 0 0;
+  color: var(--product-ink-soft);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.productStateAction {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 17px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--product-brand);
+  color: #fff;
+  font-weight: 750;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.productStateAction:hover { background: #a63f36; }
+
+:where(.productHeader, .productMobileNav, .productStateNotice) :where(a, button, input):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--product-brand) 28%, transparent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1399px) {
+  .productHeaderMain {
+    grid-template-columns: auto auto minmax(360px, 1fr) minmax(220px, 340px) auto;
+    gap: 10px;
+    padding-inline: 24px;
+  }
+
+  .productPrimaryNav a:nth-last-child(-n+3) { display: none; }
+  .productUtilityNav a:not(.productSubmitAction, .productLoginAction) { display: none; }
+}
+
+@media (max-width: 1023px) {
+  .productHeaderMain {
+    grid-template-columns: auto auto minmax(220px, 1fr) auto;
+    padding-inline: 16px;
+  }
+
+  .productPrimaryNav { display: none; }
+  .productUtilityNav .productLoginAction { display: none; }
+}
+
+@media (max-width: 768px) {
+  body { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
+
+  .productHeaderMain {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    min-height: 60px;
+    gap: 7px;
+    padding: 8px 12px;
+  }
+
+  .productBrand { font-size: 20px; }
+  .productEnvironmentBadge { min-height: 26px; padding-inline: 7px; font-size: 10px; }
+  .productSearch input { font-size: 12px; }
+  .productUtilityNav a { display: none !important; }
+  .productUtilityNav .productSubmitAction { display: inline-flex !important; width: 44px; padding: 0; font-size: 0; }
+  .productUtilityNav .productSubmitAction::after { font-size: 22px; content: "+"; }
+
+  .productMobileNav {
+    position: fixed;
+    z-index: 80;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    padding: 4px 6px max(4px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--product-line);
+    background: color-mix(in srgb, var(--product-surface) 96%, transparent);
+    box-shadow: 0 -8px 24px rgba(54, 39, 25, .08);
+    backdrop-filter: blur(16px);
+  }
+
+  .productMobileNav a {
+    display: grid;
+    min-width: 44px;
+    min-height: 54px;
+    place-content: center;
+    justify-items: center;
+    gap: 2px;
+    border-radius: 10px;
+    color: var(--product-ink-soft);
+    font-size: 10px;
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .productMobileNav a[aria-current="page"] {
+    background: var(--product-brand-soft);
+    color: var(--product-brand);
+  }
+
+  .productStateNotice.is-compact {
+    grid-template-columns: auto 1fr;
+  }
+
+  .productStateNotice.is-compact .productStateAction {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+@media (max-width: 479px) {
+  .productHeaderMain { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .productEnvironmentBadge { display: none; }
+  .productSearch input { padding-left: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .productHeader *,
+  .productMobileNav *,
+  .productStateNotice * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}

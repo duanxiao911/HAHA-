@@ -5,11 +5,13 @@ HAHA 飞颐是采用 Next.js、FastAPI、PostgreSQL、Redis 与 Dramatiq 构建�
 ## 当前能力
 
 - 非遗内容社区：首页频道、热门内容、地域探索与文化地图入口
+- 社区发现闭环：内容详情、可信来源、搜索、收藏、想学、历史、关注、评论与消息
+- 内容关系网络：非遗项目、演示人物、地区、专题、活动与内容互相跳转
 - AI 创作工作台：以对话方式生成图文或视频内容方案
 - 模型路由：支持本地演示、自动选择与 DeepSeek 文本模型
 - Knowledge & Context：创作方法、运营策略、非遗事实三类知识检索
 - Run 证据：展示 Provider、模型、调用模式、请求 ID、耗时、Token 与知识检索轨迹
-- 内容发布：保留视频投稿与社区内容展示的基础流程
+- 内容发布：六步本地投稿向导、AI 披露、事实来源检查、审核状态机与发布消息回流
 
 > 当前仍是本地开发阶段。未配置模型密钥时，“自动选择”会明确使用本地演示；直接选择 DeepSeek 会显示未配置错误，不会伪装成 API 成功。
 
@@ -118,6 +120,12 @@ Phase C 已补齐运行 SSE、取消、失败任务运维界面，以及基于�
 回滚包。发布操作从 [`docs/operations/release-runbook.md`](docs/operations/release-runbook.md)
 开始。P0 安全阻断项已经修复并有回归证据；独立 Production Readiness Gate 尚未执行，
 因此当前状态仍不是 Production Candidate。
+
+Phase D 已在不新增普通后端技术栈的前提下，完成社区侧的本地可交互闭环：统一数据契约、
+内容详情、搜索、文化档案、消息、项目/人物/地区关联、投稿与本地审核发布，并在 Docker 环境
+执行 390/768/1024/1280/1440 五档真实浏览器验收。社区数据、身份和审核结果仍明确标记为
+本地演示，尚未接入真实账号、媒体存储、审核后台或内容 API。详见
+[`docs/reports/phase-d-community-loop-2026-10-12.md`](docs/reports/phase-d-community-loop-2026-10-12.md)。
 
 ## 项目结构
 
