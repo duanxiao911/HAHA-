@@ -242,7 +242,12 @@ def main() -> None:
     if not PASSWORD:
         raise SystemExit("HAHA_G4_E2E_PASSWORD is required and is never stored in evidence")
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="haha-g4-workbench-e2e-") as profile:
+    # Chromium can leave short-lived child processes writing profile files after the
+    # parent exits on Linux CI. Profile cleanup must not turn passed assertions into
+    # a failed acceptance job; the runner's ephemeral temp volume is discarded.
+    with tempfile.TemporaryDirectory(
+        prefix="haha-g4-workbench-e2e-", ignore_cleanup_errors=True
+    ) as profile:
         process = subprocess.Popen(
             [
                 str(find_chrome()),

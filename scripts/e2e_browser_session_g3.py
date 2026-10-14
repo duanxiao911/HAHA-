@@ -219,7 +219,12 @@ def main() -> None:
     if not PASSWORD:
         raise SystemExit("HAHA_G3_E2E_PASSWORD is required and is never stored in evidence")
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="haha-g3-auth-e2e-") as profile:
+    # Chromium can leave short-lived child processes writing profile files after the
+    # parent exits on Linux CI. Ignore only profile cleanup races on the ephemeral
+    # runner; browser assertions and process exit handling still fail normally.
+    with tempfile.TemporaryDirectory(
+        prefix="haha-g3-auth-e2e-", ignore_cleanup_errors=True
+    ) as profile:
         process = subprocess.Popen([
             str(find_chrome()), "--headless=new", f"--remote-debugging-port={DEBUG_PORT}",
             "--remote-allow-origins=*", f"--user-data-dir={profile}", "--disable-extensions",
