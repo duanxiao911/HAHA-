@@ -16,6 +16,7 @@ COPY src ./src
 COPY data/heritage_facts.json ./data/heritage_facts.json
 COPY alembic.ini ./alembic.ini
 COPY migrations ./migrations
+COPY scripts/bootstrap_internal_account.py ./scripts/bootstrap_internal_account.py
 
 RUN python -m pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" .
 RUN mkdir -p /var/lib/haha && chown -R 65532:65532 /app /var/lib/haha

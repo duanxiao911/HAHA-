@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:demo": "node scripts/build-static-demo.mjs",
     "start": "next start",
     "lint": "eslint .",
     "test:community": "tsc --noEmit false --module commonjs --moduleResolution node --target ES2022 --lib ES2022,DOM --strict --skipLibCheck --esModuleInterop --outDir .contract-test-build --rootDir lib/community lib/community/types.ts lib/community/contract.ts lib/community/seed.ts lib/community/local-adapter.ts && node tests/community-contract.test.cjs"

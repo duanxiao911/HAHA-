@@ -34,6 +34,12 @@ from haha_api.auth import (
     validate_security_configuration,
 )
 from haha_api.observability import log_event, metrics, request_id_context
+from haha_auth.service import (
+    AccountLockedError,
+    AuthService,
+    InvalidCredentialsError,
+    InvalidRefreshTokenError,
+)
 from haha_core.bootstrap import build_repository, enqueue_run
 from haha_core.domain import TERMINAL_RUN_STATUSES
 from haha_core.repository import CreatorRepository
@@ -43,6 +49,13 @@ from haha_core.service import (
     IdempotencyConflictError,
     RunNotCancellableError,
 )
+from haha_identity.service import (
+    IdentityConflictError,
+    IdentityNotFoundError,
+    IdentityPermissionError,
+    IdentityService,
+)
+from haha_user_center.service import UserCenterNotFoundError, UserCenterService
 
 
 class ProjectCreate(BaseModel):
@@ -69,10 +82,78 @@ class RunCreate(BaseModel):
     model_preference: str = "本地演示"
 
 
+class RoleApplicationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: str = Field(min_length=3, max_length=32)
+    reason: str = Field(min_length=8, max_length=1000)
+
+
+class IdentityContextSwitch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: str = Field(min_length=3, max_length=32)
+
+
+class RoleApplicationDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: str = Field(pattern="^(approved|rejected)$")
+    note: str = Field(default="", max_length=1000)
+
+
+class UserCenterProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str = Field(min_length=1, max_length=50)
+    bio: str = Field(default="", max_length=300)
+    region: str = Field(default="", max_length=100)
+    profile_visibility: str = Field(pattern="^(private|members|public)$")
+
+
+class UserCenterPreferencesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    history_enabled: bool
+    recommendation_enabled: bool
+    personalization_enabled: bool
+    notification_enabled: bool
+
+
+class UserCenterLibraryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=200)
+    target_href: str = Field(default="", max_length=500)
+
+
+class UserCenterFollowUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str = Field(min_length=1, max_length=200)
+    target_href: str = Field(default="", max_length=500)
+
+
+class UserCenterHistoryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=200)
+    target_href: str = Field(default="", max_length=500)
+    progress_seconds: int = Field(default=0, ge=0, le=86400)
+    duration_seconds: int = Field(default=0, ge=0, le=86400)
+
+
+class AuthLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=256)
+    workspace_id: str = Field(min_length=1, max_length=100)
+
+
+class AuthRefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    refresh_token: str = Field(min_length=40, max_length=300)
+
+
 def create_app(repository: CreatorRepository | None = None) -> FastAPI:
     validate_security_configuration()
     active_repository = repository or build_repository()
     service = CreatorService(active_repository)
+    identity_service = IdentityService(active_repository)  # type: ignore[arg-type]
+    user_center_service = UserCenterService(active_repository)  # type: ignore[arg-type]
+    auth_service = AuthService(active_repository)  # type: ignore[arg-type]
     application = FastAPI(title="HAHA Creator API", version="0.2.0")
     allowed_origins = tuple(
         origin.strip()
@@ -85,7 +166,7 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials=True,
-        allow_methods=("GET", "POST", "OPTIONS"),
+        allow_methods=("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"),
         allow_headers=("Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "X-Request-ID", "X-User-ID", "X-Workspace-ID"),
     )
 
@@ -99,6 +180,10 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
                 role=Role.OWNER.value,
                 workspace_name=identity.workspace_id,
             )
+        elif not auth_service.session_is_active(
+            identity.session_id, identity.user_id, identity.workspace_id
+        ):
+            raise HTTPException(status_code=401, detail="访问会话无效或已撤销")
         stored_role = active_repository.get_membership_role(
             identity.user_id, identity.workspace_id
         )
@@ -114,7 +199,8 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=403, detail="工作空间成员角色无效") from exc
         principal = Principal(
-            identity.user_id, identity.workspace_id, role, identity.auth_mode
+            identity.user_id, identity.workspace_id, role, identity.auth_mode,
+            identity.session_id,
         )
         log_event(
             "authorization.identity_resolved",
@@ -445,6 +531,301 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
             user_id=principal.user_id,
         )
         return asdict(job)
+
+    @application.get("/api/identity/me")
+    def get_identity_center(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        """Return server-authoritative business roles and durable workspace context."""
+        return identity_service.bootstrap(principal.user_id, principal.workspace_id)
+
+    @application.post("/api/identity/roles/{role}/activate")
+    def activate_business_role(
+        role: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        identity_service.bootstrap(principal.user_id, principal.workspace_id)
+        try:
+            snapshot = identity_service.activate_role(
+                principal.user_id, principal.workspace_id, role
+            )
+        except IdentityPermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        metrics.add("haha_identity_roles_activated_total", role=role)
+        return snapshot
+
+    @application.post("/api/identity/role-applications", status_code=status.HTTP_201_CREATED)
+    def create_role_application(
+        payload: RoleApplicationCreate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        identity_service.bootstrap(principal.user_id, principal.workspace_id)
+        try:
+            application = identity_service.apply_for_role(
+                principal.user_id, principal.workspace_id, payload.role, payload.reason
+            )
+        except IdentityPermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except IdentityConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        metrics.add("haha_identity_role_applications_total", role=payload.role)
+        return asdict(application)
+
+    @application.post("/api/identity/context")
+    def switch_identity_context(
+        payload: IdentityContextSwitch,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        identity_service.bootstrap(principal.user_id, principal.workspace_id)
+        try:
+            return identity_service.switch_context(
+                principal.user_id, principal.workspace_id, payload.role
+            )
+        except IdentityPermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/identity/tasks/{task_id}/complete")
+    def complete_identity_task(
+        task_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return asdict(identity_service.complete_task(
+                task_id, principal.user_id, principal.workspace_id
+            ))
+        except IdentityNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @application.post("/api/identity/role-applications/{application_id}/decision")
+    def decide_role_application(
+        application_id: str,
+        payload: RoleApplicationDecision,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        if principal.role is not Role.OWNER:
+            raise HTTPException(status_code=403, detail="仅工作空间所有者可以审核身份申请")
+        try:
+            application = identity_service.decide_application(
+                application_id, principal.user_id, payload.decision, payload.note
+            )
+        except IdentityPermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except IdentityNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except IdentityConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        metrics.add("haha_identity_role_decisions_total", decision=payload.decision)
+        return asdict(application)
+
+    @application.post("/api/auth/login")
+    def login(payload: AuthLoginRequest) -> dict[str, object]:
+        try:
+            result = auth_service.login(**payload.model_dump())
+        except InvalidCredentialsError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except AccountLockedError as exc:
+            raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "900"}) from exc
+        metrics.add("haha_auth_login_success_total")
+        return result
+
+    @application.post("/api/auth/refresh")
+    def refresh_auth_session(payload: AuthRefreshRequest) -> dict[str, object]:
+        try:
+            result = auth_service.refresh(payload.refresh_token)
+        except InvalidRefreshTokenError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        metrics.add("haha_auth_refresh_success_total")
+        return result
+
+    @application.post("/api/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+    def logout(payload: AuthRefreshRequest) -> Response:
+        auth_service.logout(payload.refresh_token)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @application.get("/api/auth/me")
+    def get_authenticated_account(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, str]:
+        return {
+            "user_id": principal.user_id,
+            "workspace_id": principal.workspace_id,
+            "role": principal.role.value,
+            "auth_mode": principal.auth_mode,
+        }
+
+    @application.get("/api/auth/sessions")
+    def list_auth_sessions(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        items = auth_service.list_sessions(
+            user_id=principal.user_id,
+            workspace_id=principal.workspace_id,
+            current_session_id=principal.session_id,
+        )
+        return {"items": items, "count": len(items)}
+
+    @application.delete("/api/auth/sessions/{session_id}")
+    def revoke_auth_session(
+        session_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        revoked = auth_service.revoke_session(
+            session_id=session_id,
+            user_id=principal.user_id,
+            workspace_id=principal.workspace_id,
+        )
+        if not revoked:
+            raise HTTPException(status_code=404, detail="登录会话不存在或已撤销")
+        return {"revoked": True, "session_id": session_id}
+
+    @application.delete("/api/auth/sessions")
+    def revoke_all_auth_sessions(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, int]:
+        return {"revoked": auth_service.revoke_all_sessions(
+            user_id=principal.user_id,
+            workspace_id=principal.workspace_id,
+        )}
+
+    @application.get("/api/user-center")
+    def get_user_center(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return user_center_service.bootstrap(principal.user_id, principal.workspace_id)
+
+    @application.patch("/api/user-center/profile")
+    def update_user_center_profile(
+        payload: UserCenterProfileUpdate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return user_center_service.update_profile(
+                principal.user_id, principal.workspace_id, **payload.model_dump()
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.patch("/api/user-center/preferences")
+    def update_user_center_preferences(
+        payload: UserCenterPreferencesUpdate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return user_center_service.update_preferences(
+            principal.user_id, principal.workspace_id, **payload.model_dump()
+        )
+
+    @application.put("/api/user-center/library/{kind}/{target_id}")
+    def save_user_center_library_item(
+        kind: str, target_id: str, payload: UserCenterLibraryUpdate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return user_center_service.set_library_item(
+                principal.user_id, principal.workspace_id, kind_value=kind,
+                target_id=target_id, active=True, **payload.model_dump()
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.delete("/api/user-center/library/{kind}/{target_id}")
+    def delete_user_center_library_item(
+        kind: str, target_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return user_center_service.set_library_item(
+                principal.user_id, principal.workspace_id, kind_value=kind,
+                target_id=target_id, title="", target_href="", active=False
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.put("/api/user-center/follows/{target_id}")
+    def save_user_center_follow(
+        target_id: str, payload: UserCenterFollowUpdate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return user_center_service.set_follow(
+                principal.user_id, principal.workspace_id, target_id=target_id,
+                active=True, **payload.model_dump()
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.delete("/api/user-center/follows/{target_id}")
+    def delete_user_center_follow(
+        target_id: str, principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return user_center_service.set_follow(
+                principal.user_id, principal.workspace_id, target_id=target_id,
+                display_name="", target_href="", active=False
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.delete("/api/user-center/history")
+    def clear_user_center_history(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return {"removed": user_center_service.clear_history(
+            principal.user_id, principal.workspace_id
+        )}
+
+    @application.put("/api/user-center/history/{content_id}")
+    def save_user_center_history(
+        content_id: str, payload: UserCenterHistoryUpdate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            item = user_center_service.record_history(
+                principal.user_id, principal.workspace_id, content_id=content_id,
+                **payload.model_dump()
+            )
+            return {"item": asdict(item) if item else None}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.delete("/api/user-center/history/{content_id}")
+    def delete_user_center_history(
+        content_id: str, principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, bool]:
+        user_center_service.remove_history_item(
+            principal.user_id, principal.workspace_id, content_id
+        )
+        return {"deleted": True}
+
+    @application.post("/api/user-center/notifications/{notification_id}/read")
+    def read_user_center_notification(
+        notification_id: str, principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return asdict(user_center_service.mark_notification_read(
+                notification_id, principal.user_id, principal.workspace_id
+            ))
+        except UserCenterNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @application.delete("/api/user-center/notifications/{notification_id}")
+    def delete_user_center_notification(
+        notification_id: str, principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, bool]:
+        try:
+            user_center_service.delete_notification(
+                notification_id, principal.user_id, principal.workspace_id
+            )
+        except UserCenterNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"deleted": True}
 
     return application
 

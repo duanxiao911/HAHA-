@@ -8,9 +8,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from haha_auth.service import AuthService, InvalidRefreshTokenError
 from haha_core.domain import RunStatus, ScriptVersion, new_id, utc_now
 from haha_core.service import CreatorService
 from haha_core.sqlalchemy_repository import SQLAlchemyCreatorRepository
+from haha_identity.service import IdentityService
+from haha_user_center.service import UserCenterService
 
 POSTGRES_URL = os.getenv("HAHA_TEST_POSTGRES_URL", "")
 pytestmark = pytest.mark.skipif(not POSTGRES_URL, reason="HAHA_TEST_POSTGRES_URL not configured")
@@ -65,6 +68,86 @@ def test_postgres_membership_and_concurrent_idempotency(repository) -> None:
         results = list(pool.map(lambda _: submit(), range(4)))
     assert len({run.id for run, _ in results}) == 1
     assert sum(1 for _, created in results if created) == 1
+
+
+def test_postgres_identity_roles_applications_and_context_are_durable(repository) -> None:
+    repository.ensure_identity("identity-user", "pg-workspace", role="viewer")
+    repository.ensure_identity("identity-reviewer", "pg-workspace", role="owner")
+    service = IdentityService(repository)
+    service.bootstrap("identity-user", "pg-workspace")
+    service.activate_role("identity-user", "pg-workspace", "learner")
+    service.switch_context("identity-user", "pg-workspace", "learner")
+    application = service.apply_for_role(
+        "identity-user", "pg-workspace", "seller", "PostgreSQL 身份申请集成测试"
+    )
+    service.decide_application(
+        application.id, "identity-reviewer", "approved", "integration approved"
+    )
+
+    reloaded = IdentityService(SQLAlchemyCreatorRepository(POSTGRES_URL)).snapshot(
+        "identity-user", "pg-workspace"
+    )
+    assert reloaded["profile"]["active_role"] == "learner"
+    assert {item["role"] for item in reloaded["roles"] if item["status"] == "active"} == {
+        "viewer", "buyer", "learner", "seller"
+    }
+    assert reloaded["applications"][0]["status"] == "approved"
+
+
+def test_postgres_user_center_assets_preferences_and_history_are_durable(repository) -> None:
+    repository.ensure_identity("center-user", "pg-workspace", role="viewer")
+    service = UserCenterService(repository)
+    service.bootstrap("center-user", "pg-workspace")
+    service.update_profile(
+        "center-user", "pg-workspace", display_name="文化探索者", bio="关注传统技艺",
+        region="贵州", profile_visibility="members",
+    )
+    service.set_library_item(
+        "center-user", "pg-workspace", kind_value="want_to_learn", target_id="content-1",
+        title="苗绣", target_href="/content/content-1", active=True,
+    )
+    service.record_history(
+        "center-user", "pg-workspace", content_id="content-1", title="苗绣",
+        target_href="/content/content-1", progress_seconds=9, duration_seconds=10,
+    )
+
+    reloaded = UserCenterService(SQLAlchemyCreatorRepository(POSTGRES_URL)).snapshot(
+        "center-user", "pg-workspace"
+    )
+    assert reloaded["account"]["display_name"] == "文化探索者"
+    assert reloaded["account"]["region"] == "贵州"
+    assert reloaded["summary"]["want_to_learn"] == 1
+    assert reloaded["summary"]["history"] == 1
+    assert reloaded["history"][0]["completed"] is True
+
+
+def test_postgres_refresh_rotation_is_atomic(repository) -> None:
+    auth = AuthService(repository)
+    auth.bootstrap_account(
+        user_id="pg-auth-user",
+        workspace_id="pg-auth-workspace",
+        email="pg-auth@haha.local",
+        password="Postgres-Auth-Test-Password-2026",
+        role="viewer",
+    )
+    initial = auth.login(
+        email="pg-auth@haha.local",
+        password="Postgres-Auth-Test-Password-2026",
+        workspace_id="pg-auth-workspace",
+    )
+
+    def refresh_once() -> str:
+        try:
+            AuthService(SQLAlchemyCreatorRepository(POSTGRES_URL)).refresh(
+                str(initial["refresh_token"])
+            )
+        except InvalidRefreshTokenError:
+            return "rejected"
+        return "rotated"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: refresh_once(), range(2)))
+    assert sorted(outcomes) == ["rejected", "rotated"]
 
 
 def test_postgres_worker_claim_and_expired_lease(repository) -> None:

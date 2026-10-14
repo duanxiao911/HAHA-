@@ -47,8 +47,11 @@ services:
       DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD:-local-change-me}@postgres:5432/haha
       REDIS_URL: redis://redis:6379/0
       HAHA_ENVIRONMENT: development
-      HAHA_AUTH_MODE: dev
-      HAHA_ALLOW_DEV_AUTH: "true"
+      HAHA_AUTH_MODE: ${HAHA_AUTH_MODE:-dev}
+      HAHA_ALLOW_DEV_AUTH: ${HAHA_ALLOW_DEV_AUTH:-true}
+      HAHA_JWT_SECRET: ${HAHA_JWT_SECRET:-}
+      HAHA_JWT_ISSUER: ${HAHA_JWT_ISSUER:-haha-auth}
+      HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
       HAHA_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
     ports:
       - "127.0.0.1:8000:8000"
@@ -85,10 +88,15 @@ services:
       context: ./web
       args:
         NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-        NEXT_PUBLIC_AUTH_MODE: dev
+        NEXT_PUBLIC_AUTH_MODE: ${HAHA_AUTH_MODE:-dev}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     ports:
       - "127.0.0.1:3000:3000"
+    environment:
+      HAHA_INTERNAL_API_URL: http://api:8000
+      HAHA_ENVIRONMENT: development
+      HAHA_COOKIE_SECURE: "false"
+      HAHA_REFRESH_TOKEN_TTL_SECONDS: ${HAHA_REFRESH_TOKEN_TTL_SECONDS:-604800}
     depends_on:
       api:
         condition: service_started

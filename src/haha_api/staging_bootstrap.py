@@ -3,41 +3,34 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import hashlib
-import hmac
 import json
-import os
-import time
+import secrets
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
+from haha_api.auth import issue_access_token
+from haha_auth.domain import AuthSession
 from haha_core.bootstrap import build_repository
+from haha_core.repository import CreatorRepository
 
 
-def _encode(value: dict[str, object]) -> str:
-    return base64.urlsafe_b64encode(
-        json.dumps(value, separators=(",", ":")).encode()
-    ).rstrip(b"=").decode()
-
-
-def issue_token(user_id: str, workspace_id: str, ttl_seconds: int) -> str:
-    secret = os.environ["HAHA_JWT_SECRET"]
-    if len(secret) < 32:
-        raise RuntimeError("HAHA_JWT_SECRET 至少需要 32 个字符")
-    header = _encode({"alg": "HS256", "typ": "JWT"})
-    payload = _encode(
-        {
-            "sub": user_id,
-            "workspace_id": workspace_id,
-            "iss": os.getenv("HAHA_JWT_ISSUER", "haha-auth"),
-            "aud": os.getenv("HAHA_JWT_AUDIENCE", "haha-api"),
-            "iat": int(time.time()),
-            "exp": int(time.time()) + ttl_seconds,
-        }
+def issue_token(
+    repository: CreatorRepository, user_id: str, workspace_id: str, ttl_seconds: int
+) -> str:
+    now = datetime.now(UTC)
+    session_id = f"session_{uuid4().hex}"
+    repository.save_auth_session(
+        AuthSession(
+            id=session_id, user_id=user_id, workspace_id=workspace_id,
+            refresh_token_hash=secrets.token_hex(32),
+            expires_at=(now + timedelta(seconds=ttl_seconds)).isoformat(),
+            revoked_at="", created_at=now.isoformat(), last_used_at=now.isoformat(),
+        )
     )
-    signature = base64.urlsafe_b64encode(
-        hmac.new(secret.encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest()
-    ).rstrip(b"=").decode()
-    return f"{header}.{payload}.{signature}"
+    return issue_access_token(
+        user_id=user_id, workspace_id=workspace_id,
+        session_id=session_id, expires_in=ttl_seconds,
+    )
 
 
 def main() -> None:
@@ -57,7 +50,7 @@ def main() -> None:
     }
     if args.show_token:
         result["access_token"] = issue_token(
-            args.user_id, args.workspace_id, args.ttl_seconds
+            repository, args.user_id, args.workspace_id, args.ttl_seconds
         )
     print(json.dumps(result, ensure_ascii=False))
 

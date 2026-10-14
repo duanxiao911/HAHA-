@@ -1,0 +1,56 @@
+"""Persistence contract for the durable account center."""
+
+from __future__ import annotations
+
+from typing import Protocol
+
+from haha_identity.repository import IdentityRepository
+from haha_user_center.domain import (
+    LibraryItem,
+    UserCenterAuditEvent,
+    UserCenterSettings,
+    UserFollow,
+    UserNotification,
+    WatchHistoryItem,
+)
+
+
+class UserCenterRepository(IdentityRepository, Protocol):
+    def ensure_user_center_settings(
+        self, user_id: str, workspace_id: str
+    ) -> UserCenterSettings: ...
+    def save_user_center_settings(self, settings: UserCenterSettings) -> None: ...
+
+    def list_library_items(self, user_id: str, workspace_id: str) -> list[LibraryItem]: ...
+    def save_library_item(self, item: LibraryItem) -> None: ...
+    def delete_library_item(
+        self, user_id: str, workspace_id: str, kind: str, target_id: str
+    ) -> None: ...
+
+    def list_user_follows(self, user_id: str, workspace_id: str) -> list[UserFollow]: ...
+    def save_user_follow(self, follow: UserFollow) -> None: ...
+    def delete_user_follow(
+        self, user_id: str, workspace_id: str, target_id: str
+    ) -> None: ...
+
+    def list_watch_history(
+        self, user_id: str, workspace_id: str
+    ) -> list[WatchHistoryItem]: ...
+    def save_watch_history(self, item: WatchHistoryItem) -> None: ...
+    def delete_watch_history_item(
+        self, user_id: str, workspace_id: str, content_id: str
+    ) -> None: ...
+    def clear_watch_history(self, user_id: str, workspace_id: str) -> int: ...
+
+    def list_user_notifications(
+        self, user_id: str, workspace_id: str
+    ) -> list[UserNotification]: ...
+    def get_user_notification(
+        self, notification_id: str, user_id: str, workspace_id: str
+    ) -> UserNotification | None: ...
+    def save_user_notification(self, notification: UserNotification) -> None: ...
+    def delete_user_notification(
+        self, notification_id: str, user_id: str, workspace_id: str
+    ) -> None: ...
+
+    def save_user_center_audit_event(self, event: UserCenterAuditEvent) -> None: ...

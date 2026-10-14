@@ -12,7 +12,23 @@ from threading import Lock
 from typing import Protocol
 from uuid import uuid4
 
+from haha_auth.domain import AuthAuditEvent, AuthCredential, AuthSession
 from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptVersion
+from haha_identity.domain import (
+    IdentityAuditEvent,
+    IdentityTask,
+    RoleApplication,
+    RoleGrant,
+    UserProfile,
+)
+from haha_user_center.domain import (
+    LibraryItem,
+    UserCenterAuditEvent,
+    UserCenterSettings,
+    UserFollow,
+    UserNotification,
+    WatchHistoryItem,
+)
 
 
 class RepositoryConflictError(RuntimeError):
@@ -131,6 +147,133 @@ class SQLiteCreatorRepository:
                     FOREIGN KEY(user_id) REFERENCES users(id),
                     FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
                 );
+                CREATE TABLE IF NOT EXISTS auth_credentials (
+                    user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, email TEXT NOT NULL,
+                    password_salt TEXT NOT NULL, password_hash TEXT NOT NULL,
+                    password_iterations INTEGER NOT NULL, status TEXT NOT NULL,
+                    failed_attempts INTEGER NOT NULL DEFAULT 0, locked_until TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, workspace_id), UNIQUE(email, workspace_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE TABLE IF NOT EXISTS auth_sessions (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    refresh_token_hash TEXT NOT NULL, expires_at TEXT NOT NULL,
+                    revoked_at TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_auth_sessions_owner
+                    ON auth_sessions(user_id, workspace_id, expires_at);
+                CREATE TABLE IF NOT EXISTS auth_audit_events (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL, detail_json TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_auth_audit_owner_created
+                    ON auth_audit_events(user_id, workspace_id, created_at);
+                CREATE TABLE IF NOT EXISTS user_profiles (
+                    user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    display_name TEXT NOT NULL, active_role TEXT NOT NULL,
+                    personalization_enabled INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, workspace_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE TABLE IF NOT EXISTS role_grants (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    role TEXT NOT NULL, status TEXT NOT NULL, scope_json TEXT NOT NULL,
+                    granted_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, role),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE TABLE IF NOT EXISTS role_applications (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    role TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL,
+                    decision_note TEXT NOT NULL, reviewed_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_role_applications_owner_status
+                    ON role_applications(user_id, workspace_id, status);
+                CREATE TABLE IF NOT EXISTS identity_tasks (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    role TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL,
+                    description TEXT NOT NULL, target_href TEXT NOT NULL,
+                    status TEXT NOT NULL, created_at TEXT NOT NULL, completed_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_identity_tasks_owner_status
+                    ON identity_tasks(user_id, workspace_id, status);
+                CREATE TABLE IF NOT EXISTS identity_audit_events (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    actor_user_id TEXT NOT NULL, event_type TEXT NOT NULL,
+                    target_role TEXT NOT NULL, detail_json TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_identity_audit_owner_created
+                    ON identity_audit_events(user_id, workspace_id, created_at);
+                CREATE TABLE IF NOT EXISTS user_center_settings (
+                    user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    bio TEXT NOT NULL, region TEXT NOT NULL,
+                    profile_visibility TEXT NOT NULL,
+                    history_enabled INTEGER NOT NULL DEFAULT 1,
+                    recommendation_enabled INTEGER NOT NULL DEFAULT 1,
+                    notification_enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, workspace_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE TABLE IF NOT EXISTS user_library_items (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    kind TEXT NOT NULL, target_id TEXT NOT NULL, title TEXT NOT NULL,
+                    target_href TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, kind, target_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_user_library_owner_updated
+                    ON user_library_items(user_id, workspace_id, updated_at);
+                CREATE TABLE IF NOT EXISTS user_follows (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    target_id TEXT NOT NULL, display_name TEXT NOT NULL,
+                    target_href TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, target_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE TABLE IF NOT EXISTS user_watch_history (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    content_id TEXT NOT NULL, title TEXT NOT NULL, target_href TEXT NOT NULL,
+                    progress_seconds INTEGER NOT NULL, duration_seconds INTEGER NOT NULL,
+                    completed INTEGER NOT NULL DEFAULT 0, viewed_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, content_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_user_history_owner_viewed
+                    ON user_watch_history(user_id, workspace_id, viewed_at);
+                CREATE TABLE IF NOT EXISTS user_notifications (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
+                    target_href TEXT NOT NULL, read_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_user_notifications_owner_created
+                    ON user_notifications(user_id, workspace_id, created_at);
+                CREATE TABLE IF NOT EXISTS user_center_audit_events (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL, detail_json TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_user_center_audit_owner_created
+                    ON user_center_audit_events(user_id, workspace_id, created_at);
                 CREATE TABLE IF NOT EXISTS projects (
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -220,6 +363,435 @@ class SQLiteCreatorRepository:
                 (user_id, workspace_id),
             ).fetchone()
         return str(row["role"]) if row else None
+
+    def get_auth_credential(self, email: str, workspace_id: str) -> AuthCredential | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM auth_credentials WHERE email = ? AND workspace_id = ?",
+                (email, workspace_id),
+            ).fetchone()
+        return AuthCredential(**dict(row)) if row else None
+
+    def save_auth_credential(self, credential: AuthCredential) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO auth_credentials VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, workspace_id) DO UPDATE SET
+                       email=excluded.email, password_salt=excluded.password_salt,
+                       password_hash=excluded.password_hash,
+                       password_iterations=excluded.password_iterations,
+                       status=excluded.status, failed_attempts=excluded.failed_attempts,
+                       locked_until=excluded.locked_until, updated_at=excluded.updated_at""",
+                tuple(asdict(credential).values()),
+            )
+
+    def get_auth_session(self, session_id: str) -> AuthSession | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM auth_sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+        return AuthSession(**dict(row)) if row else None
+
+    def list_auth_sessions(self, user_id: str, workspace_id: str) -> list[AuthSession]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM auth_sessions
+                   WHERE user_id = ? AND workspace_id = ?
+                   ORDER BY created_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [AuthSession(**dict(row)) for row in rows]
+
+    def save_auth_session(self, session: AuthSession) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO auth_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       refresh_token_hash=excluded.refresh_token_hash,
+                       expires_at=excluded.expires_at, revoked_at=excluded.revoked_at,
+                       last_used_at=excluded.last_used_at""",
+                tuple(asdict(session).values()),
+            )
+
+    def rotate_auth_session(self, session: AuthSession, expected_hash: str) -> bool:
+        """Atomically consume one refresh secret and install its replacement."""
+        with closing(self._connect()) as connection, connection:
+            result = connection.execute(
+                """UPDATE auth_sessions SET refresh_token_hash = ?, expires_at = ?,
+                          revoked_at = ?, last_used_at = ?
+                   WHERE id = ? AND refresh_token_hash = ? AND revoked_at = ''""",
+                (
+                    session.refresh_token_hash,
+                    session.expires_at,
+                    session.revoked_at,
+                    session.last_used_at,
+                    session.id,
+                    expected_hash,
+                ),
+            )
+        return result.rowcount == 1
+
+    def revoke_auth_session(
+        self, session_id: str, user_id: str, workspace_id: str, revoked_at: str
+    ) -> bool:
+        with closing(self._connect()) as connection, connection:
+            result = connection.execute(
+                """UPDATE auth_sessions SET revoked_at = ?, last_used_at = ?
+                   WHERE id = ? AND user_id = ? AND workspace_id = ?
+                     AND revoked_at = ''""",
+                (revoked_at, revoked_at, session_id, user_id, workspace_id),
+            )
+        return result.rowcount == 1
+
+    def revoke_all_auth_sessions(
+        self, user_id: str, workspace_id: str, revoked_at: str
+    ) -> int:
+        with closing(self._connect()) as connection, connection:
+            result = connection.execute(
+                """UPDATE auth_sessions SET revoked_at = ?, last_used_at = ?
+                   WHERE user_id = ? AND workspace_id = ? AND revoked_at = ''""",
+                (revoked_at, revoked_at, user_id, workspace_id),
+            )
+        return result.rowcount
+
+    def save_auth_audit_event(self, event: AuthAuditEvent) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                "INSERT INTO auth_audit_events VALUES (?, ?, ?, ?, ?, ?)",
+                tuple(asdict(event).values()),
+            )
+
+    def ensure_user_profile(self, user_id: str, workspace_id: str) -> UserProfile:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO user_profiles(
+                       user_id, workspace_id, display_name, active_role,
+                       personalization_enabled, created_at, updated_at
+                   ) VALUES (?, ?, ?, 'viewer', 0, ?, ?)""",
+                (user_id, workspace_id, user_id, now, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM user_profiles WHERE user_id = ? AND workspace_id = ?",
+                (user_id, workspace_id),
+            ).fetchone()
+        assert row is not None
+        payload = dict(row)
+        payload["personalization_enabled"] = bool(payload["personalization_enabled"])
+        return UserProfile(**payload)
+
+    def save_user_profile(self, profile: UserProfile) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO user_profiles VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, workspace_id) DO UPDATE SET
+                       display_name=excluded.display_name,
+                       active_role=excluded.active_role,
+                       personalization_enabled=excluded.personalization_enabled,
+                       updated_at=excluded.updated_at""",
+                (
+                    profile.user_id, profile.workspace_id, profile.display_name,
+                    profile.active_role, int(profile.personalization_enabled),
+                    profile.created_at, profile.updated_at,
+                ),
+            )
+
+    def list_role_grants(self, user_id: str, workspace_id: str) -> list[RoleGrant]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM role_grants WHERE user_id = ? AND workspace_id = ? ORDER BY created_at",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [RoleGrant(**dict(row)) for row in rows]
+
+    def save_role_grant(self, grant: RoleGrant) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO role_grants VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, workspace_id, role) DO UPDATE SET
+                       status=excluded.status, scope_json=excluded.scope_json,
+                       granted_by=excluded.granted_by, created_at=excluded.created_at,
+                       revoked_at=excluded.revoked_at""",
+                tuple(asdict(grant).values()),
+            )
+
+    def get_role_application(self, application_id: str) -> RoleApplication | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM role_applications WHERE id = ?", (application_id,)
+            ).fetchone()
+        return RoleApplication(**dict(row)) if row else None
+
+    def find_pending_role_application(self, user_id: str, workspace_id: str, role: str) -> RoleApplication | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM role_applications
+                   WHERE user_id = ? AND workspace_id = ? AND role = ? AND status = 'pending'
+                   ORDER BY created_at DESC LIMIT 1""",
+                (user_id, workspace_id, role),
+            ).fetchone()
+        return RoleApplication(**dict(row)) if row else None
+
+    def list_role_applications(self, user_id: str, workspace_id: str) -> list[RoleApplication]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM role_applications WHERE user_id = ? AND workspace_id = ?
+                   ORDER BY created_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [RoleApplication(**dict(row)) for row in rows]
+
+    def save_role_application(self, application: RoleApplication) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO role_applications VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET status=excluded.status,
+                       decision_note=excluded.decision_note, reviewed_by=excluded.reviewed_by,
+                       updated_at=excluded.updated_at""",
+                tuple(asdict(application).values()),
+            )
+
+    def save_identity_task(self, task: IdentityTask) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO identity_tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET status=excluded.status,
+                       completed_at=excluded.completed_at""",
+                tuple(asdict(task).values()),
+            )
+
+    def list_identity_tasks(self, user_id: str, workspace_id: str) -> list[IdentityTask]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM identity_tasks WHERE user_id = ? AND workspace_id = ?
+                   ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, created_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [IdentityTask(**dict(row)) for row in rows]
+
+    def get_identity_task(self, task_id: str, user_id: str, workspace_id: str) -> IdentityTask | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM identity_tasks
+                   WHERE id = ? AND user_id = ? AND workspace_id = ?""",
+                (task_id, user_id, workspace_id),
+            ).fetchone()
+        return IdentityTask(**dict(row)) if row else None
+
+    def save_identity_audit_event(self, event: IdentityAuditEvent) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                "INSERT INTO identity_audit_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                tuple(asdict(event).values()),
+            )
+
+    def ensure_user_center_settings(
+        self, user_id: str, workspace_id: str
+    ) -> UserCenterSettings:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO user_center_settings(
+                       user_id, workspace_id, bio, region, profile_visibility,
+                       history_enabled, recommendation_enabled, notification_enabled,
+                       created_at, updated_at
+                   ) VALUES (?, ?, '', '', 'private', 1, 1, 1, ?, ?)""",
+                (user_id, workspace_id, now, now),
+            )
+            row = connection.execute(
+                """SELECT * FROM user_center_settings
+                   WHERE user_id = ? AND workspace_id = ?""",
+                (user_id, workspace_id),
+            ).fetchone()
+        assert row is not None
+        payload = dict(row)
+        for key in ("history_enabled", "recommendation_enabled", "notification_enabled"):
+            payload[key] = bool(payload[key])
+        return UserCenterSettings(**payload)
+
+    def save_user_center_settings(self, settings: UserCenterSettings) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO user_center_settings(
+                       user_id, workspace_id, bio, region, profile_visibility,
+                       history_enabled, recommendation_enabled, notification_enabled,
+                       created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, workspace_id) DO UPDATE SET
+                       bio=excluded.bio, region=excluded.region,
+                       profile_visibility=excluded.profile_visibility,
+                       history_enabled=excluded.history_enabled,
+                       recommendation_enabled=excluded.recommendation_enabled,
+                       notification_enabled=excluded.notification_enabled,
+                       updated_at=excluded.updated_at""",
+                (
+                    settings.user_id, settings.workspace_id, settings.bio,
+                    settings.region, settings.profile_visibility,
+                    int(settings.history_enabled), int(settings.recommendation_enabled),
+                    int(settings.notification_enabled), settings.created_at,
+                    settings.updated_at,
+                ),
+            )
+
+    def list_library_items(self, user_id: str, workspace_id: str) -> list[LibraryItem]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM user_library_items
+                   WHERE user_id = ? AND workspace_id = ? ORDER BY updated_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [LibraryItem(**dict(row)) for row in rows]
+
+    def save_library_item(self, item: LibraryItem) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO user_library_items
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, workspace_id, kind, target_id) DO UPDATE SET
+                       title=excluded.title, target_href=excluded.target_href,
+                       updated_at=excluded.updated_at""",
+                tuple(asdict(item).values()),
+            )
+
+    def delete_library_item(
+        self, user_id: str, workspace_id: str, kind: str, target_id: str
+    ) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """DELETE FROM user_library_items
+                   WHERE user_id = ? AND workspace_id = ? AND kind = ? AND target_id = ?""",
+                (user_id, workspace_id, kind, target_id),
+            )
+
+    def list_user_follows(self, user_id: str, workspace_id: str) -> list[UserFollow]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM user_follows
+                   WHERE user_id = ? AND workspace_id = ? ORDER BY updated_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [UserFollow(**dict(row)) for row in rows]
+
+    def save_user_follow(self, follow: UserFollow) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO user_follows VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, workspace_id, target_id) DO UPDATE SET
+                       display_name=excluded.display_name,
+                       target_href=excluded.target_href, updated_at=excluded.updated_at""",
+                tuple(asdict(follow).values()),
+            )
+
+    def delete_user_follow(
+        self, user_id: str, workspace_id: str, target_id: str
+    ) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """DELETE FROM user_follows
+                   WHERE user_id = ? AND workspace_id = ? AND target_id = ?""",
+                (user_id, workspace_id, target_id),
+            )
+
+    def list_watch_history(
+        self, user_id: str, workspace_id: str
+    ) -> list[WatchHistoryItem]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM user_watch_history
+                   WHERE user_id = ? AND workspace_id = ? ORDER BY viewed_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        result = []
+        for row in rows:
+            payload = dict(row)
+            payload["completed"] = bool(payload["completed"])
+            result.append(WatchHistoryItem(**payload))
+        return result
+
+    def save_watch_history(self, item: WatchHistoryItem) -> None:
+        values = list(asdict(item).values())
+        values[8] = int(item.completed)
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO user_watch_history
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(user_id, workspace_id, content_id) DO UPDATE SET
+                       title=excluded.title, target_href=excluded.target_href,
+                       progress_seconds=excluded.progress_seconds,
+                       duration_seconds=excluded.duration_seconds,
+                       completed=excluded.completed, viewed_at=excluded.viewed_at,
+                       updated_at=excluded.updated_at""",
+                tuple(values),
+            )
+
+    def delete_watch_history_item(
+        self, user_id: str, workspace_id: str, content_id: str
+    ) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """DELETE FROM user_watch_history
+                   WHERE user_id = ? AND workspace_id = ? AND content_id = ?""",
+                (user_id, workspace_id, content_id),
+            )
+
+    def clear_watch_history(self, user_id: str, workspace_id: str) -> int:
+        with closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                """DELETE FROM user_watch_history
+                   WHERE user_id = ? AND workspace_id = ?""",
+                (user_id, workspace_id),
+            )
+            removed = cursor.rowcount
+        return max(0, removed)
+
+    def list_user_notifications(
+        self, user_id: str, workspace_id: str
+    ) -> list[UserNotification]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM user_notifications
+                   WHERE user_id = ? AND workspace_id = ? ORDER BY created_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [UserNotification(**dict(row)) for row in rows]
+
+    def get_user_notification(
+        self, notification_id: str, user_id: str, workspace_id: str
+    ) -> UserNotification | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM user_notifications
+                   WHERE id = ? AND user_id = ? AND workspace_id = ?""",
+                (notification_id, user_id, workspace_id),
+            ).fetchone()
+        return UserNotification(**dict(row)) if row else None
+
+    def save_user_notification(self, notification: UserNotification) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO user_notifications VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET title=excluded.title,
+                       body=excluded.body, target_href=excluded.target_href,
+                       read_at=excluded.read_at""",
+                tuple(asdict(notification).values()),
+            )
+
+    def delete_user_notification(
+        self, notification_id: str, user_id: str, workspace_id: str
+    ) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """DELETE FROM user_notifications
+                   WHERE id = ? AND user_id = ? AND workspace_id = ?""",
+                (notification_id, user_id, workspace_id),
+            )
+
+    def save_user_center_audit_event(self, event: UserCenterAuditEvent) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                "INSERT INTO user_center_audit_events VALUES (?, ?, ?, ?, ?, ?)",
+                tuple(asdict(event).values()),
+            )
 
     def save_project(self, project: Project) -> None:
         with closing(self._connect()) as connection, connection:

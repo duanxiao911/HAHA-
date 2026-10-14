@@ -91,6 +91,10 @@ services:
     image: ${HAHA_WEB_IMAGE:?set immutable HAHA_WEB_IMAGE digest}
     environment:
       HAHA_RELEASE_ID: ${HAHA_RELEASE_ID:?set HAHA_RELEASE_ID}
+      HAHA_INTERNAL_API_URL: http://api:8000
+      HAHA_ENVIRONMENT: staging
+      HAHA_COOKIE_SECURE: "true"
+      HAHA_REFRESH_TOKEN_TTL_SECONDS: ${HAHA_REFRESH_TOKEN_TTL_SECONDS:-604800}
     ports:
       - "${HAHA_WEB_BIND:?set HAHA_WEB_BIND}:3000"
     networks: [edge]

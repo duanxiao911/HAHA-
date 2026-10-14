@@ -31,6 +31,7 @@ LABEL io.haha.web.api-base-url=$NEXT_PUBLIC_API_BASE_URL \
 WORKDIR /app
 COPY --from=builder --chown=65532:65532 /app/.next/standalone ./
 COPY --from=builder --chown=65532:65532 /app/.next/static ./.next/static
+COPY --chown=65532:65532 scripts/start-server.mjs ./start-server.mjs
 USER 65532:65532
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "start-server.mjs"]

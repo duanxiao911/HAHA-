@@ -10,6 +10,7 @@ import os
 import time
 from dataclasses import dataclass
 from enum import StrEnum
+from uuid import uuid4
 
 from fastapi import Header, HTTPException, status
 
@@ -26,6 +27,7 @@ class Principal:
     workspace_id: str
     role: Role
     auth_mode: str
+    session_id: str = ""
 
 
 def _environment() -> str:
@@ -61,6 +63,34 @@ def validate_security_configuration() -> None:
 
 def _decode_segment(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _encode_segment(value: dict[str, object]) -> str:
+    raw = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def issue_access_token(
+    *, user_id: str, workspace_id: str, session_id: str, expires_in: int = 900
+) -> str:
+    """Issue a short-lived access JWT; authorization remains database-backed."""
+    now = int(time.time())
+    header = _encode_segment({"alg": "HS256", "typ": "JWT"})
+    payload = _encode_segment({
+        "sub": user_id,
+        "workspace_id": workspace_id,
+        "sid": session_id,
+        "iss": os.getenv("HAHA_JWT_ISSUER", "haha-auth"),
+        "aud": os.getenv("HAHA_JWT_AUDIENCE", "haha-api"),
+        "iat": now,
+        "exp": now + expires_in,
+        "jti": uuid4().hex,
+    })
+    signature = hmac.new(
+        os.environ["HAHA_JWT_SECRET"].encode(),
+        f"{header}.{payload}".encode(), hashlib.sha256,
+    ).digest()
+    return f"{header}.{payload}.{base64.urlsafe_b64encode(signature).rstrip(b'=').decode()}"
 
 
 def _decode_and_verify_jwt(token: str) -> dict[str, object]:
@@ -105,8 +135,12 @@ def authenticate(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="缺少 Bearer 访问令牌", headers={"WWW-Authenticate": "Bearer"})
     payload = _decode_and_verify_jwt(supplied)
     try:
+        session_id = str(payload["sid"])
+        if not session_id.startswith("session_"):
+            raise HTTPException(status_code=401, detail="访问令牌会话声明无效")
         return Principal(
-            str(payload["sub"]), str(payload["workspace_id"]), Role.VIEWER, "jwt"
+            str(payload["sub"]), str(payload["workspace_id"]), Role.VIEWER, "jwt",
+            session_id,
         )
     except KeyError as exc:
         raise HTTPException(status_code=401, detail="访问令牌缺少身份声明") from exc

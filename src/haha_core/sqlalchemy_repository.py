@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -25,8 +26,24 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
+from haha_auth.domain import AuthAuditEvent, AuthCredential, AuthSession
 from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptVersion
 from haha_core.repository import RepositoryConflictError
+from haha_identity.domain import (
+    IdentityAuditEvent,
+    IdentityTask,
+    RoleApplication,
+    RoleGrant,
+    UserProfile,
+)
+from haha_user_center.domain import (
+    LibraryItem,
+    UserCenterAuditEvent,
+    UserCenterSettings,
+    UserFollow,
+    UserNotification,
+    WatchHistoryItem,
+)
 
 metadata = MetaData()
 
@@ -52,6 +69,195 @@ memberships = Table(
     Column("user_id", String(200), ForeignKey("users.id"), primary_key=True),
     Column("workspace_id", String(100), ForeignKey("workspaces.id"), primary_key=True),
     Column("role", String(20), nullable=False),
+    Column("created_at", String(40), nullable=False),
+)
+
+auth_credentials = Table(
+    "auth_credentials", metadata,
+    Column("user_id", String(200), ForeignKey("users.id"), primary_key=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), primary_key=True),
+    Column("email", String(320), nullable=False),
+    Column("password_salt", String(100), nullable=False),
+    Column("password_hash", String(100), nullable=False),
+    Column("password_iterations", Integer, nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("failed_attempts", Integer, nullable=False, server_default="0"),
+    Column("locked_until", String(40), nullable=False, server_default=""),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("email", "workspace_id", name="uq_auth_credential_email_workspace"),
+)
+
+auth_sessions = Table(
+    "auth_sessions", metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("refresh_token_hash", String(64), nullable=False),
+    Column("expires_at", String(40), nullable=False),
+    Column("revoked_at", String(40), nullable=False, server_default=""),
+    Column("created_at", String(40), nullable=False),
+    Column("last_used_at", String(40), nullable=False),
+)
+
+auth_audit_events = Table(
+    "auth_audit_events", metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), nullable=False, index=True),
+    Column("workspace_id", String(100), nullable=False, index=True),
+    Column("event_type", String(100), nullable=False),
+    Column("detail_json", JSON, nullable=False),
+    Column("created_at", String(40), nullable=False),
+)
+
+user_profiles = Table(
+    "user_profiles",
+    metadata,
+    Column("user_id", String(200), ForeignKey("users.id"), primary_key=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), primary_key=True),
+    Column("display_name", String(200), nullable=False),
+    Column("active_role", String(32), nullable=False),
+    Column("personalization_enabled", Integer, nullable=False, server_default="0"),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+)
+
+role_grants = Table(
+    "role_grants",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("role", String(32), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("scope_json", JSON, nullable=False),
+    Column("granted_by", String(200), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("revoked_at", String(40), nullable=False, server_default=""),
+    UniqueConstraint("user_id", "workspace_id", "role", name="uq_role_grant_owner_role"),
+)
+
+role_applications = Table(
+    "role_applications",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("role", String(32), nullable=False),
+    Column("status", String(20), nullable=False, index=True),
+    Column("reason", String(1000), nullable=False),
+    Column("decision_note", String(1000), nullable=False, server_default=""),
+    Column("reviewed_by", String(200), nullable=False, server_default=""),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+)
+
+identity_tasks = Table(
+    "identity_tasks",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("role", String(32), nullable=False),
+    Column("kind", String(64), nullable=False),
+    Column("title", String(300), nullable=False),
+    Column("description", String(2000), nullable=False),
+    Column("target_href", String(500), nullable=False),
+    Column("status", String(20), nullable=False, index=True),
+    Column("created_at", String(40), nullable=False),
+    Column("completed_at", String(40), nullable=False, server_default=""),
+)
+
+identity_audit_events = Table(
+    "identity_audit_events",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), nullable=False, index=True),
+    Column("workspace_id", String(100), nullable=False, index=True),
+    Column("actor_user_id", String(200), nullable=False),
+    Column("event_type", String(100), nullable=False),
+    Column("target_role", String(32), nullable=False),
+    Column("detail_json", JSON, nullable=False),
+    Column("created_at", String(40), nullable=False),
+)
+
+user_center_settings = Table(
+    "user_center_settings", metadata,
+    Column("user_id", String(200), ForeignKey("users.id"), primary_key=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), primary_key=True),
+    Column("bio", String(300), nullable=False, server_default=""),
+    Column("region", String(100), nullable=False, server_default=""),
+    Column("profile_visibility", String(20), nullable=False, server_default="private"),
+    Column("history_enabled", Integer, nullable=False, server_default="1"),
+    Column("recommendation_enabled", Integer, nullable=False, server_default="1"),
+    Column("notification_enabled", Integer, nullable=False, server_default="1"),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+)
+
+user_library_items = Table(
+    "user_library_items", metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("kind", String(32), nullable=False),
+    Column("target_id", String(200), nullable=False),
+    Column("title", String(200), nullable=False),
+    Column("target_href", String(500), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("user_id", "workspace_id", "kind", "target_id", name="uq_user_library_target"),
+)
+
+user_follows = Table(
+    "user_follows", metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("target_id", String(200), nullable=False),
+    Column("display_name", String(200), nullable=False),
+    Column("target_href", String(500), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("user_id", "workspace_id", "target_id", name="uq_user_follow_target"),
+)
+
+user_watch_history = Table(
+    "user_watch_history", metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("content_id", String(200), nullable=False),
+    Column("title", String(200), nullable=False),
+    Column("target_href", String(500), nullable=False),
+    Column("progress_seconds", Integer, nullable=False),
+    Column("duration_seconds", Integer, nullable=False),
+    Column("completed", Integer, nullable=False, server_default="0"),
+    Column("viewed_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("user_id", "workspace_id", "content_id", name="uq_user_history_content"),
+)
+
+user_notifications = Table(
+    "user_notifications", metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("kind", String(32), nullable=False),
+    Column("title", String(200), nullable=False),
+    Column("body", String(1000), nullable=False),
+    Column("target_href", String(500), nullable=False),
+    Column("read_at", String(40), nullable=False, server_default=""),
+    Column("created_at", String(40), nullable=False),
+)
+
+user_center_audit_events = Table(
+    "user_center_audit_events", metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), nullable=False, index=True),
+    Column("workspace_id", String(100), nullable=False, index=True),
+    Column("event_type", String(100), nullable=False),
+    Column("detail_json", JSON, nullable=False),
     Column("created_at", String(40), nullable=False),
 )
 
@@ -187,6 +393,405 @@ class SQLAlchemyCreatorRepository:
                 )
             )
         return str(role) if role else None
+
+    def get_auth_credential(self, email: str, workspace_id: str) -> AuthCredential | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(select(auth_credentials).where(
+                auth_credentials.c.email == email,
+                auth_credentials.c.workspace_id == workspace_id,
+            )).mappings().first()
+        return AuthCredential(**row) if row else None
+
+    def save_auth_credential(self, credential: AuthCredential) -> None:
+        values = asdict(credential)
+        with self.engine.begin() as connection:
+            exists = connection.scalar(select(auth_credentials.c.user_id).where(
+                auth_credentials.c.user_id == credential.user_id,
+                auth_credentials.c.workspace_id == credential.workspace_id,
+            ))
+            query = auth_credentials.update().where(
+                auth_credentials.c.user_id == credential.user_id,
+                auth_credentials.c.workspace_id == credential.workspace_id,
+            ) if exists else auth_credentials.insert()
+            connection.execute(query.values(**values))
+
+    def get_auth_session(self, session_id: str) -> AuthSession | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(select(auth_sessions).where(
+                auth_sessions.c.id == session_id
+            )).mappings().first()
+        return AuthSession(**row) if row else None
+
+    def list_auth_sessions(self, user_id: str, workspace_id: str) -> list[AuthSession]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(select(auth_sessions).where(
+                auth_sessions.c.user_id == user_id,
+                auth_sessions.c.workspace_id == workspace_id,
+            ).order_by(auth_sessions.c.created_at.desc())).mappings().all()
+        return [AuthSession(**row) for row in rows]
+
+    def save_auth_session(self, session: AuthSession) -> None:
+        values = asdict(session)
+        with self.engine.begin() as connection:
+            exists = connection.scalar(select(auth_sessions.c.id).where(
+                auth_sessions.c.id == session.id
+            ))
+            query = auth_sessions.update().where(
+                auth_sessions.c.id == session.id
+            ) if exists else auth_sessions.insert()
+            connection.execute(query.values(**values))
+
+    def rotate_auth_session(self, session: AuthSession, expected_hash: str) -> bool:
+        """Atomically consume one refresh secret and install its replacement."""
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                auth_sessions.update().where(
+                    auth_sessions.c.id == session.id,
+                    auth_sessions.c.refresh_token_hash == expected_hash,
+                    auth_sessions.c.revoked_at == "",
+                ).values(
+                    refresh_token_hash=session.refresh_token_hash,
+                    expires_at=session.expires_at,
+                    revoked_at=session.revoked_at,
+                    last_used_at=session.last_used_at,
+                )
+            )
+        return result.rowcount == 1
+
+    def revoke_auth_session(
+        self, session_id: str, user_id: str, workspace_id: str, revoked_at: str
+    ) -> bool:
+        with self.engine.begin() as connection:
+            result = connection.execute(auth_sessions.update().where(
+                auth_sessions.c.id == session_id,
+                auth_sessions.c.user_id == user_id,
+                auth_sessions.c.workspace_id == workspace_id,
+                auth_sessions.c.revoked_at == "",
+            ).values(revoked_at=revoked_at, last_used_at=revoked_at))
+        return result.rowcount == 1
+
+    def revoke_all_auth_sessions(
+        self, user_id: str, workspace_id: str, revoked_at: str
+    ) -> int:
+        with self.engine.begin() as connection:
+            result = connection.execute(auth_sessions.update().where(
+                auth_sessions.c.user_id == user_id,
+                auth_sessions.c.workspace_id == workspace_id,
+                auth_sessions.c.revoked_at == "",
+            ).values(revoked_at=revoked_at, last_used_at=revoked_at))
+        return result.rowcount
+
+    def save_auth_audit_event(self, event: AuthAuditEvent) -> None:
+        values = {**asdict(event), "detail_json": json.loads(event.detail_json)}
+        with self.engine.begin() as connection:
+            connection.execute(auth_audit_events.insert().values(**values))
+
+    def ensure_user_profile(self, user_id: str, workspace_id: str) -> UserProfile:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with self.engine.begin() as connection:
+            row = connection.execute(
+                select(user_profiles).where(
+                    user_profiles.c.user_id == user_id,
+                    user_profiles.c.workspace_id == workspace_id,
+                )
+            ).mappings().first()
+            if not row:
+                connection.execute(
+                    user_profiles.insert().values(
+                        user_id=user_id, workspace_id=workspace_id,
+                        display_name=user_id, active_role="viewer",
+                        personalization_enabled=0, created_at=now, updated_at=now,
+                    )
+                )
+                row = connection.execute(
+                    select(user_profiles).where(
+                        user_profiles.c.user_id == user_id,
+                        user_profiles.c.workspace_id == workspace_id,
+                    )
+                ).mappings().one()
+        payload = dict(row)
+        payload["personalization_enabled"] = bool(payload["personalization_enabled"])
+        return UserProfile(**payload)
+
+    def save_user_profile(self, profile: UserProfile) -> None:
+        values = asdict(profile)
+        values["personalization_enabled"] = int(profile.personalization_enabled)
+        with self.engine.begin() as connection:
+            exists = connection.scalar(select(user_profiles.c.user_id).where(
+                user_profiles.c.user_id == profile.user_id,
+                user_profiles.c.workspace_id == profile.workspace_id,
+            ))
+            if exists:
+                connection.execute(user_profiles.update().where(
+                    user_profiles.c.user_id == profile.user_id,
+                    user_profiles.c.workspace_id == profile.workspace_id,
+                ).values(**values))
+            else:
+                connection.execute(user_profiles.insert().values(**values))
+
+    def list_role_grants(self, user_id: str, workspace_id: str) -> list[RoleGrant]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(select(role_grants).where(
+                role_grants.c.user_id == user_id,
+                role_grants.c.workspace_id == workspace_id,
+            ).order_by(role_grants.c.created_at)).mappings().all()
+        return [RoleGrant(**{**row, "scope_json": json.dumps(row["scope_json"], ensure_ascii=False, sort_keys=True)}) for row in rows]
+
+    def save_role_grant(self, grant: RoleGrant) -> None:
+        values = asdict(grant)
+        values["scope_json"] = json.loads(grant.scope_json)
+        with self.engine.begin() as connection:
+            existing_id = connection.scalar(select(role_grants.c.id).where(
+                role_grants.c.user_id == grant.user_id,
+                role_grants.c.workspace_id == grant.workspace_id,
+                role_grants.c.role == grant.role,
+            ))
+            if existing_id:
+                connection.execute(role_grants.update().where(role_grants.c.id == existing_id).values(**values))
+            else:
+                connection.execute(role_grants.insert().values(**values))
+
+    def get_role_application(self, application_id: str) -> RoleApplication | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(select(role_applications).where(role_applications.c.id == application_id)).mappings().first()
+        return RoleApplication(**row) if row else None
+
+    def find_pending_role_application(self, user_id: str, workspace_id: str, role: str) -> RoleApplication | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(select(role_applications).where(
+                role_applications.c.user_id == user_id,
+                role_applications.c.workspace_id == workspace_id,
+                role_applications.c.role == role,
+                role_applications.c.status == "pending",
+            ).order_by(role_applications.c.created_at.desc()).limit(1)).mappings().first()
+        return RoleApplication(**row) if row else None
+
+    def list_role_applications(self, user_id: str, workspace_id: str) -> list[RoleApplication]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(select(role_applications).where(
+                role_applications.c.user_id == user_id,
+                role_applications.c.workspace_id == workspace_id,
+            ).order_by(role_applications.c.created_at.desc())).mappings().all()
+        return [RoleApplication(**row) for row in rows]
+
+    def save_role_application(self, application: RoleApplication) -> None:
+        values = asdict(application)
+        with self.engine.begin() as connection:
+            exists = connection.scalar(select(role_applications.c.id).where(role_applications.c.id == application.id))
+            if exists:
+                connection.execute(role_applications.update().where(role_applications.c.id == application.id).values(**values))
+            else:
+                connection.execute(role_applications.insert().values(**values))
+
+    def save_identity_task(self, task: IdentityTask) -> None:
+        values = asdict(task)
+        with self.engine.begin() as connection:
+            exists = connection.scalar(select(identity_tasks.c.id).where(identity_tasks.c.id == task.id))
+            if exists:
+                connection.execute(identity_tasks.update().where(identity_tasks.c.id == task.id).values(**values))
+            else:
+                connection.execute(identity_tasks.insert().values(**values))
+
+    def list_identity_tasks(self, user_id: str, workspace_id: str) -> list[IdentityTask]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(select(identity_tasks).where(
+                identity_tasks.c.user_id == user_id,
+                identity_tasks.c.workspace_id == workspace_id,
+            ).order_by(identity_tasks.c.status.desc(), identity_tasks.c.created_at.desc())).mappings().all()
+        return [IdentityTask(**row) for row in rows]
+
+    def get_identity_task(self, task_id: str, user_id: str, workspace_id: str) -> IdentityTask | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(select(identity_tasks).where(
+                identity_tasks.c.id == task_id,
+                identity_tasks.c.user_id == user_id,
+                identity_tasks.c.workspace_id == workspace_id,
+            )).mappings().first()
+        return IdentityTask(**row) if row else None
+
+    def save_identity_audit_event(self, event: IdentityAuditEvent) -> None:
+        values = asdict(event)
+        values["detail_json"] = json.loads(event.detail_json)
+        with self.engine.begin() as connection:
+            connection.execute(identity_audit_events.insert().values(**values))
+
+    def ensure_user_center_settings(
+        self, user_id: str, workspace_id: str
+    ) -> UserCenterSettings:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with self.engine.begin() as connection:
+            row = connection.execute(select(user_center_settings).where(
+                user_center_settings.c.user_id == user_id,
+                user_center_settings.c.workspace_id == workspace_id,
+            )).mappings().first()
+            if not row:
+                connection.execute(user_center_settings.insert().values(
+                    user_id=user_id, workspace_id=workspace_id, bio="", region="",
+                    profile_visibility="private", history_enabled=1,
+                    recommendation_enabled=1, notification_enabled=1,
+                    created_at=now, updated_at=now,
+                ))
+                row = connection.execute(select(user_center_settings).where(
+                    user_center_settings.c.user_id == user_id,
+                    user_center_settings.c.workspace_id == workspace_id,
+                )).mappings().one()
+        payload = dict(row)
+        for key in ("history_enabled", "recommendation_enabled", "notification_enabled"):
+            payload[key] = bool(payload[key])
+        return UserCenterSettings(**payload)
+
+    def save_user_center_settings(self, settings: UserCenterSettings) -> None:
+        values = asdict(settings)
+        for key in ("history_enabled", "recommendation_enabled", "notification_enabled"):
+            values[key] = int(values[key])
+        with self.engine.begin() as connection:
+            exists = connection.scalar(select(user_center_settings.c.user_id).where(
+                user_center_settings.c.user_id == settings.user_id,
+                user_center_settings.c.workspace_id == settings.workspace_id,
+            ))
+            query = user_center_settings.update().where(
+                user_center_settings.c.user_id == settings.user_id,
+                user_center_settings.c.workspace_id == settings.workspace_id,
+            ) if exists else user_center_settings.insert()
+            connection.execute(query.values(**values))
+
+    def list_library_items(self, user_id: str, workspace_id: str) -> list[LibraryItem]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(select(user_library_items).where(
+                user_library_items.c.user_id == user_id,
+                user_library_items.c.workspace_id == workspace_id,
+            ).order_by(user_library_items.c.updated_at.desc())).mappings().all()
+        return [LibraryItem(**row) for row in rows]
+
+    def save_library_item(self, item: LibraryItem) -> None:
+        values = asdict(item)
+        with self.engine.begin() as connection:
+            existing = connection.scalar(select(user_library_items.c.id).where(
+                user_library_items.c.user_id == item.user_id,
+                user_library_items.c.workspace_id == item.workspace_id,
+                user_library_items.c.kind == item.kind,
+                user_library_items.c.target_id == item.target_id,
+            ))
+            query = user_library_items.update().where(
+                user_library_items.c.id == existing
+            ) if existing else user_library_items.insert()
+            connection.execute(query.values(**values))
+
+    def delete_library_item(self, user_id: str, workspace_id: str, kind: str, target_id: str) -> None:
+        with self.engine.begin() as connection:
+            connection.execute(user_library_items.delete().where(
+                user_library_items.c.user_id == user_id,
+                user_library_items.c.workspace_id == workspace_id,
+                user_library_items.c.kind == kind,
+                user_library_items.c.target_id == target_id,
+            ))
+
+    def list_user_follows(self, user_id: str, workspace_id: str) -> list[UserFollow]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(select(user_follows).where(
+                user_follows.c.user_id == user_id,
+                user_follows.c.workspace_id == workspace_id,
+            ).order_by(user_follows.c.updated_at.desc())).mappings().all()
+        return [UserFollow(**row) for row in rows]
+
+    def save_user_follow(self, follow: UserFollow) -> None:
+        values = asdict(follow)
+        with self.engine.begin() as connection:
+            existing = connection.scalar(select(user_follows.c.id).where(
+                user_follows.c.user_id == follow.user_id,
+                user_follows.c.workspace_id == follow.workspace_id,
+                user_follows.c.target_id == follow.target_id,
+            ))
+            query = user_follows.update().where(
+                user_follows.c.id == existing
+            ) if existing else user_follows.insert()
+            connection.execute(query.values(**values))
+
+    def delete_user_follow(self, user_id: str, workspace_id: str, target_id: str) -> None:
+        with self.engine.begin() as connection:
+            connection.execute(user_follows.delete().where(
+                user_follows.c.user_id == user_id,
+                user_follows.c.workspace_id == workspace_id,
+                user_follows.c.target_id == target_id,
+            ))
+
+    def list_watch_history(self, user_id: str, workspace_id: str) -> list[WatchHistoryItem]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(select(user_watch_history).where(
+                user_watch_history.c.user_id == user_id,
+                user_watch_history.c.workspace_id == workspace_id,
+            ).order_by(user_watch_history.c.viewed_at.desc())).mappings().all()
+        return [WatchHistoryItem(**{**row, "completed": bool(row["completed"])}) for row in rows]
+
+    def save_watch_history(self, item: WatchHistoryItem) -> None:
+        values = {**asdict(item), "completed": int(item.completed)}
+        with self.engine.begin() as connection:
+            existing = connection.scalar(select(user_watch_history.c.id).where(
+                user_watch_history.c.user_id == item.user_id,
+                user_watch_history.c.workspace_id == item.workspace_id,
+                user_watch_history.c.content_id == item.content_id,
+            ))
+            query = user_watch_history.update().where(
+                user_watch_history.c.id == existing
+            ) if existing else user_watch_history.insert()
+            connection.execute(query.values(**values))
+
+    def delete_watch_history_item(self, user_id: str, workspace_id: str, content_id: str) -> None:
+        with self.engine.begin() as connection:
+            connection.execute(user_watch_history.delete().where(
+                user_watch_history.c.user_id == user_id,
+                user_watch_history.c.workspace_id == workspace_id,
+                user_watch_history.c.content_id == content_id,
+            ))
+
+    def clear_watch_history(self, user_id: str, workspace_id: str) -> int:
+        with self.engine.begin() as connection:
+            result = connection.execute(user_watch_history.delete().where(
+                user_watch_history.c.user_id == user_id,
+                user_watch_history.c.workspace_id == workspace_id,
+            ))
+            return max(0, result.rowcount)
+
+    def list_user_notifications(self, user_id: str, workspace_id: str) -> list[UserNotification]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(select(user_notifications).where(
+                user_notifications.c.user_id == user_id,
+                user_notifications.c.workspace_id == workspace_id,
+            ).order_by(user_notifications.c.created_at.desc())).mappings().all()
+        return [UserNotification(**row) for row in rows]
+
+    def get_user_notification(self, notification_id: str, user_id: str, workspace_id: str) -> UserNotification | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(select(user_notifications).where(
+                user_notifications.c.id == notification_id,
+                user_notifications.c.user_id == user_id,
+                user_notifications.c.workspace_id == workspace_id,
+            )).mappings().first()
+        return UserNotification(**row) if row else None
+
+    def save_user_notification(self, notification: UserNotification) -> None:
+        values = asdict(notification)
+        with self.engine.begin() as connection:
+            exists = connection.scalar(select(user_notifications.c.id).where(
+                user_notifications.c.id == notification.id
+            ))
+            query = user_notifications.update().where(
+                user_notifications.c.id == notification.id
+            ) if exists else user_notifications.insert()
+            connection.execute(query.values(**values))
+
+    def delete_user_notification(self, notification_id: str, user_id: str, workspace_id: str) -> None:
+        with self.engine.begin() as connection:
+            connection.execute(user_notifications.delete().where(
+                user_notifications.c.id == notification_id,
+                user_notifications.c.user_id == user_id,
+                user_notifications.c.workspace_id == workspace_id,
+            ))
+
+    def save_user_center_audit_event(self, event: UserCenterAuditEvent) -> None:
+        values = {**asdict(event), "detail_json": json.loads(event.detail_json)}
+        with self.engine.begin() as connection:
+            connection.execute(user_center_audit_events.insert().values(**values))
 
     def get_project(self, project_id: str) -> Project | None:
         with self.engine.connect() as connection:

@@ -1,0 +1,68 @@
+.identityCenterPage { width: min(100% - 40px, 1400px); }
+.identityHero { display: grid; grid-template-columns: minmax(0,1fr) 280px; align-items: end; gap: 32px; margin-bottom: 18px; padding: clamp(28px,5vw,54px); border: 1px solid var(--product-line); border-radius: 22px; background: linear-gradient(135deg,#fffdf9 0 58%,#efe6da); }
+.identityHero small,.identityWorkspaceHead small,.identitySectionHeading small,.identityDialog>small { color: var(--product-brand); font-size: 10px; font-weight: 850; letter-spacing: .14em; }
+.identityHero h1 { max-width: 760px; margin: 8px 0 10px; font-size: clamp(36px,5vw,66px); line-height: 1.04; letter-spacing: -.055em; }
+.identityHero p { max-width: 760px; margin: 0; color: var(--product-ink-soft); line-height: 1.75; }
+.identityCurrentRole { display: grid; gap: 6px; padding: 20px; border: 1px solid color-mix(in srgb,var(--product-brand) 20%,var(--product-line)); border-radius: 16px; background: rgba(255,255,255,.8); }
+.identityCurrentRole span,.identityCurrentRole small { color: var(--product-ink-soft); font-size: 11px; }
+.identityCurrentRole strong { font-size: 28px; }
+.identityViewNav { display: flex; overflow-x: auto; gap: 8px; margin-bottom: 20px; padding: 6px; border: 1px solid var(--product-line); border-radius: 13px; background: var(--product-surface); }
+.identityViewNav button { min-height: 44px; flex: 1 0 auto; padding: 0 18px; border: 0; border-radius: 9px; background: transparent; color: var(--product-ink-soft); cursor: pointer; }
+.identityViewNav button.active { background: var(--product-brand-soft); color: var(--product-brand); font-weight: 800; }
+.identityOverviewGrid { display: grid; grid-template-columns: minmax(0,1fr) 310px; align-items: start; gap: 20px; }
+.identityMainPanel,.identitySidePanel { padding: clamp(20px,3vw,30px); border: 1px solid var(--product-line); border-radius: 18px; background: var(--product-surface); }
+.identitySidePanel { position: sticky; top: 86px; }
+.identitySidePanel h2 { margin: 0 0 12px; font-size: 17px; }
+.identitySidePanel p { color: var(--product-ink-soft); font-size: 12px; line-height: 1.7; }
+.identitySidePanel ul { display: grid; gap: 10px; margin: 0 0 12px; padding: 0; list-style: none; }
+.identitySidePanel li { display: grid; gap: 4px; padding: 11px; border-radius: 9px; background: var(--product-muted); font-size: 12px; }
+.identitySidePanel li span { color: var(--product-ink-soft); font-size: 10px; }
+.identitySidePanel hr { margin: 20px 0; border: 0; border-top: 1px solid var(--product-line); }
+.identitySectionHeading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 4px 0 16px; }
+.identitySectionHeading:not(:first-child) { margin-top: 34px; padding-top: 28px; border-top: 1px solid var(--product-line); }
+.identitySectionHeading h2,.identityWorkspaceHead h2 { margin: 5px 0 0; font-size: 25px; letter-spacing: -.03em; }
+.identitySectionHeading p { margin: 7px 0 0; color: var(--product-ink-soft); font-size: 12px; line-height: 1.65; }
+.identitySectionHeading>span { color: var(--product-ink-soft); font-size: 12px; }
+.identityRoleGrid { display: grid; gap: 10px; }
+.identityRoleGrid article { display: grid; grid-template-columns: 48px minmax(0,1fr) auto; align-items: center; gap: 14px; padding: 15px; border: 1px solid var(--product-line); border-radius: 13px; background: var(--product-muted); }
+.identityRoleGrid article.current { border-color: color-mix(in srgb,var(--product-brand) 30%,var(--product-line)); background: var(--product-brand-soft); }
+.identityRoleMark { display: grid; width: 46px; height: 46px; place-items: center; border-radius: 13px; background: var(--product-brand); color: #fff; font-size: 18px; font-weight: 900; }
+.identityRoleGrid h3,.identityActionGrid h3,.identityWorkspaceGrid h3,.identityTaskList h3 { margin: 0 0 5px; font-size: 15px; }
+.identityRoleGrid p,.identityActionGrid p,.identityWorkspaceGrid p,.identityTaskList p { margin: 0; color: var(--product-ink-soft); font-size: 12px; line-height: 1.6; }
+.identityRoleGrid article>button { min-height: 40px; padding: 0 14px; border: 1px solid var(--product-line); border-radius: 9px; background: var(--product-surface); cursor: pointer; }
+.identityRoleGrid article>b { color: var(--product-brand); font-size: 11px; }
+.identityActionGrid,.identityWorkspaceGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.identityActionGrid article,.identityWorkspaceGrid article { display: grid; align-content: start; gap: 10px; min-height: 160px; padding: 18px; border: 1px solid var(--product-line); border-radius: 13px; background: var(--product-muted); }
+.identityActionGrid article>:last-child,.identityWorkspaceGrid article>:last-child { align-self: end; margin-top: auto; width: fit-content; }
+.identityWorkspaceHead { display: flex; align-items: center; gap: 15px; margin-bottom: 22px; }
+.identityWorkspaceHead p { margin: 7px 0 0; color: var(--product-ink-soft); }
+.identityConsentNote { margin-top: 22px; padding: 17px; border: 1px solid #e6c98c; border-radius: 12px; background: #fbf2df; color: var(--product-amber); }
+.identityConsentNote p { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
+.identityTaskList { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.identityTaskList li { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 18px; padding: 16px; border: 1px solid var(--product-line); border-radius: 12px; background: var(--product-muted); }
+.identityTaskList li.completed { opacity: .68; }
+.identityTaskList span { color: var(--product-brand); font-size: 10px; font-weight: 800; }
+.identityTaskList li>b { color: var(--product-green); font-size: 11px; }
+.identityAlert { margin-bottom: 16px; padding: 12px 14px; border: 1px solid #e2afa9; border-radius: 10px; background: #fbe9e6; color: #8b332d; font-size: 12px; }
+.identityDialogBackdrop { position: fixed; z-index: 200; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(33,28,23,.45); }
+.identityDialog { position: relative; display: grid; gap: 13px; width: min(100%,520px); padding: 28px; border-radius: 18px; background: var(--product-surface); box-shadow: 0 24px 90px rgba(0,0,0,.24); }
+.identityDialog h2 { margin: 0; font-size: 28px; }
+.identityDialog p { margin: 0; color: var(--product-ink-soft); font-size: 12px; line-height: 1.7; }
+.identityDialog label { display: grid; gap: 7px; font-size: 12px; font-weight: 750; }
+.identityDialog textarea { min-height: 130px; padding: 12px; border: 1px solid var(--product-line); border-radius: 10px; resize: vertical; }
+.identityDialogClose { position: absolute; top: 12px; right: 12px; width: 38px; height: 38px; border: 0; border-radius: 10px; background: var(--product-muted); font-size: 20px; cursor: pointer; }
+.identitySettingsForm { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--product-line); }
+.identitySettingsForm label { display: grid; gap: 7px; color: var(--product-ink-soft); font-size: 12px; font-weight: 750; }
+.identitySettingsForm input,.identitySettingsForm textarea,.identitySettingsForm select { min-height: 44px; padding: 10px 12px; border: 1px solid var(--product-line); border-radius: 10px; background: var(--product-surface); color: var(--product-ink); font: inherit; }
+.identitySettingsForm textarea { min-height: 100px; resize: vertical; }
+.identitySettingsForm .identityToggle { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px 12px; border: 1px solid var(--product-line); border-radius: 10px; background: var(--product-muted); }
+.identitySettingsForm .identityToggle input { width: 18px; min-height: 18px; }
+.identitySettingsForm button { width: fit-content; }
+.authLoginLayout { width: min(100%,980px); margin: 40px auto; }
+.authLoginForm { display: grid; gap: 14px; max-width: 520px; margin-top: 24px; }
+.authLoginForm label { display: grid; gap: 7px; color: var(--product-ink-soft); font-size: 12px; font-weight: 750; }
+.authLoginForm input { min-height: 46px; padding: 10px 12px; border: 1px solid var(--product-line); border-radius: 10px; background: var(--product-muted); }
+.authPasswordField { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+.authPasswordField button { min-width: 64px; border: 1px solid var(--product-line); border-radius: 10px; background: var(--product-surface); cursor: pointer; }
+@media(max-width:900px){.identityHero,.identityOverviewGrid{grid-template-columns:1fr}.identitySidePanel{position:static}.identityCurrentRole{width:min(100%,360px)}.identityActionGrid,.identityWorkspaceGrid{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.identityCenterPage{width:min(100% - 22px,540px)}.identityHero{padding:24px 20px}.identityHero h1{font-size:36px}.identityActionGrid,.identityWorkspaceGrid{grid-template-columns:1fr}.identityRoleGrid article{grid-template-columns:42px minmax(0,1fr)}.identityRoleGrid article>:last-child{grid-column:1/-1;width:100%}.identityTaskList li{grid-template-columns:1fr}.identityTaskList button{width:100%}.identitySectionHeading{align-items:flex-start;flex-direction:column}.identityViewNav{margin-inline:-2px}}

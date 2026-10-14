@@ -20,7 +20,7 @@ def main() -> None:
     user_id = f"staging-user-{suffix}"
     workspace_id = f"staging-workspace-{suffix}"
     repository.ensure_identity(user_id, workspace_id, role="owner")
-    token = issue_token(user_id, workspace_id, 300)
+    token = issue_token(repository, user_id, workspace_id, 300)
     client = TestClient(create_app(repository))
 
     anonymous = client.post("/api/projects", json={"title": "unauthorized"})

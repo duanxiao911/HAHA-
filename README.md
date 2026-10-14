@@ -2,10 +2,15 @@
 
 HAHA 飞颐是采用 Next.js、FastAPI、PostgreSQL、Redis 与 Dramatiq 构建的非遗内容社区和 AI 创作平台。
 
+项目开发、升级、验收与发布默认遵守
+[`AI 全栈应用开发统一 SOP V1.0`](docs/governance/AI_FULLSTACK_SOP_V1.md)，并由根目录
+[`AGENTS.md`](AGENTS.md) 补充 HAHA 项目级约束。
+
 ## 当前能力
 
 - 非遗内容社区：首页频道、热门内容、地域探索与文化地图入口
 - 社区发现闭环：内容详情、可信来源、搜索、收藏、想学、历史、关注、评论与消息
+- 身份与文化成长中心：同账户多身份、服务端授权切换、身份申请、持久化任务与权限审计
 - 内容关系网络：非遗项目、演示人物、地区、专题、活动与内容互相跳转
 - AI 创作工作台：以对话方式生成图文或视频内容方案
 - 模型路由：支持本地演示、自动选择与 DeepSeek 文本模型
@@ -123,9 +128,37 @@ Phase C 已补齐运行 SSE、取消、失败任务运维界面，以及基于�
 
 Phase D 已在不新增普通后端技术栈的前提下，完成社区侧的本地可交互闭环：统一数据契约、
 内容详情、搜索、文化档案、消息、项目/人物/地区关联、投稿与本地审核发布，并在 Docker 环境
-执行 390/768/1024/1280/1440 五档真实浏览器验收。社区数据、身份和审核结果仍明确标记为
-本地演示，尚未接入真实账号、媒体存储、审核后台或内容 API。详见
+执行 390/768/1024/1280/1440 五档真实浏览器验收。评论、知识注释和审核结果仍明确标记为
+本地演示，尚未接入真实媒体存储、审核后台或内容 API。详见
 [`docs/reports/phase-d-community-loop-2026-10-12.md`](docs/reports/phase-d-community-loop-2026-10-12.md)。
+
+User Center G1 已把多身份上下文、账户资料、隐私偏好、收藏、想学、稍后看、关注、观看历史
+和站内消息接入 FastAPI + PostgreSQL，并完成 390/768/1440 三档真实浏览器验收。开发环境仍为
+显式 opt-in 的本机身份，不等于正式 JWT 账号上线；详见
+[`docs/reports/2026-10-14_user-center-gate-c1/FUNCTION_ACCEPTANCE_REPORT.md`](docs/reports/2026-10-14_user-center-gate-c1/FUNCTION_ACCEPTANCE_REPORT.md)。
+
+Account Session G2 已提供仅限内部测试的真实账户闭环：PBKDF2 密码摘要、短期 JWT、服务端
+刷新会话、原子单次轮换、退出撤销、失败锁定、认证审计和 `/login` 真实表单。账户不开放公众
+注册，授权仍以 PostgreSQL membership 为准。创建或轮换内部账户时只通过环境变量传入密码：
+
+```powershell
+$env:HAHA_BOOTSTRAP_PASSWORD = "至少 12 位的本地测试密码"
+docker compose exec -T -e HAHA_BOOTSTRAP_PASSWORD=$env:HAHA_BOOTSTRAP_PASSWORD api `
+  python scripts/bootstrap_internal_account.py `
+  --user-id internal-user --workspace-id internal-workspace `
+  --email internal@example.local --role owner
+```
+
+设计与运行证据见
+[`docs/reports/2026-10-14_account-session-g2/FUNCTION_ACCEPTANCE_REPORT.md`](docs/reports/2026-10-14_account-session-g2/FUNCTION_ACCEPTANCE_REPORT.md)。
+
+Browser Session G3 已将 G2 的浏览器令牌从 `sessionStorage` 迁移到 Next.js 同源 BFF 管理的
+HttpOnly/SameSite Cookie；所有变更请求校验同源 Origin 与 CSRF Token，刷新令牌只在服务端
+轮换。后端 access token 绑定数据库会话 ID，用户可在用户中心查看并撤销单个或全部会话，撤销
+后未过期 access token 也会立即失效。GitHub Pages 仍是明确隔离的无认证静态演示，不承载真实
+会话。设计见 [`docs/architecture/browser-session-gate-g3.md`](docs/architecture/browser-session-gate-g3.md)，
+真实环境证据见 `docs/reports/2026-10-14_browser-session-g3/`。G3 仍只面向内部测试与受控展示，
+没有执行独立 Production Readiness Gate，也不代表 Production Candidate。
 
 ## 项目结构
 

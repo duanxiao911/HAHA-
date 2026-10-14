@@ -76,3 +76,22 @@ def test_ci_web_image_is_built_with_jwt_contract() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "NEXT_PUBLIC_API_BASE_URL=https://api.staging.example.invalid" in workflow
     assert "NEXT_PUBLIC_AUTH_MODE=jwt" in workflow
+
+
+def test_browser_session_gate_keeps_tokens_server_only_and_static_demo_separate() -> None:
+    api_client = (ROOT / "web" / "lib" / "api.ts").read_text(encoding="utf-8")
+    bff = (ROOT / "web" / "lib" / "bff-session.ts").read_text(encoding="utf-8")
+    proxy = (ROOT / "web" / "app" / "api" / "backend" / "[...path]" / "route.ts").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "web" / "Dockerfile").read_text(encoding="utf-8")
+    pages = (ROOT / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
+
+    assert "sessionStorage" not in api_client
+    assert "localStorage" not in api_client
+    assert "haha_access_token" not in api_client
+    assert 'httpOnly,' in bff
+    assert 'sameSite: "lax"' in bff
+    assert "timingSafeEqual" in bff
+    assert '"/api/auth/refresh"' in proxy
+    assert "令牌端点只能通过安全会话接口访问" in proxy
+    assert 'CMD ["node", "start-server.mjs"]' in dockerfile
+    assert "pnpm build:demo" in pages

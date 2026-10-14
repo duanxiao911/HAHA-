@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  getAuthSessionSnapshot,
+  getServerAuthSessionSnapshot,
+  initializeAuthSession,
+  subscribeAuthSession,
+} from "@/lib/api";
 
 type AppHeaderProps = {
   initialQuery?: string;
@@ -38,6 +44,11 @@ export function AppHeader({ initialQuery = "", demoLabel = "本地演示" }: App
   const pathname = usePathname();
   const router = useRouter();
   const [query, setQuery] = useState(initialQuery);
+  const authState = useSyncExternalStore(
+    subscribeAuthSession, getAuthSessionSnapshot, getServerAuthSessionSnapshot,
+  );
+  const signedIn = authState === "authenticated";
+  useEffect(() => { void initializeAuthSession(); }, []);
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -94,10 +105,10 @@ export function AppHeader({ initialQuery = "", demoLabel = "本地演示" }: App
             消息
           </Link>
           <Link
-            href="/profile/demo-user"
-            aria-current={isActivePath(pathname, "/profile") ? "page" : undefined}
+            href="/identity"
+            aria-current={isActivePath(pathname, "/identity") ? "page" : undefined}
           >
-            我的
+            用户中心
           </Link>
           <Link
             href="/creator"
@@ -108,8 +119,8 @@ export function AppHeader({ initialQuery = "", demoLabel = "本地演示" }: App
           <Link className="productSubmitAction" href="/creator/submissions/new">
             ＋ 投稿
           </Link>
-          <Link className="productLoginAction" href="/login">
-            登录
+          <Link className="productLoginAction" href="/login" title={signedIn ? "查看或退出当前会话" : "登录文化账户"}>
+            {signedIn ? "已登录" : "登录"}
           </Link>
         </nav>
       </div>

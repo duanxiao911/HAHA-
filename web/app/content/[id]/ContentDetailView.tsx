@@ -15,6 +15,13 @@ import { ProductFrame } from "@/components/community/ProductFrame";
 import { StateNotice } from "@/components/community/StateNotice";
 import { TrustBadge } from "@/components/community/TrustBadge";
 import {
+  hasAccessToken,
+  initializeAuthSession,
+  recordUserCenterHistory,
+  setUserCenterFollow,
+  setUserCenterLibrary,
+} from "@/lib/api";
+import {
   CommunityDataError,
   type ReactionKind,
   type TimedKnowledgeAnnotation,
@@ -78,9 +85,20 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
     historyRecordedFor.current = content.id;
     let cancelled = false;
     setBusyAction("history");
-    void actions.recordWatchHistory(content.id, 0)
+    let authenticated = false;
+    void initializeAuthSession().then((signedIn) => {
+      authenticated = signedIn;
+      const operations: Promise<unknown>[] = [actions.recordWatchHistory(content.id, 0)];
+      if (signedIn) operations.push(
+        recordUserCenterHistory(content.id, content.title, `/content/${encodeURIComponent(content.id)}`, 0, content.durationSeconds ?? 0),
+      );
+      return Promise.all(operations);
+    })
       .then(() => {
-        if (!cancelled) setFeedback({ kind: "success", message: "已记录到当前浏览器的本地观看历史。" });
+        if (!cancelled) setFeedback({
+          kind: "success",
+          message: authenticated ? "观看历史已同步到文化账户。" : "观看历史已保存在此浏览器；登录后可跨设备同步。",
+        });
       })
       .catch((error: unknown) => {
         if (!cancelled) setFeedback({ kind: "error", message: `观看历史记录失败：${describeError(error)}` });
@@ -117,6 +135,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
   }
 
   const sourcesById = new Map(snapshot.sources.map((source) => [source.id, source]));
+  const contentTitle = content.title;
   const projects = snapshot.projects.filter((project) => content.projectIds.includes(project.id));
   const relatedPersonIds = new Set([content.creatorId, ...content.personIds]);
   const people = snapshot.people.filter((person) => relatedPersonIds.has(person.id));
@@ -148,8 +167,14 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
   function changeReaction(reaction: ReactionKind, active: boolean, label: string): void {
     void runWrite(
       `reaction-${reaction}`,
-      () => actions.setReaction(contentId, reaction, active),
-      `${active ? "已" : "已取消"}${label}；状态只保存在当前浏览器。`,
+      async () => {
+        await actions.setReaction(contentId, reaction, active);
+        if (reaction !== "respect" && hasAccessToken()) await setUserCenterLibrary(
+          reaction, contentId, contentTitle,
+          `/content/${encodeURIComponent(contentId)}`, active,
+        );
+      },
+      `${active ? "已" : "已取消"}${label}${reaction === "respect" || !hasAccessToken() ? "（本机互动）" : "并同步到文化账户"}。`,
     );
   }
 
@@ -223,8 +248,12 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
               aria-label="体验媒体播放演示"
               onClick={() => void runWrite(
                 "media-preview",
-                () => actions.recordWatchHistory(content.id, Math.min(10, content.durationSeconds ?? 10)),
-                "已体验媒体演示并更新本地观看进度；当前没有接入真实视频流。",
+                async () => {
+                  const progress = Math.min(10, content.durationSeconds ?? 10);
+                  await actions.recordWatchHistory(content.id, progress);
+                  if (hasAccessToken()) await recordUserCenterHistory(content.id, content.title, `/content/${encodeURIComponent(content.id)}`, progress, content.durationSeconds ?? 0);
+                },
+                "媒体演示进度已同步到文化账户；当前没有接入真实视频流。",
               )}
             >
               ▶
@@ -247,8 +276,12 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
               aria-pressed={content.viewer.followedCreator}
               onClick={() => void runWrite(
                 "follow",
-                () => actions.setPersonFollow(content.creatorId, !content.viewer.followedCreator),
-                `${content.viewer.followedCreator ? "已取消关注" : "已关注"}；状态只保存在当前浏览器。`,
+                async () => {
+                  const active = !content.viewer.followedCreator;
+                  await actions.setPersonFollow(content.creatorId, active);
+                  if (hasAccessToken()) await setUserCenterFollow(content.creatorId, content.creator.displayName, `/inheritors/${encodeURIComponent(content.creatorId)}`, active);
+                },
+                `${content.viewer.followedCreator ? "已取消关注" : "已关注"}${hasAccessToken() ? "并同步到文化账户" : "（本机互动）"}。`,
               )}
             >
               {busyAction === "follow" ? "处理中…" : content.viewer.followedCreator ? "已关注" : "关注"}

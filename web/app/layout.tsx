@@ -7,6 +7,7 @@ import "./design-system.css";
 import "./community-v2.css";
 import "./community-product.css";
 import "./product-pages.css";
+import "./identity-center.css";
 import { CommunityProvider } from "@/lib/community";
 
 export const metadata: Metadata = {

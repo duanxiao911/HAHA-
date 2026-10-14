@@ -101,6 +101,11 @@ services:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     ports:
       - "127.0.0.1:13000:3000"
+    environment:
+      HAHA_INTERNAL_API_URL: http://api:8000
+      HAHA_ENVIRONMENT: staging
+      HAHA_COOKIE_SECURE: "true"
+      HAHA_REFRESH_TOKEN_TTL_SECONDS: ${HAHA_REFRESH_TOKEN_TTL_SECONDS:-604800}
     depends_on:
       api:
         condition: service_healthy
@@ -112,13 +117,14 @@ services:
       dockerfile: Dockerfile.api
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
-    command: ["python", "-m", "haha_api.staging_bootstrap"]
+    command: ["python", "scripts/bootstrap_internal_account.py", "--user-id", "staging-owner", "--workspace-id", "staging", "--email", "staging-owner@haha.local", "--role", "owner"]
     profiles: ["tools"]
     environment:
       DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
       HAHA_JWT_SECRET: ${HAHA_JWT_SECRET:?set HAHA_JWT_SECRET}
       HAHA_JWT_ISSUER: ${HAHA_JWT_ISSUER:-haha-auth}
       HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
+      HAHA_BOOTSTRAP_PASSWORD: ${HAHA_BOOTSTRAP_PASSWORD:?set HAHA_BOOTSTRAP_PASSWORD}
     depends_on:
       migrate:
         condition: service_completed_successfully

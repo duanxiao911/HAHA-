@@ -3,11 +3,14 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from haha_api.main import create_app
+from haha_auth.domain import AuthSession
 from haha_core.domain import RunStatus
 from haha_core.repository import SQLiteCreatorRepository
 from haha_core.service import CreatorService
@@ -17,12 +20,23 @@ def _client(repository: SQLiteCreatorRepository | None = None) -> TestClient:
     return TestClient(create_app(repository or SQLiteCreatorRepository(":memory:")))
 
 
-def _jwt(secret: str, *, workspace_id: str = "ws_a", role: str = "owner") -> str:
+def _jwt(
+    secret: str, repository: SQLiteCreatorRepository, *,
+    workspace_id: str = "ws_a", role: str = "owner",
+    session_workspace_id: str | None = None,
+) -> str:
     encode = lambda value: base64.urlsafe_b64encode(  # noqa: E731
         json.dumps(value, separators=(",", ":")).encode()
     ).rstrip(b"=").decode()
     header = encode({"alg": "HS256", "typ": "JWT"})
-    payload = encode({"sub": "user_a", "workspace_id": workspace_id, "role": role, "iss": "haha-auth", "aud": "haha-api", "exp": int(time.time()) + 300})
+    session_id = f"session_{uuid4().hex}"
+    now = datetime.now(UTC)
+    repository.save_auth_session(AuthSession(
+        id=session_id, user_id="user_a", workspace_id=session_workspace_id or workspace_id,
+        refresh_token_hash="test-only", expires_at=(now + timedelta(minutes=5)).isoformat(),
+        revoked_at="", created_at=now.isoformat(), last_used_at=now.isoformat(),
+    ))
+    payload = encode({"sub": "user_a", "workspace_id": workspace_id, "role": role, "sid": session_id, "iss": "haha-auth", "aud": "haha-api", "exp": int(time.time()) + 300})
     signature = base64.urlsafe_b64encode(
         hmac.new(secret.encode(), f"{header}.{payload}".encode(), hashlib.sha256).digest()
     ).rstrip(b"=").decode()
@@ -107,7 +121,7 @@ def test_run_event_stream_enforces_workspace_boundary(monkeypatch) -> None:
     repository.ensure_identity("user_a", "ws_a", role="owner")
     repository.ensure_identity("user_a", "ws_b", role="owner")
     client = _client(repository)
-    token_a = _jwt(secret, workspace_id="ws_a")
+    token_a = _jwt(secret, repository, workspace_id="ws_a")
     project = client.post(
         "/api/projects",
         headers={"Authorization": f"Bearer {token_a}"},
@@ -115,7 +129,7 @@ def test_run_event_stream_enforces_workspace_boundary(monkeypatch) -> None:
     ).json()
     denied = client.get(
         "/api/runs/run_missing/events",
-        headers={"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_b')}"},
+        headers={"Authorization": f"Bearer {_jwt(secret, repository, workspace_id='ws_b')}"},
     )
     assert denied.status_code == 404
 
@@ -141,7 +155,7 @@ def test_run_event_stream_enforces_workspace_boundary(monkeypatch) -> None:
     ).json()
     cross_workspace = client.get(
         f"/api/runs/{run['id']}/events?timeout_seconds=1",
-        headers={"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_b')}"},
+        headers={"Authorization": f"Bearer {_jwt(secret, repository, workspace_id='ws_b')}"},
     )
     assert cross_workspace.status_code == 403
 
@@ -205,7 +219,7 @@ def test_viewer_cannot_cancel_run(monkeypatch) -> None:
 
     response = client.post(
         f"/api/runs/{run.id}/cancel",
-        headers={"Authorization": f"Bearer {_jwt(secret)}"},
+        headers={"Authorization": f"Bearer {_jwt(secret, repository)}"},
     )
 
     assert response.status_code == 403
@@ -271,17 +285,17 @@ def test_jwt_auth_and_workspace_boundary(monkeypatch) -> None:
     assert invalid.status_code == 401
     allowed = client.post(
         "/api/projects",
-        headers={"Authorization": f"Bearer {_jwt(secret)}", "X-Workspace-ID": "spoofed"},
+        headers={"Authorization": f"Bearer {_jwt(secret, repository)}", "X-Workspace-ID": "spoofed"},
         json={"title": "项目"},
     )
     assert allowed.status_code == 201
     assert allowed.json()["workspace_id"] == "ws_a"
     cross_workspace = client.post(
         "/api/projects",
-        headers={"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_b')}"},
+        headers={"Authorization": f"Bearer {_jwt(secret, repository, workspace_id='ws_b', session_workspace_id='ws_a')}"},
         json={"title": "越权项目"},
     )
-    assert cross_workspace.status_code == 403
+    assert cross_workspace.status_code == 401
 
 
 def test_viewer_cannot_write(monkeypatch) -> None:
@@ -293,7 +307,7 @@ def test_viewer_cannot_write(monkeypatch) -> None:
     client = _client(repository)
     response = client.post(
         "/api/projects",
-        headers={"Authorization": f"Bearer {_jwt(secret, role='owner')}"},
+        headers={"Authorization": f"Bearer {_jwt(secret, repository, role='owner')}"},
         json={"title": "项目"},
     )
     assert response.status_code == 403
@@ -382,7 +396,7 @@ def test_failed_job_api_is_workspace_scoped_and_retry_is_bounded(
     job_a = _record_failed_job(repository, workspace_id="ws_a", key="api-failed-a")
     job_b = _record_failed_job(repository, workspace_id="ws_b", key="api-failed-b")
     client = _client(repository)
-    auth_a = {"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_a')}"}
+    auth_a = {"Authorization": f"Bearer {_jwt(secret, repository, workspace_id='ws_a')}"}
 
     listed = client.get("/api/failed-jobs", headers=auth_a)
     assert listed.status_code == 200
@@ -409,7 +423,7 @@ def test_failed_job_api_allows_viewers_to_list_but_not_mutate(monkeypatch) -> No
     repository.ensure_identity("user_a", "ws_a", role="viewer")
     job_id = _record_failed_job(repository, workspace_id="ws_a", key="api-viewer-failed")
     client = _client(repository)
-    auth = {"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_a')}"}
+    auth = {"Authorization": f"Bearer {_jwt(secret, repository, workspace_id='ws_a')}"}
 
     assert client.get("/api/failed-jobs", headers=auth).status_code == 200
     assert client.post(f"/api/failed-jobs/{job_id}/retry", headers=auth).status_code == 403
@@ -424,7 +438,7 @@ def test_failed_job_resolve_api_is_idempotent(monkeypatch) -> None:
     repository.ensure_identity("user_a", "ws_a", role="owner")
     job_id = _record_failed_job(repository, workspace_id="ws_a", key="api-resolve-failed")
     client = _client(repository)
-    auth = {"Authorization": f"Bearer {_jwt(secret, workspace_id='ws_a')}"}
+    auth = {"Authorization": f"Bearer {_jwt(secret, repository, workspace_id='ws_a')}"}
 
     first = client.post(f"/api/failed-jobs/{job_id}/resolve", headers=auth)
     second = client.post(f"/api/failed-jobs/{job_id}/resolve", headers=auth)
