@@ -206,6 +206,7 @@ jobs:
       HAHA_ALLOW_DEV_AUTH: "false"
       HAHA_JWT_SECRET: ci-only-g3-jwt-secret-with-more-than-32-characters
       HAHA_G3_E2E_PASSWORD: ci-only-g3-account-password-2026
+      HAHA_G4_E2E_PASSWORD: ci-only-g4-account-password-2026
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -223,6 +224,13 @@ jobs:
           api python scripts/bootstrap_internal_account.py
           --user-id g3-e2e-user --workspace-id g3-e2e
           --email g3-e2e@haha.local --role owner
+      - name: Bootstrap G4 CI-only internal account
+        run: >-
+          docker compose run --rm
+          -e HAHA_BOOTSTRAP_PASSWORD="$HAHA_G4_E2E_PASSWORD"
+          api python scripts/bootstrap_internal_account.py
+          --user-id g4-e2e-user --workspace-id g4-e2e
+          --email g4-e2e@haha.local --role owner
       - name: Wait for API and web readiness
         shell: bash
         run: |
@@ -237,19 +245,21 @@ jobs:
           exit 1
       - name: Run G3 browser-session acceptance
         run: python scripts/e2e_browser_session_g3.py
-      - name: Capture G3 service logs on failure
+      - name: Run G4 multi-role workbench acceptance
+        run: python scripts/e2e_role_workbench_g4.py
+      - name: Capture secure-account service logs on failure
         if: failure()
         shell: bash
         run: |
-          mkdir -p artifacts/e2e/browser-session-g3
-          docker compose logs --no-color --tail=300 > artifacts/e2e/browser-session-g3/docker-compose.log
-      - name: Upload G3 evidence
+          mkdir -p artifacts/e2e
+          docker compose logs --no-color --tail=300 > artifacts/e2e/docker-compose.log
+      - name: Upload secure-account evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-session-g3-evidence
-          path: artifacts/e2e/browser-session-g3
+          name: secure-account-e2e-evidence
+          path: artifacts/e2e
           if-no-files-found: error
-      - name: Stop the G3 local stack
+      - name: Stop the secure-account local stack
         if: always()
         run: docker compose down --volumes

@@ -257,6 +257,34 @@ export type UserCenterSnapshot = IdentitySnapshot & {
   today: { continue_watching: UserCenterSnapshot["history"][number] | null; next_learning: UserCenterLibraryItem | null; open_tasks: number; unread_notifications: number };
 };
 
+export type WorkbenchSnapshot = {
+  role: BusinessRole;
+  label: string;
+  headline: string;
+  description: string;
+  maturity: "operational" | "partial" | "blocked";
+  metrics: { key: string; label: string; value: number }[];
+  capabilities: {
+    key: string;
+    label: string;
+    description: string;
+    status: "available" | "limited" | "blocked";
+    href: string;
+    action_label: string;
+    reason: string;
+  }[];
+  resources: {
+    id: string;
+    kind: string;
+    title: string;
+    subtitle: string;
+    href: string;
+    status: string;
+  }[];
+  tasks: IdentityTask[];
+  boundary_note: string;
+};
+
 export async function createProject(title: string): Promise<{ id: string }> {
   return request("/api/projects", {
     method: "POST",
@@ -354,6 +382,9 @@ export async function completeIdentityTask(taskId: string): Promise<IdentityTask
 
 export async function getUserCenter(): Promise<UserCenterSnapshot> {
   return request("/api/user-center", { headers: headers() });
+}
+export async function getIdentityWorkbench(): Promise<WorkbenchSnapshot> {
+  return request("/api/identity/workbench", { headers: headers() });
 }
 export async function updateUserCenterProfile(payload: UserCenterSnapshot["account"]): Promise<UserCenterSnapshot> {
   return request("/api/user-center/profile", { method: "PATCH", headers: headers(), body: JSON.stringify(payload) });

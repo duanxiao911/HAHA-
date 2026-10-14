@@ -10,7 +10,7 @@ HAHA 飞颐是采用 Next.js、FastAPI、PostgreSQL、Redis 与 Dramatiq 构建�
 
 - 非遗内容社区：首页频道、热门内容、地域探索与文化地图入口
 - 社区发现闭环：内容详情、可信来源、搜索、收藏、想学、历史、关注、评论与消息
-- 身份与文化成长中心：同账户多身份、服务端授权切换、身份申请、持久化任务与权限审计
+- 身份与文化成长中心：同账户多身份、服务端授权切换、身份申请、身份专属工作台、持久化任务与权限审计
 - 内容关系网络：非遗项目、演示人物、地区、专题、活动与内容互相跳转
 - AI 创作工作台：以对话方式生成图文或视频内容方案
 - 模型路由：支持本地演示、自动选择与 DeepSeek 文本模型
@@ -159,6 +159,12 @@ HttpOnly/SameSite Cookie；所有变更请求校验同源 Origin 与 CSRF Token�
 会话。设计见 [`docs/architecture/browser-session-gate-g3.md`](docs/architecture/browser-session-gate-g3.md)，
 真实环境证据见 `docs/reports/2026-10-14_browser-session-g3/`。G3 仍只面向内部测试与受控展示，
 没有执行独立 Production Readiness Gate，也不代表 Production Candidate。
+
+Multi-role Workbench G4 在 G3 安全会话之上增加服务端权威的当前身份工作台。浏览者、学习者、
+创作者和买家可以看到由真实文化资产、观看记录、身份任务与创作项目聚合的指标和恢复入口；
+客户端不能通过角色参数伪造管理员工作台。尚未接入的 AI 学习、知识稿件、电商交易与统一审核
+能力会明确显示为 `blocked`，不生成虚构订单、收入或学习成果。架构契约见
+[`docs/architecture/multi-role-workbench-g4.md`](docs/architecture/multi-role-workbench-g4.md)。
 
 ## 项目结构
 

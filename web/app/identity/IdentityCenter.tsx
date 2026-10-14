@@ -7,11 +7,12 @@ import { StateNotice } from "@/components/community/StateNotice";
 import {
   activateBusinessRole, applyForBusinessRole, AUTH_REQUIRED, BusinessRole, clearUserCenterHistory,
   completeIdentityTask, getUserCenter, markUserCenterNotificationRead,
+  getIdentityWorkbench,
   getAuthSessionSnapshot, getServerAuthSessionSnapshot, initializeAuthSession,
   listAccountSessions, logoutAccount, revokeAccountSession, revokeAllAccountSessions,
   setUserCenterLibrary, subscribeAuthSession,
   switchIdentityContext, updateUserCenterPreferences,
-  updateUserCenterProfile, AccountSession, UserCenterSnapshot,
+  updateUserCenterProfile, AccountSession, UserCenterSnapshot, WorkbenchSnapshot,
 } from "@/lib/api";
 
 type CenterView = "today" | "archive" | "identity" | "tasks" | "settings";
@@ -22,6 +23,8 @@ const roleDescriptions: Record<BusinessRole, string> = {
   contributor: "提交来源、知识纠错和文化资料。", seller: "管理店铺、商品、库存与订单。",
   reviewer: "处理内容、来源与身份审核。", admin: "管理授权、风险与审计。",
 };
+const capabilityLabels = { available: "可使用", limited: "有限可用", blocked: "尚未接入" } as const;
+const maturityLabels = { operational: "可运行", partial: "部分打通", blocked: "依赖后续模块" } as const;
 const formatError = (cause: unknown) => cause instanceof Error ? cause.message : "操作失败，请稍后重试。";
 
 export function IdentityCenter() {
@@ -31,6 +34,7 @@ export function IdentityCenter() {
   const needsLogin = AUTH_REQUIRED && authState === "anonymous";
   const canLoad = !AUTH_REQUIRED || authState === "authenticated";
   const [snapshot, setSnapshot] = useState<UserCenterSnapshot | null>(null);
+  const [workbench, setWorkbench] = useState<WorkbenchSnapshot | null>(null);
   const [view, setView] = useState<CenterView>("today");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -46,15 +50,22 @@ export function IdentityCenter() {
   const load = useCallback(async () => {
     if (!canLoad) return;
     setError("");
-    try { const value = await getUserCenter(); setSnapshot(value); setAccount(value.account); setPreferences(value.preferences); }
+    try {
+      const [value, workbenchValue] = await Promise.all([
+        getUserCenter(), getIdentityWorkbench(),
+      ]);
+      setSnapshot(value); setWorkbench(workbenchValue);
+      setAccount(value.account); setPreferences(value.preferences);
+    }
     catch (cause) { setError(formatError(cause)); }
   }, [canLoad]);
   useEffect(() => {
     if (!canLoad) return;
     let active = true;
-    void getUserCenter().then((value) => {
+    void Promise.all([getUserCenter(), getIdentityWorkbench()]).then(([value, workbenchValue]) => {
       if (!active) return;
-      setSnapshot(value); setAccount(value.account); setPreferences(value.preferences);
+      setSnapshot(value); setWorkbench(workbenchValue);
+      setAccount(value.account); setPreferences(value.preferences);
     }).catch((cause: unknown) => { if (active) setError(formatError(cause)); });
     return () => { active = false; };
   }, [canLoad]);
@@ -75,10 +86,10 @@ export function IdentityCenter() {
   }
   if (AUTH_REQUIRED && authState === "unknown") return <ProductFrame><StateNotice kind="loading" title="正在验证安全会话" description="令牌由同源服务端安全保存，浏览器脚本不可读取。" /></ProductFrame>;
   if (needsLogin) return <ProductFrame><StateNotice kind="empty" title="请先登录文化账户" description="用户中心保存身份、隐私偏好与个人文化资产，需要有效的内部测试账户会话。" actionLabel="前往登录" actionHref="/login" /></ProductFrame>;
-  if (!snapshot) return <ProductFrame>{error ? <StateNotice kind="error" title="用户中心 API 暂不可用" description={error} actionLabel="重新连接" onAction={() => void load()} /> : <StateNotice kind="loading" title="正在加载文化账户" description="正在读取身份、文化资产、消息与偏好。" />}</ProductFrame>;
+  if (!snapshot || !workbench) return <ProductFrame>{error ? <StateNotice kind="error" title="用户中心 API 暂不可用" description={error} actionLabel="重新连接" onAction={() => void load()} /> : <StateNotice kind="loading" title="正在加载文化账户" description="正在读取身份、文化资产、消息、工作台与偏好。" />}</ProductFrame>;
   const activeRole = snapshot.profile.active_role;
 
-  return <ProductFrame className="identityCenterFrame" mainClassName="identityCenterPage" demoLabel="安全账户 G3">
+  return <ProductFrame className="identityCenterFrame" mainClassName="identityCenterPage" demoLabel="身份工作台 G4">
     <section className="identityHero" data-testid="user-center-hero"><div><small>HAHA CULTURAL ACCOUNT</small><h1>{snapshot.account.display_name}的文化账户</h1><p>一个账户连接内容、学习、创作与未来的交易服务；数据由服务端按用户和工作空间隔离保存。</p></div><div className="identityCurrentRole"><span>当前身份</span><strong>{roleLabels[activeRole]}</strong><small>{snapshot.account.region || "尚未设置地区"} · {snapshot.account.profile_visibility === "private" ? "仅自己可见" : snapshot.account.profile_visibility === "members" ? "成员可见" : "公开"}</small></div></section>
     <nav className="identityViewNav" aria-label="用户中心视图">{([['today','今日'],['archive','文化资产'],['identity','身份与工作台'],['tasks',`消息与任务 ${snapshot.summary.unread_notifications + snapshot.summary.open_tasks}`],['settings','设置']] as [CenterView,string][]).map(([key,label]) => <button type="button" key={key} className={view === key ? "active" : ""} aria-pressed={view === key} onClick={() => setView(key)}>{label}</button>)}</nav>
     {error ? <div className="identityAlert" role="alert">{error}</div> : null}
@@ -87,7 +98,18 @@ export function IdentityCenter() {
 
     {view === "archive" ? <section className="identityMainPanel" data-testid="user-center-archive"><div className="identitySectionHeading"><div><small>DURABLE CULTURAL ASSETS</small><h2>文化资产</h2><p>收藏、想学与稍后看已保存到服务端，可跨页面和设备恢复。</p></div></div>{snapshot.library.length ? <ul className="identityTaskList">{snapshot.library.map((item) => <li key={item.id}><div><span>{item.kind === "bookmark" ? "收藏" : item.kind === "want_to_learn" ? "想学" : "稍后看"}</span><h3>{item.title}</h3></div><div><Link className="productButtonQuiet" href={item.target_href || "/"}>打开</Link><button className="productButtonSecondary" type="button" onClick={() => void run(`remove-${item.id}`, () => setUserCenterLibrary(item.kind, item.target_id, item.title, item.target_href, false), "已移除。")}>移除</button></div></li>)}</ul> : <StateNotice kind="empty" title="文化资产还是空的" description="在内容详情页收藏、加入想学或稍后看，都会同步到这里。" />}<div className="identitySectionHeading"><div><h2>观看历史</h2><p>关闭历史记录后不会继续写入。</p></div>{snapshot.history.length ? <button className="productButtonSecondary" type="button" onClick={() => void run("clear-history", async () => { await clearUserCenterHistory(); }, "观看历史已清空。")}>清空历史</button> : null}</div>{snapshot.history.length ? <ul className="identityTaskList">{snapshot.history.map((item) => <li key={item.id}><div><span>{item.completed ? "已看完" : "观看记录"}</span><h3>{item.title}</h3><p>{item.progress_seconds} / {item.duration_seconds || '未知'} 秒</p></div><Link className="productButtonQuiet" href={item.target_href || "/"}>继续</Link></li>)}</ul> : <p>暂无观看历史。</p>}</section> : null}
 
-    {view === "identity" ? <section className="identityMainPanel" data-testid="identity-workbench"><div className="identitySectionHeading"><div><small>ROLE CONTEXT</small><h2>身份与工作台</h2><p>切换只改变工作上下文，服务端权限不会因此扩大。</p></div></div><div className="identityRoleGrid">{snapshot.roles.filter((item) => item.status === "active").map((item) => <article className={item.role === activeRole ? "current" : ""} key={item.id}><span className="identityRoleMark">{item.label.slice(0,1)}</span><div><h3>{item.label}</h3><p>{roleDescriptions[item.role]}</p></div>{item.role === activeRole ? <b>当前身份</b> : <button type="button" disabled={Boolean(busy)} onClick={() => void run(`switch-${item.role}`, async () => { await switchIdentityContext(item.role); await load(); }, `已切换为${item.label}。`)}>切换</button>}</article>)}</div>{snapshot.available_actions.self_activate.length ? <div className="identityActionGrid">{snapshot.available_actions.self_activate.map((role) => <article key={role}><h3>开通{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButton" type="button" onClick={() => void run(`activate-${role}`, async () => { await activateBusinessRole(role); await load(); }, `${roleLabels[role]}已开通。`)}>开通身份</button></article>)}</div> : null}{snapshot.available_actions.apply.length ? <div className="identityActionGrid">{snapshot.available_actions.apply.map((role) => <article key={role}><h3>申请{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButtonSecondary" type="button" onClick={() => setApplyRole(role)}>申请审核</button></article>)}</div> : null}</section> : null}
+    {view === "identity" ? <section className="identityMainPanel" data-testid="identity-workbench">
+      <div className="identitySectionHeading"><div><small>ACTIVE ROLE WORKBENCH</small><h2>{workbench.label}工作台</h2><p>{workbench.headline}。{workbench.description}</p></div><span className={`identityMaturity is-${workbench.maturity}`}>{maturityLabels[workbench.maturity]}</span></div>
+      <div className="identityWorkbenchMetrics" data-testid="workbench-metrics">{workbench.metrics.map((metric) => <div key={metric.key}><b>{metric.value}</b><span>{metric.label}</span></div>)}</div>
+      <div className="identityCapabilityGrid" data-testid="workbench-capabilities">{workbench.capabilities.map((capability) => <article className={`is-${capability.status}`} key={capability.key}><div><span>{capabilityLabels[capability.status]}</span><h3>{capability.label}</h3><p>{capability.description}</p>{capability.reason ? <small>{capability.reason}</small> : null}</div>{capability.href && capability.action_label ? <Link className={capability.status === "available" ? "productButton" : "productButtonSecondary"} href={capability.href}>{capability.action_label}</Link> : <b>等待真实业务接入</b>}</article>)}</div>
+      {workbench.resources.length ? <><div className="identitySectionHeading"><div><small>RESTORABLE WORK</small><h2>可继续的工作</h2><p>以下条目来自当前账户或工作空间的服务端持久状态。</p></div></div><ul className="identityTaskList" data-testid="workbench-resources">{workbench.resources.map((resource) => <li key={`${resource.kind}-${resource.id}`}><div><span>{resource.subtitle}</span><h3>{resource.title}</h3><p>{resource.status}</p></div><Link className="productButtonQuiet" href={resource.href}>继续</Link></li>)}</ul></> : <StateNotice kind="empty" title={`还没有${workbench.label}工作记录`} description="完成第一个真实任务后，可恢复的项目或文化资产会显示在这里。" />}
+      <div className="identityBoundaryNote"><strong>能力边界</strong><p>{workbench.boundary_note}</p></div>
+
+      <div className="identitySectionHeading"><div><small>ROLE CONTEXT</small><h2>切换身份</h2><p>切换只改变工作上下文，服务端权限不会因此扩大。</p></div></div>
+      <div className="identityRoleGrid">{snapshot.roles.filter((item) => item.status === "active").map((item) => <article className={item.role === activeRole ? "current" : ""} key={item.id}><span className="identityRoleMark">{item.label.slice(0,1)}</span><div><h3>{item.label}</h3><p>{roleDescriptions[item.role]}</p></div>{item.role === activeRole ? <b>当前身份</b> : <button type="button" disabled={Boolean(busy)} onClick={() => void run(`switch-${item.role}`, async () => { await switchIdentityContext(item.role); await load(); }, `已切换为${item.label}。`)}>切换</button>}</article>)}</div>
+      {snapshot.available_actions.self_activate.length ? <><div className="identitySectionHeading"><div><h2>开通基础身份</h2><p>学习者和创作者可由本人开通，但不会获得管理权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.self_activate.map((role) => <article key={role}><h3>开通{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButton" type="button" onClick={() => void run(`activate-${role}`, async () => { await activateBusinessRole(role); await load(); }, `${roleLabels[role]}已开通。`)}>开通身份</button></article>)}</div></> : null}
+      {snapshot.available_actions.apply.length ? <><div className="identitySectionHeading"><div><h2>申请受控身份</h2><p>贡献者和卖家须进入审核，提交申请不会自动获得权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.apply.map((role) => <article key={role}><h3>申请{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButtonSecondary" type="button" onClick={() => setApplyRole(role)}>申请审核</button></article>)}</div></> : null}
+    </section> : null}
 
     {view === "tasks" ? <section className="identityMainPanel" data-testid="user-center-inbox"><div className="identitySectionHeading"><div><small>INBOX & TASKS</small><h2>消息与任务</h2><p>系统消息与身份任务均为服务端持久状态。</p></div></div>{snapshot.notifications.length ? <ul className="identityTaskList">{snapshot.notifications.map((item) => <li className={item.read_at ? "completed" : "open"} key={item.id}><div><span>{item.read_at ? "已读" : "未读"} · {item.kind}</span><h3>{item.title}</h3><p>{item.body}</p></div>{!item.read_at ? <button className="productButtonSecondary" type="button" onClick={() => void run(`read-${item.id}`, async () => { await markUserCenterNotificationRead(item.id); }, "消息已读。")}>标记已读</button> : null}</li>)}</ul> : <p>没有系统消息。</p>}{snapshot.tasks.length ? <ul className="identityTaskList">{snapshot.tasks.map((task) => <li className={task.status} key={task.id}><div><span>{roleLabels[task.role]} · {task.kind}</span><h3>{task.title}</h3><p>{task.description}</p></div>{task.status === "open" ? <button className="productButtonSecondary" type="button" onClick={() => void run(`task-${task.id}`, async () => { await completeIdentityTask(task.id); }, "任务已完成。")}>标记完成</button> : <b>已完成</b>}</li>)}</ul> : null}</section> : null}
 

@@ -1,6 +1,7 @@
 from haha_core.repository import CreatorRepository
 from haha_core.service import CreatorService
 from haha_core.sqlalchemy_repository import SQLAlchemyCreatorRepository
+from haha_user_center.service import UserCenterService
 
 
 def test_sqlalchemy_repository_runs_the_same_creator_contract() -> None:
@@ -32,3 +33,18 @@ def test_sqlalchemy_repository_runs_the_same_creator_contract() -> None:
     completed = service.execute_run(run.id)
     assert completed.status.value == "PASSED"
     assert repository.get_script_for_run(run.id) is not None
+
+
+def test_sqlalchemy_repository_bootstraps_user_center_idempotently() -> None:
+    repository = SQLAlchemyCreatorRepository(
+        "sqlite+pysqlite:///:memory:", create_schema=True
+    )
+    repository.ensure_identity("user-center-user", "user-center-workspace", role="owner")
+    service = UserCenterService(repository)
+
+    first = service.bootstrap("user-center-user", "user-center-workspace")
+    second = service.bootstrap("user-center-user", "user-center-workspace")
+
+    assert first["profile"]["active_role"] == "viewer"
+    assert second["profile"]["active_role"] == "viewer"
+    assert len(repository.list_user_notifications("user-center-user", "user-center-workspace")) == 1

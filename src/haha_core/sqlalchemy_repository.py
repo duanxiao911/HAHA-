@@ -22,6 +22,8 @@ from sqlalchemy import (
     or_,
     select,
 )
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
@@ -73,7 +75,8 @@ memberships = Table(
 )
 
 auth_credentials = Table(
-    "auth_credentials", metadata,
+    "auth_credentials",
+    metadata,
     Column("user_id", String(200), ForeignKey("users.id"), primary_key=True),
     Column("workspace_id", String(100), ForeignKey("workspaces.id"), primary_key=True),
     Column("email", String(320), nullable=False),
@@ -89,7 +92,8 @@ auth_credentials = Table(
 )
 
 auth_sessions = Table(
-    "auth_sessions", metadata,
+    "auth_sessions",
+    metadata,
     Column("id", String(64), primary_key=True),
     Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
     Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
@@ -101,7 +105,8 @@ auth_sessions = Table(
 )
 
 auth_audit_events = Table(
-    "auth_audit_events", metadata,
+    "auth_audit_events",
+    metadata,
     Column("id", String(64), primary_key=True),
     Column("user_id", String(200), nullable=False, index=True),
     Column("workspace_id", String(100), nullable=False, index=True),
@@ -182,7 +187,8 @@ identity_audit_events = Table(
 )
 
 user_center_settings = Table(
-    "user_center_settings", metadata,
+    "user_center_settings",
+    metadata,
     Column("user_id", String(200), ForeignKey("users.id"), primary_key=True),
     Column("workspace_id", String(100), ForeignKey("workspaces.id"), primary_key=True),
     Column("bio", String(300), nullable=False, server_default=""),
@@ -196,7 +202,8 @@ user_center_settings = Table(
 )
 
 user_library_items = Table(
-    "user_library_items", metadata,
+    "user_library_items",
+    metadata,
     Column("id", String(64), primary_key=True),
     Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
     Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
@@ -210,7 +217,8 @@ user_library_items = Table(
 )
 
 user_follows = Table(
-    "user_follows", metadata,
+    "user_follows",
+    metadata,
     Column("id", String(64), primary_key=True),
     Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
     Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
@@ -223,7 +231,8 @@ user_follows = Table(
 )
 
 user_watch_history = Table(
-    "user_watch_history", metadata,
+    "user_watch_history",
+    metadata,
     Column("id", String(64), primary_key=True),
     Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
     Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
@@ -239,7 +248,8 @@ user_watch_history = Table(
 )
 
 user_notifications = Table(
-    "user_notifications", metadata,
+    "user_notifications",
+    metadata,
     Column("id", String(64), primary_key=True),
     Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
     Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
@@ -252,7 +262,8 @@ user_notifications = Table(
 )
 
 user_center_audit_events = Table(
-    "user_center_audit_events", metadata,
+    "user_center_audit_events",
+    metadata,
     Column("id", String(64), primary_key=True),
     Column("user_id", String(200), nullable=False, index=True),
     Column("workspace_id", String(100), nullable=False, index=True),
@@ -302,7 +313,9 @@ runs = Table(
     Column("lease_until", String(40), nullable=False, server_default=""),
     Column("heartbeat_at", String(40), nullable=False, server_default=""),
     Column("lock_version", Integer, nullable=False, server_default="0"),
-    UniqueConstraint("workspace_id", "project_id", "idempotency_key", name="uq_run_idempotency_scope"),
+    UniqueConstraint(
+        "workspace_id", "project_id", "idempotency_key", name="uq_run_idempotency_scope"
+    ),
 )
 
 script_versions = Table(
@@ -345,6 +358,68 @@ class SQLAlchemyCreatorRepository:
         if create_schema:
             metadata.create_all(self.engine)
 
+    @staticmethod
+    def _insert_ignore(
+        connection: Any,
+        table: Table,
+        values: dict[str, Any],
+        conflict_columns: list[str],
+    ) -> None:
+        """Insert once without racing concurrent bootstrap requests."""
+        index_elements = [getattr(table.c, column) for column in conflict_columns]
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                postgresql_insert(table)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=index_elements)
+            )
+            return
+        if connection.dialect.name == "sqlite":
+            connection.execute(
+                sqlite_insert(table)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=index_elements)
+            )
+            return
+        criteria = [
+            getattr(table.c, column) == values[column] for column in conflict_columns
+        ]
+        if connection.scalar(select(func.count()).select_from(table).where(*criteria)) == 0:
+            connection.execute(table.insert().values(**values))
+
+    @staticmethod
+    def _upsert(
+        connection: Any,
+        table: Table,
+        values: dict[str, Any],
+        conflict_columns: list[str],
+        update_columns: list[str],
+    ) -> None:
+        """Atomically persist mutable user state on PostgreSQL and SQLite."""
+        index_elements = [getattr(table.c, column) for column in conflict_columns]
+        update_values = {column: values[column] for column in update_columns}
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                postgresql_insert(table)
+                .values(**values)
+                .on_conflict_do_update(index_elements=index_elements, set_=update_values)
+            )
+            return
+        if connection.dialect.name == "sqlite":
+            connection.execute(
+                sqlite_insert(table)
+                .values(**values)
+                .on_conflict_do_update(index_elements=index_elements, set_=update_values)
+            )
+            return
+        criteria = [
+            getattr(table.c, column) == values[column] for column in conflict_columns
+        ]
+        if connection.scalar(select(func.count()).select_from(table).where(*criteria)):
+            connection.execute(table.update().where(*criteria).values(**update_values))
+        else:
+            connection.execute(table.insert().values(**values))
+
     def save_project(self, project: Project) -> None:
         with self.engine.begin() as connection:
             connection.execute(projects.insert().values(**asdict(project)))
@@ -354,7 +429,12 @@ class SQLAlchemyCreatorRepository:
             return connection.scalar(select(1)) == 1
 
     def ensure_identity(
-        self, user_id: str, workspace_id: str, *, role: str, email: str = "",
+        self,
+        user_id: str,
+        workspace_id: str,
+        *,
+        role: str,
+        email: str = "",
         workspace_name: str = "",
     ) -> None:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
@@ -396,60 +476,86 @@ class SQLAlchemyCreatorRepository:
 
     def get_auth_credential(self, email: str, workspace_id: str) -> AuthCredential | None:
         with self.engine.connect() as connection:
-            row = connection.execute(select(auth_credentials).where(
-                auth_credentials.c.email == email,
-                auth_credentials.c.workspace_id == workspace_id,
-            )).mappings().first()
+            row = (
+                connection.execute(
+                    select(auth_credentials).where(
+                        auth_credentials.c.email == email,
+                        auth_credentials.c.workspace_id == workspace_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
         return AuthCredential(**row) if row else None
 
     def save_auth_credential(self, credential: AuthCredential) -> None:
         values = asdict(credential)
         with self.engine.begin() as connection:
-            exists = connection.scalar(select(auth_credentials.c.user_id).where(
-                auth_credentials.c.user_id == credential.user_id,
-                auth_credentials.c.workspace_id == credential.workspace_id,
-            ))
-            query = auth_credentials.update().where(
-                auth_credentials.c.user_id == credential.user_id,
-                auth_credentials.c.workspace_id == credential.workspace_id,
-            ) if exists else auth_credentials.insert()
+            exists = connection.scalar(
+                select(auth_credentials.c.user_id).where(
+                    auth_credentials.c.user_id == credential.user_id,
+                    auth_credentials.c.workspace_id == credential.workspace_id,
+                )
+            )
+            query = (
+                auth_credentials.update().where(
+                    auth_credentials.c.user_id == credential.user_id,
+                    auth_credentials.c.workspace_id == credential.workspace_id,
+                )
+                if exists
+                else auth_credentials.insert()
+            )
             connection.execute(query.values(**values))
 
     def get_auth_session(self, session_id: str) -> AuthSession | None:
         with self.engine.connect() as connection:
-            row = connection.execute(select(auth_sessions).where(
-                auth_sessions.c.id == session_id
-            )).mappings().first()
+            row = (
+                connection.execute(select(auth_sessions).where(auth_sessions.c.id == session_id))
+                .mappings()
+                .first()
+            )
         return AuthSession(**row) if row else None
 
     def list_auth_sessions(self, user_id: str, workspace_id: str) -> list[AuthSession]:
         with self.engine.connect() as connection:
-            rows = connection.execute(select(auth_sessions).where(
-                auth_sessions.c.user_id == user_id,
-                auth_sessions.c.workspace_id == workspace_id,
-            ).order_by(auth_sessions.c.created_at.desc())).mappings().all()
+            rows = (
+                connection.execute(
+                    select(auth_sessions)
+                    .where(
+                        auth_sessions.c.user_id == user_id,
+                        auth_sessions.c.workspace_id == workspace_id,
+                    )
+                    .order_by(auth_sessions.c.created_at.desc())
+                )
+                .mappings()
+                .all()
+            )
         return [AuthSession(**row) for row in rows]
 
     def save_auth_session(self, session: AuthSession) -> None:
         values = asdict(session)
         with self.engine.begin() as connection:
-            exists = connection.scalar(select(auth_sessions.c.id).where(
-                auth_sessions.c.id == session.id
-            ))
-            query = auth_sessions.update().where(
-                auth_sessions.c.id == session.id
-            ) if exists else auth_sessions.insert()
+            exists = connection.scalar(
+                select(auth_sessions.c.id).where(auth_sessions.c.id == session.id)
+            )
+            query = (
+                auth_sessions.update().where(auth_sessions.c.id == session.id)
+                if exists
+                else auth_sessions.insert()
+            )
             connection.execute(query.values(**values))
 
     def rotate_auth_session(self, session: AuthSession, expected_hash: str) -> bool:
         """Atomically consume one refresh secret and install its replacement."""
         with self.engine.begin() as connection:
             result = connection.execute(
-                auth_sessions.update().where(
+                auth_sessions.update()
+                .where(
                     auth_sessions.c.id == session.id,
                     auth_sessions.c.refresh_token_hash == expected_hash,
                     auth_sessions.c.revoked_at == "",
-                ).values(
+                )
+                .values(
                     refresh_token_hash=session.refresh_token_hash,
                     expires_at=session.expires_at,
                     revoked_at=session.revoked_at,
@@ -462,23 +568,29 @@ class SQLAlchemyCreatorRepository:
         self, session_id: str, user_id: str, workspace_id: str, revoked_at: str
     ) -> bool:
         with self.engine.begin() as connection:
-            result = connection.execute(auth_sessions.update().where(
-                auth_sessions.c.id == session_id,
-                auth_sessions.c.user_id == user_id,
-                auth_sessions.c.workspace_id == workspace_id,
-                auth_sessions.c.revoked_at == "",
-            ).values(revoked_at=revoked_at, last_used_at=revoked_at))
+            result = connection.execute(
+                auth_sessions.update()
+                .where(
+                    auth_sessions.c.id == session_id,
+                    auth_sessions.c.user_id == user_id,
+                    auth_sessions.c.workspace_id == workspace_id,
+                    auth_sessions.c.revoked_at == "",
+                )
+                .values(revoked_at=revoked_at, last_used_at=revoked_at)
+            )
         return result.rowcount == 1
 
-    def revoke_all_auth_sessions(
-        self, user_id: str, workspace_id: str, revoked_at: str
-    ) -> int:
+    def revoke_all_auth_sessions(self, user_id: str, workspace_id: str, revoked_at: str) -> int:
         with self.engine.begin() as connection:
-            result = connection.execute(auth_sessions.update().where(
-                auth_sessions.c.user_id == user_id,
-                auth_sessions.c.workspace_id == workspace_id,
-                auth_sessions.c.revoked_at == "",
-            ).values(revoked_at=revoked_at, last_used_at=revoked_at))
+            result = connection.execute(
+                auth_sessions.update()
+                .where(
+                    auth_sessions.c.user_id == user_id,
+                    auth_sessions.c.workspace_id == workspace_id,
+                    auth_sessions.c.revoked_at == "",
+                )
+                .values(revoked_at=revoked_at, last_used_at=revoked_at)
+            )
         return result.rowcount
 
     def save_auth_audit_event(self, event: AuthAuditEvent) -> None:
@@ -489,26 +601,30 @@ class SQLAlchemyCreatorRepository:
     def ensure_user_profile(self, user_id: str, workspace_id: str) -> UserProfile:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with self.engine.begin() as connection:
-            row = connection.execute(
-                select(user_profiles).where(
-                    user_profiles.c.user_id == user_id,
-                    user_profiles.c.workspace_id == workspace_id,
-                )
-            ).mappings().first()
-            if not row:
+            self._insert_ignore(
+                connection,
+                user_profiles,
+                {
+                    "user_id": user_id,
+                    "workspace_id": workspace_id,
+                    "display_name": user_id,
+                    "active_role": "viewer",
+                    "personalization_enabled": 0,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                ["user_id", "workspace_id"],
+            )
+            row = (
                 connection.execute(
-                    user_profiles.insert().values(
-                        user_id=user_id, workspace_id=workspace_id,
-                        display_name=user_id, active_role="viewer",
-                        personalization_enabled=0, created_at=now, updated_at=now,
-                    )
-                )
-                row = connection.execute(
                     select(user_profiles).where(
                         user_profiles.c.user_id == user_id,
                         user_profiles.c.workspace_id == workspace_id,
                     )
-                ).mappings().one()
+                )
+                .mappings()
+                .one()
+            )
         payload = dict(row)
         payload["personalization_enabled"] = bool(payload["personalization_enabled"])
         return UserProfile(**payload)
@@ -517,96 +633,199 @@ class SQLAlchemyCreatorRepository:
         values = asdict(profile)
         values["personalization_enabled"] = int(profile.personalization_enabled)
         with self.engine.begin() as connection:
-            exists = connection.scalar(select(user_profiles.c.user_id).where(
-                user_profiles.c.user_id == profile.user_id,
-                user_profiles.c.workspace_id == profile.workspace_id,
-            ))
-            if exists:
-                connection.execute(user_profiles.update().where(
-                    user_profiles.c.user_id == profile.user_id,
-                    user_profiles.c.workspace_id == profile.workspace_id,
-                ).values(**values))
-            else:
-                connection.execute(user_profiles.insert().values(**values))
+            self._upsert(
+                connection,
+                user_profiles,
+                values,
+                ["user_id", "workspace_id"],
+                [
+                    "display_name",
+                    "active_role",
+                    "personalization_enabled",
+                    "updated_at",
+                ],
+            )
 
     def list_role_grants(self, user_id: str, workspace_id: str) -> list[RoleGrant]:
         with self.engine.connect() as connection:
-            rows = connection.execute(select(role_grants).where(
-                role_grants.c.user_id == user_id,
-                role_grants.c.workspace_id == workspace_id,
-            ).order_by(role_grants.c.created_at)).mappings().all()
-        return [RoleGrant(**{**row, "scope_json": json.dumps(row["scope_json"], ensure_ascii=False, sort_keys=True)}) for row in rows]
+            rows = (
+                connection.execute(
+                    select(role_grants)
+                    .where(
+                        role_grants.c.user_id == user_id,
+                        role_grants.c.workspace_id == workspace_id,
+                    )
+                    .order_by(role_grants.c.created_at)
+                )
+                .mappings()
+                .all()
+            )
+        return [
+            RoleGrant(
+                **{
+                    **row,
+                    "scope_json": json.dumps(row["scope_json"], ensure_ascii=False, sort_keys=True),
+                }
+            )
+            for row in rows
+        ]
 
     def save_role_grant(self, grant: RoleGrant) -> None:
         values = asdict(grant)
         values["scope_json"] = json.loads(grant.scope_json)
         with self.engine.begin() as connection:
-            existing_id = connection.scalar(select(role_grants.c.id).where(
-                role_grants.c.user_id == grant.user_id,
-                role_grants.c.workspace_id == grant.workspace_id,
-                role_grants.c.role == grant.role,
-            ))
+            update_values = {
+                "status": grant.status,
+                "scope_json": values["scope_json"],
+                "granted_by": grant.granted_by,
+                "revoked_at": grant.revoked_at,
+            }
+            conflict_columns = [
+                role_grants.c.user_id,
+                role_grants.c.workspace_id,
+                role_grants.c.role,
+            ]
+            if connection.dialect.name == "postgresql":
+                connection.execute(
+                    postgresql_insert(role_grants)
+                    .values(**values)
+                    .on_conflict_do_update(
+                        index_elements=conflict_columns,
+                        set_=update_values,
+                    )
+                )
+                return
+            if connection.dialect.name == "sqlite":
+                connection.execute(
+                    sqlite_insert(role_grants)
+                    .values(**values)
+                    .on_conflict_do_update(
+                        index_elements=conflict_columns,
+                        set_=update_values,
+                    )
+                )
+                return
+            existing_id = connection.scalar(
+                select(role_grants.c.id).where(
+                    role_grants.c.user_id == grant.user_id,
+                    role_grants.c.workspace_id == grant.workspace_id,
+                    role_grants.c.role == grant.role,
+                )
+            )
             if existing_id:
-                connection.execute(role_grants.update().where(role_grants.c.id == existing_id).values(**values))
+                connection.execute(
+                    role_grants.update().where(role_grants.c.id == existing_id).values(**values)
+                )
             else:
                 connection.execute(role_grants.insert().values(**values))
 
     def get_role_application(self, application_id: str) -> RoleApplication | None:
         with self.engine.connect() as connection:
-            row = connection.execute(select(role_applications).where(role_applications.c.id == application_id)).mappings().first()
+            row = (
+                connection.execute(
+                    select(role_applications).where(role_applications.c.id == application_id)
+                )
+                .mappings()
+                .first()
+            )
         return RoleApplication(**row) if row else None
 
-    def find_pending_role_application(self, user_id: str, workspace_id: str, role: str) -> RoleApplication | None:
+    def find_pending_role_application(
+        self, user_id: str, workspace_id: str, role: str
+    ) -> RoleApplication | None:
         with self.engine.connect() as connection:
-            row = connection.execute(select(role_applications).where(
-                role_applications.c.user_id == user_id,
-                role_applications.c.workspace_id == workspace_id,
-                role_applications.c.role == role,
-                role_applications.c.status == "pending",
-            ).order_by(role_applications.c.created_at.desc()).limit(1)).mappings().first()
+            row = (
+                connection.execute(
+                    select(role_applications)
+                    .where(
+                        role_applications.c.user_id == user_id,
+                        role_applications.c.workspace_id == workspace_id,
+                        role_applications.c.role == role,
+                        role_applications.c.status == "pending",
+                    )
+                    .order_by(role_applications.c.created_at.desc())
+                    .limit(1)
+                )
+                .mappings()
+                .first()
+            )
         return RoleApplication(**row) if row else None
 
     def list_role_applications(self, user_id: str, workspace_id: str) -> list[RoleApplication]:
         with self.engine.connect() as connection:
-            rows = connection.execute(select(role_applications).where(
-                role_applications.c.user_id == user_id,
-                role_applications.c.workspace_id == workspace_id,
-            ).order_by(role_applications.c.created_at.desc())).mappings().all()
+            rows = (
+                connection.execute(
+                    select(role_applications)
+                    .where(
+                        role_applications.c.user_id == user_id,
+                        role_applications.c.workspace_id == workspace_id,
+                    )
+                    .order_by(role_applications.c.created_at.desc())
+                )
+                .mappings()
+                .all()
+            )
         return [RoleApplication(**row) for row in rows]
 
     def save_role_application(self, application: RoleApplication) -> None:
         values = asdict(application)
         with self.engine.begin() as connection:
-            exists = connection.scalar(select(role_applications.c.id).where(role_applications.c.id == application.id))
+            exists = connection.scalar(
+                select(role_applications.c.id).where(role_applications.c.id == application.id)
+            )
             if exists:
-                connection.execute(role_applications.update().where(role_applications.c.id == application.id).values(**values))
+                connection.execute(
+                    role_applications.update()
+                    .where(role_applications.c.id == application.id)
+                    .values(**values)
+                )
             else:
                 connection.execute(role_applications.insert().values(**values))
 
     def save_identity_task(self, task: IdentityTask) -> None:
         values = asdict(task)
         with self.engine.begin() as connection:
-            exists = connection.scalar(select(identity_tasks.c.id).where(identity_tasks.c.id == task.id))
+            exists = connection.scalar(
+                select(identity_tasks.c.id).where(identity_tasks.c.id == task.id)
+            )
             if exists:
-                connection.execute(identity_tasks.update().where(identity_tasks.c.id == task.id).values(**values))
+                connection.execute(
+                    identity_tasks.update().where(identity_tasks.c.id == task.id).values(**values)
+                )
             else:
                 connection.execute(identity_tasks.insert().values(**values))
 
     def list_identity_tasks(self, user_id: str, workspace_id: str) -> list[IdentityTask]:
         with self.engine.connect() as connection:
-            rows = connection.execute(select(identity_tasks).where(
-                identity_tasks.c.user_id == user_id,
-                identity_tasks.c.workspace_id == workspace_id,
-            ).order_by(identity_tasks.c.status.desc(), identity_tasks.c.created_at.desc())).mappings().all()
+            rows = (
+                connection.execute(
+                    select(identity_tasks)
+                    .where(
+                        identity_tasks.c.user_id == user_id,
+                        identity_tasks.c.workspace_id == workspace_id,
+                    )
+                    .order_by(identity_tasks.c.status.desc(), identity_tasks.c.created_at.desc())
+                )
+                .mappings()
+                .all()
+            )
         return [IdentityTask(**row) for row in rows]
 
-    def get_identity_task(self, task_id: str, user_id: str, workspace_id: str) -> IdentityTask | None:
+    def get_identity_task(
+        self, task_id: str, user_id: str, workspace_id: str
+    ) -> IdentityTask | None:
         with self.engine.connect() as connection:
-            row = connection.execute(select(identity_tasks).where(
-                identity_tasks.c.id == task_id,
-                identity_tasks.c.user_id == user_id,
-                identity_tasks.c.workspace_id == workspace_id,
-            )).mappings().first()
+            row = (
+                connection.execute(
+                    select(identity_tasks).where(
+                        identity_tasks.c.id == task_id,
+                        identity_tasks.c.user_id == user_id,
+                        identity_tasks.c.workspace_id == workspace_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
         return IdentityTask(**row) if row else None
 
     def save_identity_audit_event(self, event: IdentityAuditEvent) -> None:
@@ -615,26 +834,36 @@ class SQLAlchemyCreatorRepository:
         with self.engine.begin() as connection:
             connection.execute(identity_audit_events.insert().values(**values))
 
-    def ensure_user_center_settings(
-        self, user_id: str, workspace_id: str
-    ) -> UserCenterSettings:
+    def ensure_user_center_settings(self, user_id: str, workspace_id: str) -> UserCenterSettings:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with self.engine.begin() as connection:
-            row = connection.execute(select(user_center_settings).where(
-                user_center_settings.c.user_id == user_id,
-                user_center_settings.c.workspace_id == workspace_id,
-            )).mappings().first()
-            if not row:
-                connection.execute(user_center_settings.insert().values(
-                    user_id=user_id, workspace_id=workspace_id, bio="", region="",
-                    profile_visibility="private", history_enabled=1,
-                    recommendation_enabled=1, notification_enabled=1,
-                    created_at=now, updated_at=now,
-                ))
-                row = connection.execute(select(user_center_settings).where(
-                    user_center_settings.c.user_id == user_id,
-                    user_center_settings.c.workspace_id == workspace_id,
-                )).mappings().one()
+            self._insert_ignore(
+                connection,
+                user_center_settings,
+                {
+                    "user_id": user_id,
+                    "workspace_id": workspace_id,
+                    "bio": "",
+                    "region": "",
+                    "profile_visibility": "private",
+                    "history_enabled": 1,
+                    "recommendation_enabled": 1,
+                    "notification_enabled": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                ["user_id", "workspace_id"],
+            )
+            row = (
+                connection.execute(
+                    select(user_center_settings).where(
+                        user_center_settings.c.user_id == user_id,
+                        user_center_settings.c.workspace_id == workspace_id,
+                    )
+                )
+                .mappings()
+                .one()
+            )
         payload = dict(row)
         for key in ("history_enabled", "recommendation_enabled", "notification_enabled"):
             payload[key] = bool(payload[key])
@@ -645,148 +874,226 @@ class SQLAlchemyCreatorRepository:
         for key in ("history_enabled", "recommendation_enabled", "notification_enabled"):
             values[key] = int(values[key])
         with self.engine.begin() as connection:
-            exists = connection.scalar(select(user_center_settings.c.user_id).where(
-                user_center_settings.c.user_id == settings.user_id,
-                user_center_settings.c.workspace_id == settings.workspace_id,
-            ))
-            query = user_center_settings.update().where(
-                user_center_settings.c.user_id == settings.user_id,
-                user_center_settings.c.workspace_id == settings.workspace_id,
-            ) if exists else user_center_settings.insert()
-            connection.execute(query.values(**values))
+            self._upsert(
+                connection,
+                user_center_settings,
+                values,
+                ["user_id", "workspace_id"],
+                [
+                    "bio",
+                    "region",
+                    "profile_visibility",
+                    "history_enabled",
+                    "recommendation_enabled",
+                    "notification_enabled",
+                    "updated_at",
+                ],
+            )
 
     def list_library_items(self, user_id: str, workspace_id: str) -> list[LibraryItem]:
         with self.engine.connect() as connection:
-            rows = connection.execute(select(user_library_items).where(
-                user_library_items.c.user_id == user_id,
-                user_library_items.c.workspace_id == workspace_id,
-            ).order_by(user_library_items.c.updated_at.desc())).mappings().all()
+            rows = (
+                connection.execute(
+                    select(user_library_items)
+                    .where(
+                        user_library_items.c.user_id == user_id,
+                        user_library_items.c.workspace_id == workspace_id,
+                    )
+                    .order_by(user_library_items.c.updated_at.desc())
+                )
+                .mappings()
+                .all()
+            )
         return [LibraryItem(**row) for row in rows]
 
     def save_library_item(self, item: LibraryItem) -> None:
         values = asdict(item)
         with self.engine.begin() as connection:
-            existing = connection.scalar(select(user_library_items.c.id).where(
-                user_library_items.c.user_id == item.user_id,
-                user_library_items.c.workspace_id == item.workspace_id,
-                user_library_items.c.kind == item.kind,
-                user_library_items.c.target_id == item.target_id,
-            ))
-            query = user_library_items.update().where(
-                user_library_items.c.id == existing
-            ) if existing else user_library_items.insert()
+            existing = connection.scalar(
+                select(user_library_items.c.id).where(
+                    user_library_items.c.user_id == item.user_id,
+                    user_library_items.c.workspace_id == item.workspace_id,
+                    user_library_items.c.kind == item.kind,
+                    user_library_items.c.target_id == item.target_id,
+                )
+            )
+            query = (
+                user_library_items.update().where(user_library_items.c.id == existing)
+                if existing
+                else user_library_items.insert()
+            )
             connection.execute(query.values(**values))
 
-    def delete_library_item(self, user_id: str, workspace_id: str, kind: str, target_id: str) -> None:
+    def delete_library_item(
+        self, user_id: str, workspace_id: str, kind: str, target_id: str
+    ) -> None:
         with self.engine.begin() as connection:
-            connection.execute(user_library_items.delete().where(
-                user_library_items.c.user_id == user_id,
-                user_library_items.c.workspace_id == workspace_id,
-                user_library_items.c.kind == kind,
-                user_library_items.c.target_id == target_id,
-            ))
+            connection.execute(
+                user_library_items.delete().where(
+                    user_library_items.c.user_id == user_id,
+                    user_library_items.c.workspace_id == workspace_id,
+                    user_library_items.c.kind == kind,
+                    user_library_items.c.target_id == target_id,
+                )
+            )
 
     def list_user_follows(self, user_id: str, workspace_id: str) -> list[UserFollow]:
         with self.engine.connect() as connection:
-            rows = connection.execute(select(user_follows).where(
-                user_follows.c.user_id == user_id,
-                user_follows.c.workspace_id == workspace_id,
-            ).order_by(user_follows.c.updated_at.desc())).mappings().all()
+            rows = (
+                connection.execute(
+                    select(user_follows)
+                    .where(
+                        user_follows.c.user_id == user_id,
+                        user_follows.c.workspace_id == workspace_id,
+                    )
+                    .order_by(user_follows.c.updated_at.desc())
+                )
+                .mappings()
+                .all()
+            )
         return [UserFollow(**row) for row in rows]
 
     def save_user_follow(self, follow: UserFollow) -> None:
         values = asdict(follow)
         with self.engine.begin() as connection:
-            existing = connection.scalar(select(user_follows.c.id).where(
-                user_follows.c.user_id == follow.user_id,
-                user_follows.c.workspace_id == follow.workspace_id,
-                user_follows.c.target_id == follow.target_id,
-            ))
-            query = user_follows.update().where(
-                user_follows.c.id == existing
-            ) if existing else user_follows.insert()
+            existing = connection.scalar(
+                select(user_follows.c.id).where(
+                    user_follows.c.user_id == follow.user_id,
+                    user_follows.c.workspace_id == follow.workspace_id,
+                    user_follows.c.target_id == follow.target_id,
+                )
+            )
+            query = (
+                user_follows.update().where(user_follows.c.id == existing)
+                if existing
+                else user_follows.insert()
+            )
             connection.execute(query.values(**values))
 
     def delete_user_follow(self, user_id: str, workspace_id: str, target_id: str) -> None:
         with self.engine.begin() as connection:
-            connection.execute(user_follows.delete().where(
-                user_follows.c.user_id == user_id,
-                user_follows.c.workspace_id == workspace_id,
-                user_follows.c.target_id == target_id,
-            ))
+            connection.execute(
+                user_follows.delete().where(
+                    user_follows.c.user_id == user_id,
+                    user_follows.c.workspace_id == workspace_id,
+                    user_follows.c.target_id == target_id,
+                )
+            )
 
     def list_watch_history(self, user_id: str, workspace_id: str) -> list[WatchHistoryItem]:
         with self.engine.connect() as connection:
-            rows = connection.execute(select(user_watch_history).where(
-                user_watch_history.c.user_id == user_id,
-                user_watch_history.c.workspace_id == workspace_id,
-            ).order_by(user_watch_history.c.viewed_at.desc())).mappings().all()
+            rows = (
+                connection.execute(
+                    select(user_watch_history)
+                    .where(
+                        user_watch_history.c.user_id == user_id,
+                        user_watch_history.c.workspace_id == workspace_id,
+                    )
+                    .order_by(user_watch_history.c.viewed_at.desc())
+                )
+                .mappings()
+                .all()
+            )
         return [WatchHistoryItem(**{**row, "completed": bool(row["completed"])}) for row in rows]
 
     def save_watch_history(self, item: WatchHistoryItem) -> None:
         values = {**asdict(item), "completed": int(item.completed)}
         with self.engine.begin() as connection:
-            existing = connection.scalar(select(user_watch_history.c.id).where(
-                user_watch_history.c.user_id == item.user_id,
-                user_watch_history.c.workspace_id == item.workspace_id,
-                user_watch_history.c.content_id == item.content_id,
-            ))
-            query = user_watch_history.update().where(
-                user_watch_history.c.id == existing
-            ) if existing else user_watch_history.insert()
+            existing = connection.scalar(
+                select(user_watch_history.c.id).where(
+                    user_watch_history.c.user_id == item.user_id,
+                    user_watch_history.c.workspace_id == item.workspace_id,
+                    user_watch_history.c.content_id == item.content_id,
+                )
+            )
+            query = (
+                user_watch_history.update().where(user_watch_history.c.id == existing)
+                if existing
+                else user_watch_history.insert()
+            )
             connection.execute(query.values(**values))
 
     def delete_watch_history_item(self, user_id: str, workspace_id: str, content_id: str) -> None:
         with self.engine.begin() as connection:
-            connection.execute(user_watch_history.delete().where(
-                user_watch_history.c.user_id == user_id,
-                user_watch_history.c.workspace_id == workspace_id,
-                user_watch_history.c.content_id == content_id,
-            ))
+            connection.execute(
+                user_watch_history.delete().where(
+                    user_watch_history.c.user_id == user_id,
+                    user_watch_history.c.workspace_id == workspace_id,
+                    user_watch_history.c.content_id == content_id,
+                )
+            )
 
     def clear_watch_history(self, user_id: str, workspace_id: str) -> int:
         with self.engine.begin() as connection:
-            result = connection.execute(user_watch_history.delete().where(
-                user_watch_history.c.user_id == user_id,
-                user_watch_history.c.workspace_id == workspace_id,
-            ))
+            result = connection.execute(
+                user_watch_history.delete().where(
+                    user_watch_history.c.user_id == user_id,
+                    user_watch_history.c.workspace_id == workspace_id,
+                )
+            )
             return max(0, result.rowcount)
 
     def list_user_notifications(self, user_id: str, workspace_id: str) -> list[UserNotification]:
         with self.engine.connect() as connection:
-            rows = connection.execute(select(user_notifications).where(
-                user_notifications.c.user_id == user_id,
-                user_notifications.c.workspace_id == workspace_id,
-            ).order_by(user_notifications.c.created_at.desc())).mappings().all()
+            rows = (
+                connection.execute(
+                    select(user_notifications)
+                    .where(
+                        user_notifications.c.user_id == user_id,
+                        user_notifications.c.workspace_id == workspace_id,
+                    )
+                    .order_by(user_notifications.c.created_at.desc())
+                )
+                .mappings()
+                .all()
+            )
         return [UserNotification(**row) for row in rows]
 
-    def get_user_notification(self, notification_id: str, user_id: str, workspace_id: str) -> UserNotification | None:
+    def get_user_notification(
+        self, notification_id: str, user_id: str, workspace_id: str
+    ) -> UserNotification | None:
         with self.engine.connect() as connection:
-            row = connection.execute(select(user_notifications).where(
-                user_notifications.c.id == notification_id,
-                user_notifications.c.user_id == user_id,
-                user_notifications.c.workspace_id == workspace_id,
-            )).mappings().first()
+            row = (
+                connection.execute(
+                    select(user_notifications).where(
+                        user_notifications.c.id == notification_id,
+                        user_notifications.c.user_id == user_id,
+                        user_notifications.c.workspace_id == workspace_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
         return UserNotification(**row) if row else None
 
     def save_user_notification(self, notification: UserNotification) -> None:
         values = asdict(notification)
         with self.engine.begin() as connection:
-            exists = connection.scalar(select(user_notifications.c.id).where(
-                user_notifications.c.id == notification.id
-            ))
-            query = user_notifications.update().where(
-                user_notifications.c.id == notification.id
-            ) if exists else user_notifications.insert()
-            connection.execute(query.values(**values))
+            self._upsert(
+                connection,
+                user_notifications,
+                values,
+                ["id"],
+                [
+                    "kind",
+                    "title",
+                    "body",
+                    "target_href",
+                    "read_at",
+                ],
+            )
 
-    def delete_user_notification(self, notification_id: str, user_id: str, workspace_id: str) -> None:
+    def delete_user_notification(
+        self, notification_id: str, user_id: str, workspace_id: str
+    ) -> None:
         with self.engine.begin() as connection:
-            connection.execute(user_notifications.delete().where(
-                user_notifications.c.id == notification_id,
-                user_notifications.c.user_id == user_id,
-                user_notifications.c.workspace_id == workspace_id,
-            ))
+            connection.execute(
+                user_notifications.delete().where(
+                    user_notifications.c.id == notification_id,
+                    user_notifications.c.user_id == user_id,
+                    user_notifications.c.workspace_id == workspace_id,
+                )
+            )
 
     def save_user_center_audit_event(self, event: UserCenterAuditEvent) -> None:
         values = {**asdict(event), "detail_json": json.loads(event.detail_json)}
@@ -795,8 +1102,27 @@ class SQLAlchemyCreatorRepository:
 
     def get_project(self, project_id: str) -> Project | None:
         with self.engine.connect() as connection:
-            row = connection.execute(select(projects).where(projects.c.id == project_id)).mappings().first()
+            row = (
+                connection.execute(select(projects).where(projects.c.id == project_id))
+                .mappings()
+                .first()
+            )
         return Project(**row) if row else None
+
+    def list_projects(self, workspace_id: str, *, limit: int = 20) -> list[Project]:
+        safe_limit = max(1, min(limit, 100))
+        with self.engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    select(projects)
+                    .where(projects.c.workspace_id == workspace_id)
+                    .order_by(projects.c.updated_at.desc(), projects.c.id.desc())
+                    .limit(safe_limit)
+                )
+                .mappings()
+                .all()
+            )
+        return [Project(**row) for row in rows]
 
     def next_brief_version(self, project_id: str) -> int:
         with self.engine.connect() as connection:
@@ -832,9 +1158,11 @@ class SQLAlchemyCreatorRepository:
 
     def get_brief(self, brief_id: str) -> BriefVersion | None:
         with self.engine.connect() as connection:
-            row = connection.execute(
-                select(brief_versions).where(brief_versions.c.id == brief_id)
-            ).mappings().first()
+            row = (
+                connection.execute(select(brief_versions).where(brief_versions.c.id == brief_id))
+                .mappings()
+                .first()
+            )
         if not row:
             return None
         return BriefVersion(
@@ -872,9 +1200,7 @@ class SQLAlchemyCreatorRepository:
                 if exists:
                     statement = runs.update().where(runs.c.id == run.id)
                     if run.status is not RunStatus.CANCELLED:
-                        statement = statement.where(
-                            runs.c.status != RunStatus.CANCELLED.value
-                        )
+                        statement = statement.where(runs.c.status != RunStatus.CANCELLED.value)
                     connection.execute(
                         statement.values(
                             status=run.status.value,
@@ -936,13 +1262,17 @@ class SQLAlchemyCreatorRepository:
         self, workspace_id: str, project_id: str, key: str
     ) -> Run | None:
         with self.engine.connect() as connection:
-            row = connection.execute(
-                select(runs).where(
-                    runs.c.workspace_id == workspace_id,
-                    runs.c.project_id == project_id,
-                    runs.c.idempotency_key == key,
+            row = (
+                connection.execute(
+                    select(runs).where(
+                        runs.c.workspace_id == workspace_id,
+                        runs.c.project_id == project_id,
+                        runs.c.idempotency_key == key,
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         return self._to_run(row)
 
     def next_script_version(self, project_id: str) -> int:
@@ -971,9 +1301,13 @@ class SQLAlchemyCreatorRepository:
 
     def get_script_for_run(self, run_id: str) -> ScriptVersion | None:
         with self.engine.connect() as connection:
-            row = connection.execute(
-                select(script_versions).where(script_versions.c.run_id == run_id)
-            ).mappings().first()
+            row = (
+                connection.execute(
+                    select(script_versions).where(script_versions.c.run_id == run_id)
+                )
+                .mappings()
+                .first()
+            )
         if not row:
             return None
         return ScriptVersion(
@@ -1027,20 +1361,24 @@ class SQLAlchemyCreatorRepository:
         reclaimable = or_(
             runs.c.status.in_([RunStatus.PENDING.value, RunStatus.RETRYING.value]),
             (
-                runs.c.status.in_([
-                    RunStatus.CLAIMED.value,
-                    RunStatus.RUNNING.value,
-                    RunStatus.RETRIEVING.value,
-                    RunStatus.GENERATING.value,
-                    RunStatus.VALIDATING.value,
-                ])
+                runs.c.status.in_(
+                    [
+                        RunStatus.CLAIMED.value,
+                        RunStatus.RUNNING.value,
+                        RunStatus.RETRIEVING.value,
+                        RunStatus.GENERATING.value,
+                        RunStatus.VALIDATING.value,
+                    ]
+                )
                 & (runs.c.lease_until != "")
                 & (runs.c.lease_until < now_text)
             ),
         )
         with self.engine.begin() as connection:
             result = connection.execute(
-                runs.update().where(runs.c.id == run_id, reclaimable).values(
+                runs.update()
+                .where(runs.c.id == run_id, reclaimable)
+                .values(
                     status=RunStatus.CLAIMED.value,
                     claimed_by=worker_id,
                     claimed_at=now_text,
@@ -1058,15 +1396,19 @@ class SQLAlchemyCreatorRepository:
         lease_text = (now + timedelta(seconds=lease_seconds)).isoformat(timespec="milliseconds")
         with self.engine.begin() as connection:
             result = connection.execute(
-                runs.update().where(
+                runs.update()
+                .where(
                     runs.c.id == run_id,
                     runs.c.claimed_by == worker_id,
-                    runs.c.status.not_in([
-                        RunStatus.PASSED.value,
-                        RunStatus.FAILED.value,
-                        RunStatus.CANCELLED.value,
-                    ]),
-                ).values(
+                    runs.c.status.not_in(
+                        [
+                            RunStatus.PASSED.value,
+                            RunStatus.FAILED.value,
+                            RunStatus.CANCELLED.value,
+                        ]
+                    ),
+                )
+                .values(
                     heartbeat_at=now_text,
                     lease_until=lease_text,
                     updated_at=now_text,
@@ -1080,9 +1422,9 @@ class SQLAlchemyCreatorRepository:
         try:
             with self.engine.begin() as connection:
                 result = connection.execute(
-                    failed_jobs.update().where(failed_jobs.c.run_id == run_id).values(
-                        reason=reason[:4000], created_at=now, resolved_at=""
-                    )
+                    failed_jobs.update()
+                    .where(failed_jobs.c.run_id == run_id)
+                    .values(reason=reason[:4000], created_at=now, resolved_at="")
                 )
                 if result.rowcount == 0:
                     connection.execute(
@@ -1097,9 +1439,9 @@ class SQLAlchemyCreatorRepository:
         except IntegrityError:
             with self.engine.begin() as connection:
                 connection.execute(
-                    failed_jobs.update().where(failed_jobs.c.run_id == run_id).values(
-                        reason=reason[:4000], created_at=now, resolved_at=""
-                    )
+                    failed_jobs.update()
+                    .where(failed_jobs.c.run_id == run_id)
+                    .values(reason=reason[:4000], created_at=now, resolved_at="")
                 )
 
     @staticmethod
@@ -1140,28 +1482,34 @@ class SQLAlchemyCreatorRepository:
     ) -> Run | None:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with self.engine.begin() as connection:
-            row = connection.execute(
-                select(failed_jobs.c.run_id)
-                .join(runs, runs.c.id == failed_jobs.c.run_id)
-                .where(
-                    failed_jobs.c.id == failed_job_id,
-                    runs.c.workspace_id == workspace_id,
-                    failed_jobs.c.resolved_at == "",
-                    runs.c.status == RunStatus.FAILED.value,
-                    runs.c.attempt < max_attempts,
+            row = (
+                connection.execute(
+                    select(failed_jobs.c.run_id)
+                    .join(runs, runs.c.id == failed_jobs.c.run_id)
+                    .where(
+                        failed_jobs.c.id == failed_job_id,
+                        runs.c.workspace_id == workspace_id,
+                        failed_jobs.c.resolved_at == "",
+                        runs.c.status == RunStatus.FAILED.value,
+                        runs.c.attempt < max_attempts,
+                    )
+                    .with_for_update()
                 )
-                .with_for_update()
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if not row:
                 return None
             run_id = str(row["run_id"])
             run_update = connection.execute(
-                runs.update().where(
+                runs.update()
+                .where(
                     runs.c.id == run_id,
                     runs.c.workspace_id == workspace_id,
                     runs.c.status == RunStatus.FAILED.value,
                     runs.c.attempt < max_attempts,
-                ).values(
+                )
+                .values(
                     status=RunStatus.RETRYING.value,
                     attempt=runs.c.attempt + 1,
                     error_code="",
@@ -1175,29 +1523,33 @@ class SQLAlchemyCreatorRepository:
                 )
             )
             job_update = connection.execute(
-                failed_jobs.update().where(
+                failed_jobs.update()
+                .where(
                     failed_jobs.c.id == failed_job_id,
                     failed_jobs.c.resolved_at == "",
-                ).values(resolved_at=now)
+                )
+                .values(resolved_at=now)
             )
             if run_update.rowcount != 1 or job_update.rowcount != 1:
                 raise RepositoryConflictError("failed job retry conflict")
         return self.get_run(run_id)
 
-    def resolve_failed_job(
-        self, failed_job_id: str, workspace_id: str
-    ) -> FailedJob | None:
+    def resolve_failed_job(self, failed_job_id: str, workspace_id: str) -> FailedJob | None:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with self.engine.begin() as connection:
-            row = connection.execute(
-                select(failed_jobs.c.resolved_at)
-                .join(runs, runs.c.id == failed_jobs.c.run_id)
-                .where(
-                    failed_jobs.c.id == failed_job_id,
-                    runs.c.workspace_id == workspace_id,
+            row = (
+                connection.execute(
+                    select(failed_jobs.c.resolved_at)
+                    .join(runs, runs.c.id == failed_jobs.c.run_id)
+                    .where(
+                        failed_jobs.c.id == failed_job_id,
+                        runs.c.workspace_id == workspace_id,
+                    )
+                    .with_for_update()
                 )
-                .with_for_update()
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             if not row:
                 return None
             if not row["resolved_at"]:
@@ -1237,7 +1589,9 @@ class SQLAlchemyCreatorRepository:
             for row in rows:
                 if int(row["attempt"]) >= max_attempts:
                     connection.execute(
-                        runs.update().where(runs.c.id == row["id"]).values(
+                        runs.update()
+                        .where(runs.c.id == row["id"])
+                        .values(
                             status=RunStatus.FAILED.value,
                             error_code="lease_exhausted",
                             error_message="运行租约过期且已达到最大尝试次数",
@@ -1258,7 +1612,9 @@ class SQLAlchemyCreatorRepository:
                     failed.append(str(row["id"]))
                 else:
                     connection.execute(
-                        runs.update().where(runs.c.id == row["id"]).values(
+                        runs.update()
+                        .where(runs.c.id == row["id"])
+                        .values(
                             status=RunStatus.RETRYING.value,
                             attempt=runs.c.attempt + 1,
                             claimed_by="",

@@ -14,6 +14,7 @@ from haha_core.service import CreatorService
 from haha_core.sqlalchemy_repository import SQLAlchemyCreatorRepository
 from haha_identity.service import IdentityService
 from haha_user_center.service import UserCenterService
+from haha_workbench.service import WorkbenchService
 
 POSTGRES_URL = os.getenv("HAHA_TEST_POSTGRES_URL", "")
 pytestmark = pytest.mark.skipif(not POSTGRES_URL, reason="HAHA_TEST_POSTGRES_URL not configured")
@@ -89,7 +90,10 @@ def test_postgres_identity_roles_applications_and_context_are_durable(repository
     )
     assert reloaded["profile"]["active_role"] == "learner"
     assert {item["role"] for item in reloaded["roles"] if item["status"] == "active"} == {
-        "viewer", "buyer", "learner", "seller"
+        "viewer",
+        "buyer",
+        "learner",
+        "seller",
     }
     assert reloaded["applications"][0]["status"] == "approved"
 
@@ -99,16 +103,30 @@ def test_postgres_user_center_assets_preferences_and_history_are_durable(reposit
     service = UserCenterService(repository)
     service.bootstrap("center-user", "pg-workspace")
     service.update_profile(
-        "center-user", "pg-workspace", display_name="文化探索者", bio="关注传统技艺",
-        region="贵州", profile_visibility="members",
+        "center-user",
+        "pg-workspace",
+        display_name="文化探索者",
+        bio="关注传统技艺",
+        region="贵州",
+        profile_visibility="members",
     )
     service.set_library_item(
-        "center-user", "pg-workspace", kind_value="want_to_learn", target_id="content-1",
-        title="苗绣", target_href="/content/content-1", active=True,
+        "center-user",
+        "pg-workspace",
+        kind_value="want_to_learn",
+        target_id="content-1",
+        title="苗绣",
+        target_href="/content/content-1",
+        active=True,
     )
     service.record_history(
-        "center-user", "pg-workspace", content_id="content-1", title="苗绣",
-        target_href="/content/content-1", progress_seconds=9, duration_seconds=10,
+        "center-user",
+        "pg-workspace",
+        content_id="content-1",
+        title="苗绣",
+        target_href="/content/content-1",
+        progress_seconds=9,
+        duration_seconds=10,
     )
 
     reloaded = UserCenterService(SQLAlchemyCreatorRepository(POSTGRES_URL)).snapshot(
@@ -119,6 +137,48 @@ def test_postgres_user_center_assets_preferences_and_history_are_durable(reposit
     assert reloaded["summary"]["want_to_learn"] == 1
     assert reloaded["summary"]["history"] == 1
     assert reloaded["history"][0]["completed"] is True
+
+
+def test_postgres_role_workbench_uses_durable_active_context(repository) -> None:
+    creator = CreatorService(repository)
+    repository.ensure_identity("workbench-user", "pg-workspace", role="owner")
+    identity = IdentityService(repository)
+    identity.bootstrap("workbench-user", "pg-workspace")
+    identity.activate_role("workbench-user", "pg-workspace", "creator")
+    identity.switch_context("workbench-user", "pg-workspace", "creator")
+    creator.create_project(title="真实工作台项目", workspace_id="pg-workspace")
+
+    reloaded = WorkbenchService(SQLAlchemyCreatorRepository(POSTGRES_URL)).snapshot(
+        "workbench-user", "pg-workspace"
+    )
+    assert reloaded["role"] == "creator"
+    assert reloaded["resources"][0]["title"] == "真实工作台项目"
+    assert (
+        next(item for item in reloaded["capabilities"] if item["key"] == "creator_projects")[
+            "status"
+        ]
+        == "available"
+    )
+
+
+def test_postgres_parallel_workbench_bootstrap_is_idempotent(repository) -> None:
+    repository.ensure_identity("parallel-user", "pg-workspace", role="owner")
+
+    def load_workbench() -> str:
+        fresh_repository = SQLAlchemyCreatorRepository(POSTGRES_URL)
+        return str(
+            WorkbenchService(fresh_repository).snapshot("parallel-user", "pg-workspace")["role"]
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        roles = list(pool.map(lambda _: load_workbench(), range(4)))
+
+    assert roles == ["viewer"] * 4
+    grants = repository.list_role_grants("parallel-user", "pg-workspace")
+    assert {item.role for item in grants if item.status == "active"} == {
+        "viewer",
+        "buyer",
+    }
 
 
 def test_postgres_refresh_rotation_is_atomic(repository) -> None:
@@ -212,11 +272,13 @@ def test_postgres_completion_failure_rolls_back_script_and_run(repository) -> No
     )
     claimed = repository.claim_run(run.id, "worker-a")
     assert claimed is not None
-    passed = claimed.transition(RunStatus.RUNNING).transition(
-        RunStatus.RETRIEVING
-    ).transition(RunStatus.GENERATING).transition(
-        RunStatus.VALIDATING
-    ).transition(RunStatus.PASSED)
+    passed = (
+        claimed.transition(RunStatus.RUNNING)
+        .transition(RunStatus.RETRIEVING)
+        .transition(RunStatus.GENERATING)
+        .transition(RunStatus.VALIDATING)
+        .transition(RunStatus.PASSED)
+    )
     script = ScriptVersion(
         id=new_id("script"),
         project_id=project.id,
@@ -296,6 +358,7 @@ def test_postgres_failed_job_operations_are_scoped_and_atomic(repository) -> Non
     job = repository.list_failed_jobs("pg-workspace")[0]
 
     assert repository.list_failed_jobs("another-workspace") == []
+
     def retry_once():
         return repository.retry_failed_job(
             job.id, "pg-workspace", max_attempts=service.max_run_attempts

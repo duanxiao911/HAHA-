@@ -1,0 +1,443 @@
+"""Build honest, role-specific workbench projections from durable state."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from haha_identity.domain import BusinessRole
+from haha_identity.service import ROLE_LABELS
+from haha_user_center.domain import LibraryKind
+from haha_user_center.service import UserCenterService
+from haha_workbench.domain import CapabilityStatus, WorkbenchMaturity
+from haha_workbench.repository import WorkbenchRepository
+
+
+class WorkbenchPermissionError(RuntimeError):
+    """The persisted active role does not have an active server grant."""
+
+
+ROLE_COPY: dict[BusinessRole, tuple[str, str, WorkbenchMaturity, str]] = {
+    BusinessRole.VIEWER: (
+        "继续发现值得信任的非遗内容",
+        "观看、收藏、关注和稍后看使用当前账户的真实保存状态。",
+        WorkbenchMaturity.PARTIAL,
+        "社区目录仍有本地数据适配器；文化资产与观看状态已经服务端持久化。",
+    ),
+    BusinessRole.BUYER: (
+        "管理文化收藏与未来的购买旅程",
+        "当前可管理文化收藏；订单、支付和售后领域尚未接入。",
+        WorkbenchMaturity.BLOCKED,
+        "没有真实商品、订单或支付服务，因此不展示虚构交易数据。",
+    ),
+    BusinessRole.LEARNER: (
+        "整理想学内容并建立学习路径",
+        "想学清单来自服务端文化资产，可进入检索继续准备学习材料。",
+        WorkbenchMaturity.PARTIAL,
+        "AI 非遗老师、测验和成长授予将在真实模型与知识接口接入后开放。",
+    ),
+    BusinessRole.CREATOR: (
+        "从创作项目继续完成脚本与投稿",
+        "创作项目来自当前工作空间，可进入现有创作链路继续工作。",
+        WorkbenchMaturity.PARTIAL,
+        "脚本项目链路可用；真实媒体发布与创作者数据仍需后续内容 API。",
+    ),
+    BusinessRole.CONTRIBUTOR: (
+        "准备有来源的非遗知识贡献",
+        "身份与审核结果已持久化，正式知识稿件领域尚未建立。",
+        WorkbenchMaturity.PARTIAL,
+        "本阶段不会把普通收藏或模型文本伪装成已核验知识贡献。",
+    ),
+    BusinessRole.SELLER: (
+        "查看入驻身份与交易能力边界",
+        "身份申请可追踪，但店铺、商品、库存和订单尚未开发。",
+        WorkbenchMaturity.BLOCKED,
+        "未接入交易沙盒与合规支付前，不提供经营数据或正式交易入口。",
+    ),
+    BusinessRole.REVIEWER: (
+        "处理被明确授权的审核任务",
+        "当前仅有工作空间所有者可执行身份申请决策。",
+        WorkbenchMaturity.BLOCKED,
+        "内容、知识和商品审核队列尚未建立；审核员身份不会自动扩大权限。",
+    ),
+    BusinessRole.ADMIN: (
+        "管理受控的平台能力",
+        "管理员身份不能由用户自行申请或切换获得。",
+        WorkbenchMaturity.BLOCKED,
+        "平台管理、风险和审计后台尚未建立，当前不暴露占位管理操作。",
+    ),
+}
+
+
+def _capability(
+    key: str,
+    label: str,
+    description: str,
+    status: CapabilityStatus,
+    *,
+    href: str = "",
+    action_label: str = "",
+    reason: str = "",
+) -> dict[str, str]:
+    return {
+        "key": key,
+        "label": label,
+        "description": description,
+        "status": status.value,
+        "href": href,
+        "action_label": action_label,
+        "reason": reason,
+    }
+
+
+CAPABILITIES: dict[BusinessRole, tuple[dict[str, str], ...]] = {
+    BusinessRole.VIEWER: (
+        _capability(
+            "discover",
+            "发现非遗内容",
+            "浏览专题、人物与社区内容。",
+            CapabilityStatus.LIMITED,
+            href="/community",
+            action_label="去发现",
+            reason="社区内容仍含本地适配数据。",
+        ),
+        _capability(
+            "library",
+            "文化资产",
+            "查看收藏、稍后看和想学清单。",
+            CapabilityStatus.AVAILABLE,
+            href="/identity",
+            action_label="查看资产",
+        ),
+        _capability(
+            "history",
+            "观看足迹",
+            "从服务端恢复当前账户的观看进度。",
+            CapabilityStatus.AVAILABLE,
+            href="/identity",
+            action_label="继续观看",
+        ),
+    ),
+    BusinessRole.BUYER: (
+        _capability(
+            "saved_culture",
+            "文化收藏",
+            "继续整理感兴趣的内容与项目。",
+            CapabilityStatus.AVAILABLE,
+            href="/identity",
+            action_label="查看收藏",
+        ),
+        _capability(
+            "orders",
+            "订单与履约",
+            "查看订单、物流和收货状态。",
+            CapabilityStatus.BLOCKED,
+            reason="电商订单领域尚未接入。",
+        ),
+        _capability(
+            "after_sales",
+            "售后服务",
+            "退款、退货和售后进度。",
+            CapabilityStatus.BLOCKED,
+            reason="尚无交易沙盒和售后状态机。",
+        ),
+    ),
+    BusinessRole.LEARNER: (
+        _capability(
+            "learning_list",
+            "想学清单",
+            "查看服务端保存的学习候选内容。",
+            CapabilityStatus.AVAILABLE,
+            href="/identity",
+            action_label="查看想学",
+        ),
+        _capability(
+            "heritage_search",
+            "非遗检索",
+            "检索项目、人物和文化内容。",
+            CapabilityStatus.AVAILABLE,
+            href="/search",
+            action_label="开始检索",
+        ),
+        _capability(
+            "ai_tutor",
+            "AI 非遗老师",
+            "带来源解释、知识卡片与测验。",
+            CapabilityStatus.BLOCKED,
+            reason="等待真实模型 API、知识检索与学习评测接入。",
+        ),
+    ),
+    BusinessRole.CREATOR: (
+        _capability(
+            "creator_projects",
+            "创作项目",
+            "进入真实脚本项目和运行链路。",
+            CapabilityStatus.AVAILABLE,
+            href="/creator",
+            action_label="进入创作台",
+        ),
+        _capability(
+            "submission",
+            "内容投稿",
+            "准备社区投稿资料。",
+            CapabilityStatus.LIMITED,
+            href="/creator/submissions/new",
+            action_label="准备投稿",
+            reason="投稿界面已存在，正式内容发布 API 尚未闭环。",
+        ),
+        _capability(
+            "creator_analytics",
+            "创作数据",
+            "查看发布后的播放与互动表现。",
+            CapabilityStatus.BLOCKED,
+            reason="等待真实内容与互动 API。",
+        ),
+    ),
+    BusinessRole.CONTRIBUTOR: (
+        _capability(
+            "application",
+            "身份与任务",
+            "查看贡献者身份和相关待办。",
+            CapabilityStatus.AVAILABLE,
+            href="/identity",
+            action_label="查看任务",
+        ),
+        _capability(
+            "source_dossier",
+            "来源资料提交",
+            "提交声明、来源和证据材料。",
+            CapabilityStatus.BLOCKED,
+            reason="知识稿件与来源版本领域将在下一垂直切片实现。",
+        ),
+        _capability(
+            "corrections",
+            "知识纠错",
+            "对现有条目发起可审计纠错。",
+            CapabilityStatus.BLOCKED,
+            reason="可信知识条目与审核队列尚未接入。",
+        ),
+    ),
+    BusinessRole.SELLER: (
+        _capability(
+            "application",
+            "入驻状态",
+            "查看卖家身份申请与审核结果。",
+            CapabilityStatus.AVAILABLE,
+            href="/identity",
+            action_label="查看申请",
+        ),
+        _capability(
+            "catalog",
+            "商品与库存",
+            "管理商品草稿、审核和库存。",
+            CapabilityStatus.BLOCKED,
+            reason="电商领域尚未建立。",
+        ),
+        _capability(
+            "orders",
+            "经营订单",
+            "处理订单、履约与售后。",
+            CapabilityStatus.BLOCKED,
+            reason="交易沙盒尚未建立。",
+        ),
+    ),
+    BusinessRole.REVIEWER: (
+        _capability(
+            "identity_review",
+            "身份审核",
+            "由工作空间所有者处理身份申请。",
+            CapabilityStatus.LIMITED,
+            href="/review",
+            action_label="查看审核入口",
+            reason="业务审核员权限模型尚未独立接入。",
+        ),
+        _capability(
+            "moderation",
+            "内容与来源审核",
+            "处理内容、知识和商品审核队列。",
+            CapabilityStatus.BLOCKED,
+            reason="统一审核系统尚未建立。",
+        ),
+    ),
+    BusinessRole.ADMIN: (
+        _capability(
+            "platform_admin",
+            "平台管理",
+            "管理授权、风险和审计。",
+            CapabilityStatus.BLOCKED,
+            reason="平台管理后台尚未建立。",
+        ),
+    ),
+}
+
+
+class WorkbenchService:
+    def __init__(self, repository: WorkbenchRepository) -> None:
+        self.repository = repository
+        self.user_center = UserCenterService(repository)
+
+    def snapshot(self, user_id: str, workspace_id: str) -> dict[str, object]:
+        active_grants = [
+            item
+            for item in self.repository.list_role_grants(user_id, workspace_id)
+            if item.status == "active"
+        ]
+        if active_grants:
+            self.repository.ensure_user_center_settings(user_id, workspace_id)
+            center = self.user_center.snapshot(user_id, workspace_id)
+        else:
+            center = self.user_center.bootstrap(user_id, workspace_id)
+        profile = center["profile"]
+        assert isinstance(profile, dict)
+        role = BusinessRole(str(profile["active_role"]))
+        grants = center["roles"]
+        if not isinstance(grants, list) or not any(
+            isinstance(item, dict)
+            and item.get("role") == role.value
+            and item.get("status") == "active"
+            for item in grants
+        ):
+            raise WorkbenchPermissionError("当前身份授权已失效")
+
+        headline, description, maturity, boundary_note = ROLE_COPY[role]
+        tasks = [
+            item
+            for item in center["tasks"]
+            if isinstance(item, dict) and item.get("role") == role.value
+        ]
+        return {
+            "role": role.value,
+            "label": ROLE_LABELS[role],
+            "headline": headline,
+            "description": description,
+            "maturity": maturity.value,
+            "metrics": self._metrics(role, center, workspace_id),
+            "capabilities": [dict(item) for item in CAPABILITIES[role]],
+            "resources": self._resources(role, center, workspace_id),
+            "tasks": tasks,
+            "boundary_note": boundary_note,
+        }
+
+    def _metrics(
+        self, role: BusinessRole, center: dict[str, object], workspace_id: str
+    ) -> list[dict[str, object]]:
+        summary = center["summary"]
+        assert isinstance(summary, dict)
+        values: list[tuple[str, str, int]]
+        if role is BusinessRole.VIEWER:
+            values = [
+                ("history", "观看记录", int(summary["history"])),
+                ("bookmarks", "收藏", int(summary["bookmarks"])),
+                ("following", "关注", int(summary["following"])),
+            ]
+        elif role is BusinessRole.LEARNER:
+            values = [
+                ("want_to_learn", "想学", int(summary["want_to_learn"])),
+                ("open_tasks", "学习待办", self._open_task_count(center, role)),
+                ("unread", "未读消息", int(summary["unread_notifications"])),
+            ]
+        elif role is BusinessRole.CREATOR:
+            values = [
+                (
+                    "projects",
+                    "近期项目",
+                    len(self.repository.list_projects(workspace_id, limit=100)),
+                ),
+                ("open_tasks", "创作待办", self._open_task_count(center, role)),
+                ("unread", "未读消息", int(summary["unread_notifications"])),
+            ]
+        elif role is BusinessRole.BUYER:
+            values = [
+                ("bookmarks", "文化收藏", int(summary["bookmarks"])),
+                ("orders", "真实订单", 0),
+                ("after_sales", "售后处理中", 0),
+            ]
+        else:
+            applications = center["applications"]
+            assert isinstance(applications, list)
+            values = [
+                (
+                    "applications",
+                    "身份申请",
+                    sum(
+                        isinstance(item, dict) and item.get("role") == role.value
+                        for item in applications
+                    ),
+                ),
+                ("open_tasks", "当前待办", self._open_task_count(center, role)),
+                ("unread", "未读消息", int(summary["unread_notifications"])),
+            ]
+        return [{"key": key, "label": label, "value": value} for key, label, value in values]
+
+    def _resources(
+        self, role: BusinessRole, center: dict[str, object], workspace_id: str
+    ) -> list[dict[str, str]]:
+        if role is BusinessRole.CREATOR:
+            return [
+                {
+                    "id": item.id,
+                    "kind": "creator_project",
+                    "title": item.title,
+                    "subtitle": "创作项目",
+                    "href": "/creator",
+                    "status": "saved",
+                }
+                for item in self.repository.list_projects(workspace_id, limit=5)
+            ]
+        if role in {BusinessRole.LEARNER, BusinessRole.VIEWER, BusinessRole.BUYER}:
+            library = center["library"]
+            history = center["history"]
+            assert isinstance(library, list) and isinstance(history, list)
+            if role is BusinessRole.LEARNER:
+                selected = [
+                    item
+                    for item in library
+                    if isinstance(item, dict)
+                    and item.get("kind") == LibraryKind.WANT_TO_LEARN.value
+                ]
+            elif role is BusinessRole.BUYER:
+                selected = [
+                    item
+                    for item in library
+                    if isinstance(item, dict) and item.get("kind") == LibraryKind.BOOKMARK.value
+                ]
+            else:
+                selected = [item for item in history if isinstance(item, dict)] + [
+                    item for item in library if isinstance(item, dict)
+                ]
+            return [self._resource_from_item(item) for item in selected[:5]]
+        applications = center["applications"]
+        assert isinstance(applications, list)
+        return [
+            {
+                "id": str(item["id"]),
+                "kind": "role_application",
+                "title": f"{ROLE_LABELS[role]}身份申请",
+                "subtitle": str(item["status"]),
+                "href": "/identity",
+                "status": str(item["status"]),
+            }
+            for item in applications
+            if isinstance(item, dict) and item.get("role") == role.value
+        ][:5]
+
+    @staticmethod
+    def _open_task_count(center: dict[str, object], role: BusinessRole) -> int:
+        tasks = center["tasks"]
+        assert isinstance(tasks, list)
+        return sum(
+            isinstance(item, dict)
+            and item.get("role") == role.value
+            and item.get("status") == "open"
+            for item in tasks
+        )
+
+    @staticmethod
+    def _resource_from_item(item: dict[str, Any]) -> dict[str, str]:
+        return {
+            "id": str(item.get("id", "")),
+            "kind": str(item.get("kind", "history")),
+            "title": str(item.get("title", "未命名文化资产")),
+            "subtitle": "服务端已保存",
+            "href": str(item.get("target_href", "")) or "/identity",
+            "status": "saved",
+        }

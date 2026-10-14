@@ -56,6 +56,7 @@ from haha_identity.service import (
     IdentityService,
 )
 from haha_user_center.service import UserCenterNotFoundError, UserCenterService
+from haha_workbench.service import WorkbenchPermissionError, WorkbenchService
 
 
 class ProjectCreate(BaseModel):
@@ -153,6 +154,7 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
     service = CreatorService(active_repository)
     identity_service = IdentityService(active_repository)  # type: ignore[arg-type]
     user_center_service = UserCenterService(active_repository)  # type: ignore[arg-type]
+    workbench_service = WorkbenchService(active_repository)  # type: ignore[arg-type]
     auth_service = AuthService(active_repository)  # type: ignore[arg-type]
     application = FastAPI(title="HAHA Creator API", version="0.2.0")
     allowed_origins = tuple(
@@ -167,7 +169,15 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"),
-        allow_headers=("Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "X-Request-ID", "X-User-ID", "X-Workspace-ID"),
+        allow_headers=(
+            "Authorization",
+            "Content-Type",
+            "Idempotency-Key",
+            "Last-Event-ID",
+            "X-Request-ID",
+            "X-User-ID",
+            "X-Workspace-ID",
+        ),
     )
 
     def resolve_membership(
@@ -184,9 +194,7 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
             identity.session_id, identity.user_id, identity.workspace_id
         ):
             raise HTTPException(status_code=401, detail="访问会话无效或已撤销")
-        stored_role = active_repository.get_membership_role(
-            identity.user_id, identity.workspace_id
-        )
+        stored_role = active_repository.get_membership_role(identity.user_id, identity.workspace_id)
         if not stored_role:
             log_event(
                 "authorization.membership_denied",
@@ -199,7 +207,10 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=403, detail="工作空间成员角色无效") from exc
         principal = Principal(
-            identity.user_id, identity.workspace_id, role, identity.auth_mode,
+            identity.user_id,
+            identity.workspace_id,
+            role,
+            identity.auth_mode,
             identity.session_id,
         )
         log_event(
@@ -214,9 +225,7 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
     def execute_run_locally(run_id: str) -> None:
         completed = service.execute_run(run_id)
         if completed.status.value == "FAILED":
-            active_repository.record_failed_job(
-                completed.id, completed.error_code or "run_failed"
-            )
+            active_repository.record_failed_job(completed.id, completed.error_code or "run_failed")
 
     @application.middleware("http")
     async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -294,9 +303,7 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
             service.create_project(title=payload.title, workspace_id=principal.workspace_id)
         )
 
-    @application.post(
-        "/api/projects/{project_id}/briefs", status_code=status.HTTP_201_CREATED
-    )
+    @application.post("/api/projects/{project_id}/briefs", status_code=status.HTTP_201_CREATED)
     def create_brief(
         project_id: str,
         payload: BriefCreate,
@@ -312,17 +319,13 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         except (LookupError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @application.post(
-        "/api/projects/{project_id}/runs", status_code=status.HTTP_202_ACCEPTED
-    )
+    @application.post("/api/projects/{project_id}/runs", status_code=status.HTTP_202_ACCEPTED)
     def create_run(
         project_id: str,
         payload: RunCreate,
         background_tasks: BackgroundTasks,
         principal: Principal = Depends(resolve_membership),
-        idempotency_key: str = Header(
-            alias="Idempotency-Key", min_length=8, max_length=200
-        ),
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=200),
     ) -> dict[str, object]:
         try:
             project = active_repository.get_project(project_id)
@@ -596,11 +599,21 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         principal: Principal = Depends(resolve_membership),
     ) -> dict[str, object]:
         try:
-            return asdict(identity_service.complete_task(
-                task_id, principal.user_id, principal.workspace_id
-            ))
+            return asdict(
+                identity_service.complete_task(task_id, principal.user_id, principal.workspace_id)
+            )
         except IdentityNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @application.get("/api/identity/workbench")
+    def get_identity_workbench(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        """Return the server-authoritative projection for the active business role."""
+        try:
+            return workbench_service.snapshot(principal.user_id, principal.workspace_id)
+        except WorkbenchPermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @application.post("/api/identity/role-applications/{application_id}/decision")
     def decide_role_application(
@@ -632,7 +645,9 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         except InvalidCredentialsError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         except AccountLockedError as exc:
-            raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "900"}) from exc
+            raise HTTPException(
+                status_code=429, detail=str(exc), headers={"Retry-After": "900"}
+            ) from exc
         metrics.add("haha_auth_login_success_total")
         return result
 
@@ -690,10 +705,12 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
     def revoke_all_auth_sessions(
         principal: Principal = Depends(resolve_membership),
     ) -> dict[str, int]:
-        return {"revoked": auth_service.revoke_all_sessions(
-            user_id=principal.user_id,
-            workspace_id=principal.workspace_id,
-        )}
+        return {
+            "revoked": auth_service.revoke_all_sessions(
+                user_id=principal.user_id,
+                workspace_id=principal.workspace_id,
+            )
+        }
 
     @application.get("/api/user-center")
     def get_user_center(
@@ -724,51 +741,72 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
 
     @application.put("/api/user-center/library/{kind}/{target_id}")
     def save_user_center_library_item(
-        kind: str, target_id: str, payload: UserCenterLibraryUpdate,
+        kind: str,
+        target_id: str,
+        payload: UserCenterLibraryUpdate,
         principal: Principal = Depends(resolve_membership),
     ) -> dict[str, object]:
         try:
             return user_center_service.set_library_item(
-                principal.user_id, principal.workspace_id, kind_value=kind,
-                target_id=target_id, active=True, **payload.model_dump()
+                principal.user_id,
+                principal.workspace_id,
+                kind_value=kind,
+                target_id=target_id,
+                active=True,
+                **payload.model_dump(),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @application.delete("/api/user-center/library/{kind}/{target_id}")
     def delete_user_center_library_item(
-        kind: str, target_id: str,
+        kind: str,
+        target_id: str,
         principal: Principal = Depends(resolve_membership),
     ) -> dict[str, object]:
         try:
             return user_center_service.set_library_item(
-                principal.user_id, principal.workspace_id, kind_value=kind,
-                target_id=target_id, title="", target_href="", active=False
+                principal.user_id,
+                principal.workspace_id,
+                kind_value=kind,
+                target_id=target_id,
+                title="",
+                target_href="",
+                active=False,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @application.put("/api/user-center/follows/{target_id}")
     def save_user_center_follow(
-        target_id: str, payload: UserCenterFollowUpdate,
+        target_id: str,
+        payload: UserCenterFollowUpdate,
         principal: Principal = Depends(resolve_membership),
     ) -> dict[str, object]:
         try:
             return user_center_service.set_follow(
-                principal.user_id, principal.workspace_id, target_id=target_id,
-                active=True, **payload.model_dump()
+                principal.user_id,
+                principal.workspace_id,
+                target_id=target_id,
+                active=True,
+                **payload.model_dump(),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @application.delete("/api/user-center/follows/{target_id}")
     def delete_user_center_follow(
-        target_id: str, principal: Principal = Depends(resolve_membership),
+        target_id: str,
+        principal: Principal = Depends(resolve_membership),
     ) -> dict[str, object]:
         try:
             return user_center_service.set_follow(
-                principal.user_id, principal.workspace_id, target_id=target_id,
-                display_name="", target_href="", active=False
+                principal.user_id,
+                principal.workspace_id,
+                target_id=target_id,
+                display_name="",
+                target_href="",
+                active=False,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -777,19 +815,22 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
     def clear_user_center_history(
         principal: Principal = Depends(resolve_membership),
     ) -> dict[str, object]:
-        return {"removed": user_center_service.clear_history(
-            principal.user_id, principal.workspace_id
-        )}
+        return {
+            "removed": user_center_service.clear_history(principal.user_id, principal.workspace_id)
+        }
 
     @application.put("/api/user-center/history/{content_id}")
     def save_user_center_history(
-        content_id: str, payload: UserCenterHistoryUpdate,
+        content_id: str,
+        payload: UserCenterHistoryUpdate,
         principal: Principal = Depends(resolve_membership),
     ) -> dict[str, object]:
         try:
             item = user_center_service.record_history(
-                principal.user_id, principal.workspace_id, content_id=content_id,
-                **payload.model_dump()
+                principal.user_id,
+                principal.workspace_id,
+                content_id=content_id,
+                **payload.model_dump(),
             )
             return {"item": asdict(item) if item else None}
         except ValueError as exc:
@@ -797,7 +838,8 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
 
     @application.delete("/api/user-center/history/{content_id}")
     def delete_user_center_history(
-        content_id: str, principal: Principal = Depends(resolve_membership),
+        content_id: str,
+        principal: Principal = Depends(resolve_membership),
     ) -> dict[str, bool]:
         user_center_service.remove_history_item(
             principal.user_id, principal.workspace_id, content_id
@@ -806,18 +848,22 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
 
     @application.post("/api/user-center/notifications/{notification_id}/read")
     def read_user_center_notification(
-        notification_id: str, principal: Principal = Depends(resolve_membership),
+        notification_id: str,
+        principal: Principal = Depends(resolve_membership),
     ) -> dict[str, object]:
         try:
-            return asdict(user_center_service.mark_notification_read(
-                notification_id, principal.user_id, principal.workspace_id
-            ))
+            return asdict(
+                user_center_service.mark_notification_read(
+                    notification_id, principal.user_id, principal.workspace_id
+                )
+            )
         except UserCenterNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @application.delete("/api/user-center/notifications/{notification_id}")
     def delete_user_center_notification(
-        notification_id: str, principal: Principal = Depends(resolve_membership),
+        notification_id: str,
+        principal: Principal = Depends(resolve_membership),
     ) -> dict[str, bool]:
         try:
             user_center_service.delete_notification(
@@ -835,9 +881,7 @@ def _sse_event(event: str, payload: dict[str, object], *, event_id: str = "") ->
     if event_id:
         lines.append(f"id: {event_id}")
     lines.append(f"event: {event}")
-    lines.append(
-        "data: " + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    )
+    lines.append("data: " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
     return "\n".join(lines) + "\n\n"
 
 

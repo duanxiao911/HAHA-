@@ -9,6 +9,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
+from time import sleep
 from typing import Protocol
 from uuid import uuid4
 
@@ -39,7 +40,12 @@ class CreatorRepository(Protocol):
     def ping(self) -> bool: ...
 
     def ensure_identity(
-        self, user_id: str, workspace_id: str, *, role: str, email: str = "",
+        self,
+        user_id: str,
+        workspace_id: str,
+        *,
+        role: str,
+        email: str = "",
         workspace_name: str = "",
     ) -> None: ...
 
@@ -48,6 +54,8 @@ class CreatorRepository(Protocol):
     def save_project(self, project: Project) -> None: ...
 
     def get_project(self, project_id: str) -> Project | None: ...
+
+    def list_projects(self, workspace_id: str, *, limit: int = 20) -> list[Project]: ...
 
     def next_brief_version(self, project_id: str) -> int: ...
 
@@ -89,9 +97,7 @@ class CreatorRepository(Protocol):
         self, failed_job_id: str, workspace_id: str, *, max_attempts: int
     ) -> Run | None: ...
 
-    def resolve_failed_job(
-        self, failed_job_id: str, workspace_id: str
-    ) -> FailedJob | None: ...
+    def resolve_failed_job(self, failed_job_id: str, workspace_id: str) -> FailedJob | None: ...
 
     def reconcile_expired_runs(
         self, *, max_attempts: int, limit: int = 100
@@ -104,6 +110,7 @@ class SQLiteCreatorRepository:
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
         self._failed_job_retry_lock = Lock()
+        self._auth_session_rotation_lock = Lock()
         self._memory_uri = ""
         self._memory_keeper: sqlite3.Connection | None = None
         if self.path == ":memory:":
@@ -115,9 +122,7 @@ class SQLiteCreatorRepository:
 
     def _connect(self) -> sqlite3.Connection:
         if self._memory_uri:
-            connection = sqlite3.connect(
-                self._memory_uri, uri=True, check_same_thread=False
-            )
+            connection = sqlite3.connect(self._memory_uri, uri=True, check_same_thread=False)
         else:
             connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
@@ -337,7 +342,12 @@ class SQLiteCreatorRepository:
             )
 
     def ensure_identity(
-        self, user_id: str, workspace_id: str, *, role: str, email: str = "",
+        self,
+        user_id: str,
+        workspace_id: str,
+        *,
+        role: str,
+        email: str = "",
         workspace_name: str = "",
     ) -> None:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
@@ -415,21 +425,29 @@ class SQLiteCreatorRepository:
 
     def rotate_auth_session(self, session: AuthSession, expected_hash: str) -> bool:
         """Atomically consume one refresh secret and install its replacement."""
-        with closing(self._connect()) as connection, connection:
-            result = connection.execute(
-                """UPDATE auth_sessions SET refresh_token_hash = ?, expires_at = ?,
-                          revoked_at = ?, last_used_at = ?
-                   WHERE id = ? AND refresh_token_hash = ? AND revoked_at = ''""",
-                (
-                    session.refresh_token_hash,
-                    session.expires_at,
-                    session.revoked_at,
-                    session.last_used_at,
-                    session.id,
-                    expected_hash,
-                ),
-            )
-        return result.rowcount == 1
+        with self._auth_session_rotation_lock:
+            for attempt in range(5):
+                try:
+                    with closing(self._connect()) as connection, connection:
+                        result = connection.execute(
+                            """UPDATE auth_sessions SET refresh_token_hash = ?, expires_at = ?,
+                                      revoked_at = ?, last_used_at = ?
+                               WHERE id = ? AND refresh_token_hash = ? AND revoked_at = ''""",
+                            (
+                                session.refresh_token_hash,
+                                session.expires_at,
+                                session.revoked_at,
+                                session.last_used_at,
+                                session.id,
+                                expected_hash,
+                            ),
+                        )
+                    return result.rowcount == 1
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).lower() or attempt == 4:
+                        raise
+                    sleep(0.01 * (attempt + 1))
+        return False
 
     def revoke_auth_session(
         self, session_id: str, user_id: str, workspace_id: str, revoked_at: str
@@ -443,9 +461,7 @@ class SQLiteCreatorRepository:
             )
         return result.rowcount == 1
 
-    def revoke_all_auth_sessions(
-        self, user_id: str, workspace_id: str, revoked_at: str
-    ) -> int:
+    def revoke_all_auth_sessions(self, user_id: str, workspace_id: str, revoked_at: str) -> int:
         with closing(self._connect()) as connection, connection:
             result = connection.execute(
                 """UPDATE auth_sessions SET revoked_at = ?, last_used_at = ?
@@ -455,11 +471,19 @@ class SQLiteCreatorRepository:
         return result.rowcount
 
     def save_auth_audit_event(self, event: AuthAuditEvent) -> None:
-        with closing(self._connect()) as connection, connection:
-            connection.execute(
-                "INSERT INTO auth_audit_events VALUES (?, ?, ?, ?, ?, ?)",
-                tuple(asdict(event).values()),
-            )
+        with self._auth_session_rotation_lock:
+            for attempt in range(5):
+                try:
+                    with closing(self._connect()) as connection, connection:
+                        connection.execute(
+                            "INSERT INTO auth_audit_events VALUES (?, ?, ?, ?, ?, ?)",
+                            tuple(asdict(event).values()),
+                        )
+                    return
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).lower() or attempt == 4:
+                        raise
+                    sleep(0.01 * (attempt + 1))
 
     def ensure_user_profile(self, user_id: str, workspace_id: str) -> UserProfile:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
@@ -490,9 +514,13 @@ class SQLiteCreatorRepository:
                        personalization_enabled=excluded.personalization_enabled,
                        updated_at=excluded.updated_at""",
                 (
-                    profile.user_id, profile.workspace_id, profile.display_name,
-                    profile.active_role, int(profile.personalization_enabled),
-                    profile.created_at, profile.updated_at,
+                    profile.user_id,
+                    profile.workspace_id,
+                    profile.display_name,
+                    profile.active_role,
+                    int(profile.personalization_enabled),
+                    profile.created_at,
+                    profile.updated_at,
                 ),
             )
 
@@ -522,7 +550,9 @@ class SQLiteCreatorRepository:
             ).fetchone()
         return RoleApplication(**dict(row)) if row else None
 
-    def find_pending_role_application(self, user_id: str, workspace_id: str, role: str) -> RoleApplication | None:
+    def find_pending_role_application(
+        self, user_id: str, workspace_id: str, role: str
+    ) -> RoleApplication | None:
         with closing(self._connect()) as connection:
             row = connection.execute(
                 """SELECT * FROM role_applications
@@ -569,7 +599,9 @@ class SQLiteCreatorRepository:
             ).fetchall()
         return [IdentityTask(**dict(row)) for row in rows]
 
-    def get_identity_task(self, task_id: str, user_id: str, workspace_id: str) -> IdentityTask | None:
+    def get_identity_task(
+        self, task_id: str, user_id: str, workspace_id: str
+    ) -> IdentityTask | None:
         with closing(self._connect()) as connection:
             row = connection.execute(
                 """SELECT * FROM identity_tasks
@@ -585,9 +617,7 @@ class SQLiteCreatorRepository:
                 tuple(asdict(event).values()),
             )
 
-    def ensure_user_center_settings(
-        self, user_id: str, workspace_id: str
-    ) -> UserCenterSettings:
+    def ensure_user_center_settings(self, user_id: str, workspace_id: str) -> UserCenterSettings:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with closing(self._connect()) as connection, connection:
             connection.execute(
@@ -625,10 +655,15 @@ class SQLiteCreatorRepository:
                        notification_enabled=excluded.notification_enabled,
                        updated_at=excluded.updated_at""",
                 (
-                    settings.user_id, settings.workspace_id, settings.bio,
-                    settings.region, settings.profile_visibility,
-                    int(settings.history_enabled), int(settings.recommendation_enabled),
-                    int(settings.notification_enabled), settings.created_at,
+                    settings.user_id,
+                    settings.workspace_id,
+                    settings.bio,
+                    settings.region,
+                    settings.profile_visibility,
+                    int(settings.history_enabled),
+                    int(settings.recommendation_enabled),
+                    int(settings.notification_enabled),
+                    settings.created_at,
                     settings.updated_at,
                 ),
             )
@@ -682,9 +717,7 @@ class SQLiteCreatorRepository:
                 tuple(asdict(follow).values()),
             )
 
-    def delete_user_follow(
-        self, user_id: str, workspace_id: str, target_id: str
-    ) -> None:
+    def delete_user_follow(self, user_id: str, workspace_id: str, target_id: str) -> None:
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 """DELETE FROM user_follows
@@ -692,9 +725,7 @@ class SQLiteCreatorRepository:
                 (user_id, workspace_id, target_id),
             )
 
-    def list_watch_history(
-        self, user_id: str, workspace_id: str
-    ) -> list[WatchHistoryItem]:
+    def list_watch_history(self, user_id: str, workspace_id: str) -> list[WatchHistoryItem]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """SELECT * FROM user_watch_history
@@ -724,9 +755,7 @@ class SQLiteCreatorRepository:
                 tuple(values),
             )
 
-    def delete_watch_history_item(
-        self, user_id: str, workspace_id: str, content_id: str
-    ) -> None:
+    def delete_watch_history_item(self, user_id: str, workspace_id: str, content_id: str) -> None:
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 """DELETE FROM user_watch_history
@@ -744,9 +773,7 @@ class SQLiteCreatorRepository:
             removed = cursor.rowcount
         return max(0, removed)
 
-    def list_user_notifications(
-        self, user_id: str, workspace_id: str
-    ) -> list[UserNotification]:
+    def list_user_notifications(self, user_id: str, workspace_id: str) -> list[UserNotification]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """SELECT * FROM user_notifications
@@ -797,13 +824,33 @@ class SQLiteCreatorRepository:
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 "INSERT INTO projects VALUES (?, ?, ?, ?, ?)",
-                (project.id, project.workspace_id, project.title, project.created_at, project.updated_at),
+                (
+                    project.id,
+                    project.workspace_id,
+                    project.title,
+                    project.created_at,
+                    project.updated_at,
+                ),
             )
 
     def get_project(self, project_id: str) -> Project | None:
         with closing(self._connect()) as connection, connection:
-            row = connection.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
         return Project(**dict(row)) if row else None
+
+    def list_projects(self, workspace_id: str, *, limit: int = 20) -> list[Project]:
+        safe_limit = max(1, min(limit, 100))
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM projects
+                   WHERE workspace_id = ?
+                   ORDER BY updated_at DESC, id DESC
+                   LIMIT ?""",
+                (workspace_id, safe_limit),
+            ).fetchall()
+        return [Project(**dict(row)) for row in rows]
 
     def next_brief_version(self, project_id: str) -> int:
         with closing(self._connect()) as connection, connection:
@@ -820,25 +867,50 @@ class SQLiteCreatorRepository:
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 "INSERT INTO brief_versions VALUES (?, ?, ?, ?, ?)",
-                (brief.id, brief.project_id, brief.version, json.dumps(payload, ensure_ascii=False), brief.created_at),
+                (
+                    brief.id,
+                    brief.project_id,
+                    brief.version,
+                    json.dumps(payload, ensure_ascii=False),
+                    brief.created_at,
+                ),
             )
 
     def get_brief(self, brief_id: str) -> BriefVersion | None:
         with closing(self._connect()) as connection, connection:
-            row = connection.execute("SELECT * FROM brief_versions WHERE id = ?", (brief_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM brief_versions WHERE id = ?", (brief_id,)
+            ).fetchone()
         if not row:
             return None
         return BriefVersion(
-            id=row["id"], project_id=row["project_id"], version=row["version"],
-            created_at=row["created_at"], **json.loads(row["payload_json"])
+            id=row["id"],
+            project_id=row["project_id"],
+            version=row["version"],
+            created_at=row["created_at"],
+            **json.loads(row["payload_json"]),
         )
 
     def save_run(self, run: Run) -> None:
         values = (
-            run.id, run.workspace_id, run.project_id, run.brief_version_id, run.status.value,
-            run.model_preference, run.idempotency_key, run.request_fingerprint, run.attempt,
-            run.error_code, run.error_message, run.created_at, run.updated_at,
-            run.claimed_by, run.claimed_at, run.lease_until, run.heartbeat_at, run.lock_version,
+            run.id,
+            run.workspace_id,
+            run.project_id,
+            run.brief_version_id,
+            run.status.value,
+            run.model_preference,
+            run.idempotency_key,
+            run.request_fingerprint,
+            run.attempt,
+            run.error_code,
+            run.error_message,
+            run.created_at,
+            run.updated_at,
+            run.claimed_by,
+            run.claimed_at,
+            run.lease_until,
+            run.heartbeat_at,
+            run.lock_version,
         )
         try:
             with closing(self._connect()) as connection, connection:
@@ -885,7 +957,7 @@ class SQLiteCreatorRepository:
                 f"""UPDATE runs SET status = ?, error_code = '', error_message = '',
                        claimed_by = '', claimed_at = '', lease_until = '', heartbeat_at = '',
                        updated_at = ?, lock_version = lock_version + 1
-                       WHERE id = ? AND status IN ({','.join('?' for _ in cancellable)})""",
+                       WHERE id = ? AND status IN ({",".join("?" for _ in cancellable)})""",
                 (RunStatus.CANCELLED.value, now, run_id, *cancellable),
             )
             connection.commit()
@@ -916,21 +988,32 @@ class SQLiteCreatorRepository:
             connection.execute(
                 "INSERT INTO script_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    script.id, script.project_id, script.run_id, script.brief_version_id,
-                    script.version, json.dumps(script.payload, ensure_ascii=False),
-                    json.dumps(script.evidence, ensure_ascii=False), script.created_at,
+                    script.id,
+                    script.project_id,
+                    script.run_id,
+                    script.brief_version_id,
+                    script.version,
+                    json.dumps(script.payload, ensure_ascii=False),
+                    json.dumps(script.evidence, ensure_ascii=False),
+                    script.created_at,
                 ),
             )
 
     def get_script_for_run(self, run_id: str) -> ScriptVersion | None:
         with closing(self._connect()) as connection, connection:
-            row = connection.execute("SELECT * FROM script_versions WHERE run_id = ?", (run_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM script_versions WHERE run_id = ?", (run_id,)
+            ).fetchone()
         if not row:
             return None
         return ScriptVersion(
-            id=row["id"], project_id=row["project_id"], run_id=row["run_id"],
-            brief_version_id=row["brief_version_id"], version=row["version"],
-            payload=json.loads(row["payload_json"]), evidence=json.loads(row["evidence_json"]),
+            id=row["id"],
+            project_id=row["project_id"],
+            run_id=row["run_id"],
+            brief_version_id=row["brief_version_id"],
+            version=row["version"],
+            payload=json.loads(row["payload_json"]),
+            evidence=json.loads(row["evidence_json"]),
             created_at=row["created_at"],
         )
 
@@ -939,9 +1022,14 @@ class SQLiteCreatorRepository:
             connection.execute(
                 "INSERT INTO script_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    script.id, script.project_id, script.run_id, script.brief_version_id,
-                    script.version, json.dumps(script.payload, ensure_ascii=False),
-                    json.dumps(script.evidence, ensure_ascii=False), script.created_at,
+                    script.id,
+                    script.project_id,
+                    script.run_id,
+                    script.brief_version_id,
+                    script.version,
+                    json.dumps(script.payload, ensure_ascii=False),
+                    json.dumps(script.evidence, ensure_ascii=False),
+                    script.created_at,
                 ),
             )
             cursor = connection.execute(
@@ -973,10 +1061,21 @@ class SQLiteCreatorRepository:
                      (status IN (?, ?, ?, ?, ?) AND lease_until != '' AND lease_until < ?)
                    )""",
                 (
-                    RunStatus.CLAIMED.value, worker_id, now_text, lease_text, now_text, now_text,
-                    run_id, RunStatus.PENDING.value, RunStatus.RETRYING.value,
-                    RunStatus.CLAIMED.value, RunStatus.RUNNING.value, RunStatus.RETRIEVING.value,
-                    RunStatus.GENERATING.value, RunStatus.VALIDATING.value, now_text,
+                    RunStatus.CLAIMED.value,
+                    worker_id,
+                    now_text,
+                    lease_text,
+                    now_text,
+                    now_text,
+                    run_id,
+                    RunStatus.PENDING.value,
+                    RunStatus.RETRYING.value,
+                    RunStatus.CLAIMED.value,
+                    RunStatus.RUNNING.value,
+                    RunStatus.RETRIEVING.value,
+                    RunStatus.GENERATING.value,
+                    RunStatus.VALIDATING.value,
+                    now_text,
                 ),
             )
             connection.commit()
@@ -993,8 +1092,16 @@ class SQLiteCreatorRepository:
                 """UPDATE runs SET heartbeat_at = ?, lease_until = ?, updated_at = ?,
                    lock_version = lock_version + 1
                    WHERE id = ? AND claimed_by = ? AND status NOT IN (?, ?, ?)""",
-                (now_text, lease_text, now_text, run_id, worker_id,
-                 RunStatus.PASSED.value, RunStatus.FAILED.value, RunStatus.CANCELLED.value),
+                (
+                    now_text,
+                    lease_text,
+                    now_text,
+                    run_id,
+                    worker_id,
+                    RunStatus.PASSED.value,
+                    RunStatus.FAILED.value,
+                    RunStatus.CANCELLED.value,
+                ),
             )
         return cursor.rowcount == 1
 
@@ -1092,9 +1199,7 @@ class SQLiteCreatorRepository:
             connection.commit()
         return self.get_run(run_id)
 
-    def resolve_failed_job(
-        self, failed_job_id: str, workspace_id: str
-    ) -> FailedJob | None:
+    def resolve_failed_job(self, failed_job_id: str, workspace_id: str) -> FailedJob | None:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -1132,7 +1237,7 @@ class SQLiteCreatorRepository:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
                 f"""SELECT id, attempt FROM runs
-                    WHERE status IN ({','.join('?' for _ in active)})
+                    WHERE status IN ({",".join("?" for _ in active)})
                       AND lease_until != '' AND lease_until < ?
                     ORDER BY lease_until LIMIT ?""",
                 (*active, now, limit),
@@ -1143,8 +1248,13 @@ class SQLiteCreatorRepository:
                         """UPDATE runs SET status = ?, error_code = ?, error_message = ?,
                            lease_until = '', updated_at = ?, lock_version = lock_version + 1
                            WHERE id = ?""",
-                        (RunStatus.FAILED.value, "lease_exhausted",
-                         "运行租约过期且已达到最大尝试次数", now, row["id"]),
+                        (
+                            RunStatus.FAILED.value,
+                            "lease_exhausted",
+                            "运行租约过期且已达到最大尝试次数",
+                            now,
+                            row["id"],
+                        ),
                     )
                     connection.execute(
                         """INSERT OR IGNORE INTO failed_jobs
