@@ -164,7 +164,8 @@ Multi-role Workbench G4 在 G3 安全会话之上增加服务端权威的当前�
 创作者和买家可以看到由真实文化资产、观看记录、身份任务与创作项目聚合的指标和恢复入口；
 客户端不能通过角色参数伪造管理员工作台。尚未接入的 AI 学习、知识稿件、电商交易与统一审核
 能力会明确显示为 `blocked`，不生成虚构订单、收入或学习成果。架构契约见
-[`docs/architecture/multi-role-workbench-g4.md`](docs/architecture/multi-role-workbench-g4.md)。
+[`docs/architecture/multi-role-workbench-g4.md`](docs/architecture/multi-role-workbench-g4.md)，真实环境验收与
+剩余风险见 `docs/reports/2026-10-14_multi-role-workbench-g4/`。G4 不代表 Production Candidate。
 
 ## 项目结构
 
