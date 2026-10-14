@@ -154,7 +154,9 @@ async def run(websocket_url: str) -> dict[str, Any]:
 
 def main() -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="haha-g1-e2e-") as profile:
+    with tempfile.TemporaryDirectory(
+        prefix="haha-g1-e2e-", ignore_cleanup_errors=True
+    ) as profile:
         process = subprocess.Popen([str(find_chrome()), "--headless=new", f"--remote-debugging-port={DEBUG_PORT}", "--remote-allow-origins=*", f"--user-data-dir={profile}", "--disable-extensions", "--no-first-run", "--hide-scrollbars", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             endpoint = f"http://127.0.0.1:{DEBUG_PORT}/json/new?{urllib.parse.quote(WEB_URL, safe=':/?=&')}"

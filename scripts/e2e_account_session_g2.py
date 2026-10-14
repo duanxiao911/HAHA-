@@ -205,7 +205,9 @@ def main() -> None:
     if not PASSWORD:
         raise SystemExit("HAHA_G2_E2E_PASSWORD is required and is never stored in evidence")
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="haha-g2-auth-e2e-") as profile:
+    with tempfile.TemporaryDirectory(
+        prefix="haha-g2-auth-e2e-", ignore_cleanup_errors=True
+    ) as profile:
         process = subprocess.Popen(
             [
                 str(find_chrome()), "--headless=new", f"--remote-debugging-port={DEBUG_PORT}",

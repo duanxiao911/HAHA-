@@ -349,7 +349,9 @@ async def run(websocket_url: str) -> dict[str, Any]:
 def main() -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     chrome = find_chrome()
-    with tempfile.TemporaryDirectory(prefix="haha-community-e2e-") as profile:
+    with tempfile.TemporaryDirectory(
+        prefix="haha-community-e2e-", ignore_cleanup_errors=True
+    ) as profile:
         process = subprocess.Popen(
             [
                 str(chrome),
