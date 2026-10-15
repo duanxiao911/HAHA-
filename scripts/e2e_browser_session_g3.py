@@ -86,8 +86,10 @@ async def run(websocket_url: str) -> dict[str, Any]:
         async def click(fragment: str) -> bool:
             return bool(await evaluate(f"""(() => {{
               const text={json.dumps(fragment)};
-              const node=[...document.querySelectorAll('button,a')]
-                .find((item)=>(item.innerText||'').includes(text)&&!item.disabled);
+              const nodes=[...document.querySelectorAll('button,a')]
+                .filter((item)=>!item.disabled);
+              const node=nodes.find((item)=>(item.innerText||'').trim()===text)
+                ||nodes.find((item)=>(item.innerText||'').includes(text));
               if(!node) return false; node.click(); return true;
             }})()"""))
 
