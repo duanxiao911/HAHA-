@@ -3,7 +3,7 @@
 - 项目：HAHA 非遗图文脚本创作与视频内容社区平台
 - 状态：COMPLETE（仅 Gate C1）；平台 Production Readiness：PARTIAL
 - 时间：2026-10-15（Asia/Shanghai）
-- Git：基线 `d9ce091`，`main`；被测状态含未提交变更，最终提交号待交付时补充
+- Git：实现提交 `7523708`，`main`；执行测试时为与该提交代码等价的未提交工作树
 - 环境：Windows 真实 Docker 栈，PostgreSQL 17、Redis 8、FastAPI、Dramatiq、Next.js 16、Headless Chrome
 
 ## 变更前后

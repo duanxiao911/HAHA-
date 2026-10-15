@@ -2,7 +2,7 @@
 
 - 状态：PASS（仅 Gate C1）
 - 时间：2026-10-15（Asia/Shanghai）
-- Git：基线 `d9ce091`，`main`；被测工作树 DIRTY
+- Git：实现提交 `7523708`，`main`；执行测试时为与该提交代码等价的未提交工作树
 - 环境：本机 Docker/PostgreSQL/Redis/API/Worker/Next.js + 独立 PostgreSQL 集成容器 + Headless Chrome
 
 ## 需求映射
