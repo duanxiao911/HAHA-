@@ -2,6 +2,18 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const { createLocalCommunityAdapter } = require("../.contract-test-build/local-adapter.js");
+const {
+  COMMUNITY_PAGE_LIMIT_MAX,
+  normalizeCommunityPageLimit,
+} = require("../.contract-test-build/contract.js");
+
+test("分页上限与服务端契约一致", () => {
+  assert.equal(COMMUNITY_PAGE_LIMIT_MAX, 50);
+  assert.equal(normalizeCommunityPageLimit(60), 50);
+  assert.equal(normalizeCommunityPageLimit(0), 1);
+  assert.equal(normalizeCommunityPageLimit(12.9), 12);
+  assert.equal(normalizeCommunityPageLimit(), undefined);
+});
 
 test("本地社区适配器保持互动幂等并可撤销", async () => {
   const adapter = createLocalCommunityAdapter();

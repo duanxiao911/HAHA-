@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -22,6 +23,9 @@ ARTIFACTS = ROOT / "artifacts" / "e2e" / "community"
 REPORT = ARTIFACTS / "report.json"
 CONSOLE_REPORT = ARTIFACTS / "console-errors.json"
 WEB_BASE_URL = os.getenv("HAHA_E2E_WEB_URL", "http://127.0.0.1:3000").rstrip("/")
+API_BASE_URL = os.getenv("HAHA_E2E_API_URL", "http://127.0.0.1:8000").rstrip("/")
+USER_ID = os.getenv("HAHA_COMMUNITY_E2E_USER", "local-user")
+WORKSPACE_ID = os.getenv("HAHA_COMMUNITY_E2E_WORKSPACE", "local")
 DEBUG_PORT = int(os.getenv("HAHA_COMMUNITY_E2E_DEBUG_PORT", "9351"))
 VIEWPORTS = [390, 768, 1024, 1280, 1440]
 
@@ -43,6 +47,31 @@ def find_chrome() -> Path:
         if resolved:
             return Path(resolved)
     raise RuntimeError("Could not locate Chrome, Chromium, or Edge")
+
+
+def api_status(method: str, path: str) -> int:
+    request = urllib.request.Request(
+        f"{API_BASE_URL}{path}",
+        headers={"X-User-ID": USER_ID, "X-Workspace-ID": WORKSPACE_ID},
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+
+
+def prepare_state() -> None:
+    """Create the reviewed seed and reset the interaction used by this test."""
+    if api_status("GET", "/api/community/bootstrap") != 200:
+        raise RuntimeError("Community bootstrap failed before browser acceptance")
+    bookmark_status = api_status(
+        "DELETE",
+        "/api/community/contents/content-embroidery-01/reactions/bookmark",
+    )
+    if bookmark_status not in {200, 204, 404}:
+        raise RuntimeError(f"Could not reset bookmark state: HTTP {bookmark_status}")
 
 
 async def run(websocket_url: str) -> dict[str, Any]:
@@ -85,6 +114,27 @@ async def run(websocket_url: str) -> dict[str, Any]:
                     return body
                 await asyncio.sleep(0.25)
             raise TimeoutError(f"Timed out waiting for {fragment!r}; body tail: {body[-1200:]}")
+
+        async def wait_for_rendered_feed(timeout: float = 25) -> None:
+            """Wait until the API-backed feed has committed to the DOM.
+
+            The product shell is server-rendered before the community bootstrap
+            request completes.  Fast local databases can hide that boundary,
+            while a fresh CI database exposes it because the first bootstrap
+            also creates the reviewed demo seed.  Acceptance must observe the
+            rendered API result, not race the client hydration lifecycle.
+            """
+            deadline = time.monotonic() + timeout
+            metrics: dict[str, Any] = {"cards": 0, "trustBadges": 0}
+            while time.monotonic() < deadline:
+                metrics = await evaluate("""(() => ({
+                  cards: document.querySelectorAll('.contentCard').length,
+                  trustBadges: document.querySelectorAll('.productTrustBadge').length
+                }))()""")
+                if metrics["cards"] >= 5 and metrics["trustBadges"] >= 1:
+                    return
+                await asyncio.sleep(0.25)
+            raise TimeoutError(f"Timed out waiting for API-backed feed render: {metrics}")
 
         async def navigate(path: str, expected: str) -> str:
             url = f"{WEB_BASE_URL}{path}"
@@ -134,6 +184,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width <= 768},
             )
             body = await navigate("/", "让手艺继续发生")
+            await wait_for_rendered_feed()
             metrics = await evaluate("""(() => ({
               viewport: window.innerWidth,
               scrollWidth: document.documentElement.scrollWidth,
@@ -232,7 +283,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
             await asyncio.sleep(0.1)
         assertions["bookmark_persisted_after_reload"] = persisted_state == "true"
 
-        await navigate("/profile/demo-user?tab=saved", "文化档案")
+        await navigate(f"/profile/{urllib.parse.quote(USER_ID)}?tab=saved", "文化档案")
         body = await wait_for("一根线，怎样绣出远方")
         assertions["saved_visible_in_profile"] = "一根线，怎样绣出远方" in body
 
@@ -240,69 +291,9 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["search_content_result"] = "一根线，怎样绣出远方" in body
         assertions["search_project_result"] = "苗绣" in body and "非遗项目" in body
 
-        await navigate("/creator/submissions/new?type=article", "选择内容类型")
-        if not await click_text("保存并继续"):
-            raise RuntimeError("Could not enter submission asset step")
-        await wait_for("登记素材")
-        file_added = await evaluate("""(() => {
-          const input=document.querySelector('input[type=file]'); if(!input)return false;
-          const transfer=new DataTransfer();
-          transfer.items.add(new File(['haha demo'], 'demo-cover.png', {type:'image/png'}));
-          Object.defineProperty(input,'files',{value:transfer.files,configurable:true});
-          input.dispatchEvent(new Event('change',{bubbles:true})); return true;
-        })()""")
-        assertions["submission_asset_metadata"] = bool(file_added)
-        await wait_for("demo-cover.png")
-        await click_text("保存并继续")
-        await wait_for("填写基础信息")
-        form_ready = await evaluate("""(() => {
-          const set=(selector,value)=>{const el=document.querySelector(selector);if(!el)return false;
-            const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:el.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;
-            Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);
-            el.dispatchEvent(new Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));return true;};
-          const selects=[...document.querySelectorAll('select')];
-          return {
-            title:set('input[maxlength="200"]','一根线里的苗绣故事'),
-            summary:set('textarea[maxlength="4000"]','从材料、针法与生活记忆出发的内部演示投稿。'),
-            category: selects[0] ? set('select',selects[0].options[1]?.value||'embroidery') : false,
-            region: selects[1] ? (()=>{const el=selects[1];Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(el,el.options[1]?.value||'region-guizhou');el.dispatchEvent(new Event('change',{bubbles:true}));return true;})() : false
-          };
-        })()""")
-        assertions["submission_basic_form"] = all(form_ready.values())
-        await click_text("保存并继续")
-        await wait_for("关联项目、人物与来源")
-        linked = await evaluate("""(() => {
-          const boxes=[...document.querySelectorAll('input[type=checkbox]')];
-          if(boxes.length<2)return false;
-          const project=boxes[0]; const source=boxes[boxes.length-1];
-          project.click(); source.click(); return project.checked&&source.checked;
-        })()""")
-        assertions["submission_project_and_source"] = bool(linked)
-        await click_text("保存并继续")
-        await wait_for("AI 披露与自动检查")
-        await click_text("保存并继续")
-        body = await wait_for("预览并提交")
-        assertions["submission_checks_pass"] = "仍需补充" not in body
-        await click_text("提交本地审核")
-        body = await wait_for("本地审核状态")
-        assertions["submission_submitted"] = "submitted" in body
-
-        await navigate("/review", "审核中心")
-        body = await wait_for("一根线里的苗绣故事")
-        assertions["review_queue"] = "一根线里的苗绣故事" in body
-        await wait_for("开始审核")
-        await click_when_ready("开始审核")
-        await wait_for("审核中")
-        await wait_for("审核通过")
-        await click_when_ready("审核通过")
-        await wait_for("发布演示内容")
-        await click_when_ready("发布演示内容")
-        body = await wait_for("已发布（演示）")
-        assertions["review_publish_flow"] = "已发布（演示）" in body
-
-        await navigate("/notifications", "消息中心")
-        body = await wait_for("投稿状态已更新")
-        assertions["review_notifications"] = "投稿状态已更新" in body
+        # Submission, self-review denial, migration, and separate-admin publish
+        # are covered by the Gate C2 API and browser acceptances.  This suite
+        # retains the broad responsive/navigation/search regression boundary.
 
         failed_responses = []
         browser_errors = []
@@ -331,7 +322,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
             failed = {key: value for key, value in assertions.items() if not value}
             raise RuntimeError(f"Community interaction assertions failed: {failed}")
 
-        await screenshot("final-notifications.png")
+        await screenshot("final-search.png")
         return {
             "status": "passed",
             "base_url": WEB_BASE_URL,
@@ -342,12 +333,13 @@ async def run(websocket_url: str) -> dict[str, Any]:
             "failed_responses": len(failed_responses),
             "artifacts": [str(ARTIFACTS / f"{width}.png") for width in VIEWPORTS]
             + [item["screenshot"] for item in page_results]
-            + [str(ARTIFACTS / "final-notifications.png"), str(CONSOLE_REPORT)],
+            + [str(ARTIFACTS / "final-search.png"), str(CONSOLE_REPORT)],
         }
 
 
 def main() -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    prepare_state()
     chrome = find_chrome()
     with tempfile.TemporaryDirectory(
         prefix="haha-community-e2e-", ignore_cleanup_errors=True

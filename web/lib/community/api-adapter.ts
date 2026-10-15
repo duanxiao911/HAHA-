@@ -1,5 +1,7 @@
 import { ApiRequestError, communityApiRequest } from "@/lib/api";
 
+import { normalizeCommunityPageLimit } from "./contract";
+
 import type {
   CommunityAdapter,
   CommunityImportPreview,
@@ -150,7 +152,7 @@ export class ApiCommunityAdapter implements CommunityAdapter {
         channel_id: query.channelId,
         region_id: query.regionId,
         cursor: query.cursor,
-        limit: query.limit,
+        limit: normalizeCommunityPageLimit(query.limit),
       })}`, { signal });
     } catch (error) {
       throw translateError(error);
@@ -175,7 +177,7 @@ export class ApiCommunityAdapter implements CommunityAdapter {
         scope: query.scope,
         sort: query.sort,
         cursor: query.cursor,
-        limit: query.limit,
+        limit: normalizeCommunityPageLimit(query.limit),
       })}`, { signal });
     } catch (error) {
       throw translateError(error);

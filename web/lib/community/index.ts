@@ -14,6 +14,11 @@ export type {
 } from "./contract";
 
 export {
+  COMMUNITY_PAGE_LIMIT_MAX,
+  normalizeCommunityPageLimit,
+} from "./contract";
+
+export {
   COMMUNITY_LOCAL_SCHEMA_VERSION,
   COMMUNITY_LOCAL_STORAGE_KEY,
   LocalCommunityAdapter,

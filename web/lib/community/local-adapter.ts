@@ -10,6 +10,7 @@ import type {
   PageResult,
   SearchQuery,
 } from "./contract";
+import { normalizeCommunityPageLimit } from "./contract";
 import { COMMUNITY_SEED, type CommunitySeed } from "./seed";
 import {
   CommunityDataError,
@@ -150,7 +151,7 @@ function normalizedCursor(cursor?: string): number {
 
 function page<T>(items: T[], cursor?: string, limit = 20): PageResult<T> {
   const start = normalizedCursor(cursor);
-  const safeLimit = Math.max(1, Math.min(50, limit));
+  const safeLimit = normalizeCommunityPageLimit(limit) ?? 20;
   const result = items.slice(start, start + safeLimit);
   const next = start + result.length;
   return {

@@ -8,6 +8,7 @@ import { EntityCard } from "@/components/community/EntityCard";
 import { ProductFrame } from "@/components/community/ProductFrame";
 import { StateNotice } from "@/components/community/StateNotice";
 import {
+  COMMUNITY_PAGE_LIMIT_MAX,
   type CommunitySearchHit,
   type SearchEntityKind,
   type SearchQuery,
@@ -80,7 +81,12 @@ export function SearchExperience({
   useEffect(() => {
     if (!submittedQuery) return;
     const controller = new AbortController();
-    actions.search({ query: submittedQuery, scope, sort, limit: 60 }, controller.signal)
+    actions.search({
+      query: submittedQuery,
+      scope,
+      sort,
+      limit: COMMUNITY_PAGE_LIMIT_MAX,
+    }, controller.signal)
       .then((result) => {
         setHits(result.items);
         setState("success");

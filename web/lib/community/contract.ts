@@ -15,6 +15,13 @@ import type {
   WatchHistoryEntry,
 } from "./types";
 
+export const COMMUNITY_PAGE_LIMIT_MAX = 50;
+
+export function normalizeCommunityPageLimit(limit?: number): number | undefined {
+  if (limit === undefined || !Number.isFinite(limit)) return undefined;
+  return Math.max(1, Math.min(COMMUNITY_PAGE_LIMIT_MAX, Math.trunc(limit)));
+}
+
 export interface PageResult<T> {
   items: T[];
   nextCursor: string | null;

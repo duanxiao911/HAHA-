@@ -180,6 +180,18 @@ jobs:
         run: python scripts/e2e_community.py
       - name: Run durable user-center real-browser acceptance
         run: python scripts/e2e_user_center_gate_c1.py
+      - name: Run Community Gate C2 API acceptance
+        shell: bash
+        run: |
+          docker compose run --rm --no-deps \
+            --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            -e HAHA_E2E_API_URL=http://api:8000 \
+            -e HAHA_TEST_POSTGRES_URL=postgresql+psycopg://haha:${POSTGRES_PASSWORD:-local-change-me}@postgres:5432/haha \
+            api python scripts/e2e_community_gate_c2.py
+      - name: Run Community Gate C2 real-browser acceptance
+        run: python scripts/e2e_community_gate_c2_browser.py
       - name: Capture service logs on failure
         if: failure()
         shell: bash
