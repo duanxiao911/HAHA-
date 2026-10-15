@@ -16,6 +16,7 @@ from haha_user_center.domain import (
 
 
 class UserCenterRepository(IdentityRepository, Protocol):
+    def has_user_center_settings(self, user_id: str, workspace_id: str) -> bool: ...
     def ensure_user_center_settings(
         self, user_id: str, workspace_id: str
     ) -> UserCenterSettings: ...

@@ -132,10 +132,11 @@ Phase D 已在不新增普通后端技术栈的前提下，完成社区侧的本
 本地演示，尚未接入真实媒体存储、审核后台或内容 API。详见
 [`docs/reports/phase-d-community-loop-2026-10-12.md`](docs/reports/phase-d-community-loop-2026-10-12.md)。
 
-User Center G1 已把多身份上下文、账户资料、隐私偏好、收藏、想学、稍后看、关注、观看历史
-和站内消息接入 FastAPI + PostgreSQL，并完成 390/768/1440 三档真实浏览器验收。开发环境仍为
-显式 opt-in 的本机身份，不等于正式 JWT 账号上线；详见
-[`docs/reports/2026-10-14_user-center-gate-c1/FUNCTION_ACCEPTANCE_REPORT.md`](docs/reports/2026-10-14_user-center-gate-c1/FUNCTION_ACCEPTANCE_REPORT.md)。
+User Center Gate C1 已收口多身份上下文、账户资料、隐私偏好、收藏、想学、稍后看、关注、
+观看历史、文化足迹聚合和站内消息。身份切换已移到顶部账户菜单，专业工作台只对相应身份显示；
+学习路径、测验和成就继续归 Gate C3，不在 C1 中伪造。FastAPI + PostgreSQL 主链已完成
+390/768/1440 三档真实浏览器验收，并覆盖首次并发建号。开发环境仍为显式 opt-in 的本机身份，
+不等于正式上线；收口证据见 `docs/reports/2026-10-15_user-center-gate-c1-closeout/`。
 
 Account Session G2 已提供仅限内部测试的真实账户闭环：PBKDF2 密码摘要、短期 JWT、服务端
 刷新会话、原子单次轮换、退出撤销、失败锁定、认证审计和 `/login` 真实表单。账户不开放公众
@@ -160,8 +161,9 @@ HttpOnly/SameSite Cookie；所有变更请求校验同源 Origin 与 CSRF Token�
 真实环境证据见 `docs/reports/2026-10-14_browser-session-g3/`。G3 仍只面向内部测试与受控展示，
 没有执行独立 Production Readiness Gate，也不代表 Production Candidate。
 
-Multi-role Workbench G4 在 G3 安全会话之上增加服务端权威的当前身份工作台。浏览者、学习者、
-创作者和买家可以看到由真实文化资产、观看记录、身份任务与创作项目聚合的指标和恢复入口；
+Multi-role Workbench G4 在 G3 安全会话之上增加服务端权威的当前身份投影。浏览者、学习者和
+买家在“今日”看到真实文化资产、观看记录、身份任务与明确能力边界；创作者等专业身份才显示
+对应工作台入口，避免把尚属 Gate C3/D 的能力伪装成已完成工作台。
 客户端不能通过角色参数伪造管理员工作台。尚未接入的 AI 学习、知识稿件、电商交易与统一审核
 能力会明确显示为 `blocked`，不生成虚构订单、收入或学习成果。架构契约见
 [`docs/architecture/multi-role-workbench-g4.md`](docs/architecture/multi-role-workbench-g4.md)，真实环境验收与

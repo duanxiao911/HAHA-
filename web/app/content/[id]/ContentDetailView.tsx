@@ -79,18 +79,21 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
   const [annotationKind, setAnnotationKind] = useState<TimedKnowledgeAnnotation["kind"]>("craft");
   const [annotationSourceId, setAnnotationSourceId] = useState("");
   const historyRecordedFor = useRef<string | null>(null);
+  const historyContentId = content?.id;
+  const historyContentTitle = content?.title;
+  const historyContentDuration = content?.durationSeconds ?? 0;
 
   useEffect(() => {
-    if (!snapshot.runtime.hydrated || !content || historyRecordedFor.current === content.id) return;
-    historyRecordedFor.current = content.id;
+    if (!snapshot.runtime.hydrated || !historyContentId || !historyContentTitle || historyRecordedFor.current === historyContentId) return;
+    historyRecordedFor.current = historyContentId;
     let cancelled = false;
     setBusyAction("history");
     let authenticated = false;
     void initializeAuthSession().then((signedIn) => {
       authenticated = signedIn;
-      const operations: Promise<unknown>[] = [actions.recordWatchHistory(content.id, 0)];
+      const operations: Promise<unknown>[] = [actions.recordWatchHistory(historyContentId, 0)];
       if (signedIn) operations.push(
-        recordUserCenterHistory(content.id, content.title, `/content/${encodeURIComponent(content.id)}`, 0, content.durationSeconds ?? 0),
+        recordUserCenterHistory(historyContentId, historyContentTitle, `/content/${encodeURIComponent(historyContentId)}`, 0, historyContentDuration),
       );
       return Promise.all(operations);
     })
@@ -105,9 +108,9 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
       })
       .finally(() => {
         if (!cancelled) setBusyAction((current) => current === "history" ? null : current);
-      });
+    });
     return () => { cancelled = true; };
-  }, [actions, content, snapshot.runtime.hydrated]);
+  }, [actions, historyContentDuration, historyContentId, historyContentTitle, snapshot.runtime.hydrated]);
 
   const comments = useMemo(
     () => snapshot.comments.filter((comment) => comment.contentId === contentId),

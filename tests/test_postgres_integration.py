@@ -161,6 +161,21 @@ def test_postgres_role_workbench_uses_durable_active_context(repository) -> None
     )
 
 
+def test_postgres_parallel_identity_bootstrap_is_atomic(repository) -> None:
+    def ensure() -> None:
+        fresh_repository = SQLAlchemyCreatorRepository(POSTGRES_URL)
+        fresh_repository.ensure_identity(
+            "parallel-new-user", "parallel-new-workspace", role="owner"
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda _: ensure(), range(4)))
+
+    assert repository.get_membership_role(
+        "parallel-new-user", "parallel-new-workspace"
+    ) == "owner"
+
+
 def test_postgres_parallel_workbench_bootstrap_is_idempotent(repository) -> None:
     repository.ensure_identity("parallel-user", "pg-workspace", role="owner")
 

@@ -25,6 +25,18 @@ def test_bootstrap_creates_private_account_and_one_welcome_notification() -> Non
     assert len(second["notifications"]) == 1
 
 
+def test_deleted_welcome_notification_is_not_recreated_on_next_bootstrap() -> None:
+    service = UserCenterService(_repository())
+    first = service.bootstrap("member-a", "workspace-a")
+    notification_id = first["notifications"][0]["id"]
+
+    service.delete_notification(notification_id, "member-a", "workspace-a")
+    reloaded = service.bootstrap("member-a", "workspace-a")
+
+    assert reloaded["notifications"] == []
+    assert reloaded["summary"]["unread_notifications"] == 0
+
+
 def test_library_follow_and_history_are_durable_and_idempotent() -> None:
     service = UserCenterService(_repository())
     service.bootstrap("member-a", "workspace-a")
@@ -43,6 +55,17 @@ def test_library_follow_and_history_are_durable_and_idempotent() -> None:
         )
     snapshot = service.snapshot("member-a", "workspace-a")
     assert snapshot["summary"]["bookmarks"] == 1
+    assert snapshot["footprint"] == {
+        "saved_assets": 1,
+        "following": 1,
+        "watched_items": 1,
+        "completed_views": 1,
+        "active_days": 1,
+        "first_activity_at": snapshot["footprint"]["first_activity_at"],
+        "latest_activity_at": snapshot["footprint"]["latest_activity_at"],
+    }
+    assert snapshot["growth"]["active_roles"] == 2
+    assert snapshot["growth"]["has_cultural_footprint"] is True
     assert snapshot["summary"]["following"] == 1
     assert snapshot["summary"]["history"] == 1
     assert snapshot["history"][0]["completed"] is True

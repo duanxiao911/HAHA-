@@ -87,7 +87,10 @@ services:
     build:
       context: ./web
       args:
-        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+        # Keep the browser origin host consistent with the published loopback
+        # address. On Windows, localhost may resolve to IPv6 while Docker only
+        # publishes this development port on 127.0.0.1, leaving fetch pending.
+        NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
         NEXT_PUBLIC_AUTH_MODE: ${HAHA_AUTH_MODE:-dev}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     ports:

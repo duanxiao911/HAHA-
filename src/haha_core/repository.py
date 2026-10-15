@@ -617,6 +617,15 @@ class SQLiteCreatorRepository:
                 tuple(asdict(event).values()),
             )
 
+    def has_user_center_settings(self, user_id: str, workspace_id: str) -> bool:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT 1 FROM user_center_settings
+                   WHERE user_id = ? AND workspace_id = ?""",
+                (user_id, workspace_id),
+            ).fetchone()
+        return row is not None
+
     def ensure_user_center_settings(self, user_id: str, workspace_id: str) -> UserCenterSettings:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with closing(self._connect()) as connection, connection:

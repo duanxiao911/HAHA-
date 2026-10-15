@@ -3,9 +3,20 @@
 .identityHero small,.identityWorkspaceHead small,.identitySectionHeading small,.identityDialog>small { color: var(--product-brand); font-size: 10px; font-weight: 850; letter-spacing: .14em; }
 .identityHero h1 { max-width: 760px; margin: 8px 0 10px; font-size: clamp(36px,5vw,66px); line-height: 1.04; letter-spacing: -.055em; }
 .identityHero p { max-width: 760px; margin: 0; color: var(--product-ink-soft); line-height: 1.75; }
-.identityCurrentRole { display: grid; gap: 6px; padding: 20px; border: 1px solid color-mix(in srgb,var(--product-brand) 20%,var(--product-line)); border-radius: 16px; background: rgba(255,255,255,.8); }
-.identityCurrentRole span,.identityCurrentRole small { color: var(--product-ink-soft); font-size: 11px; }
-.identityCurrentRole strong { font-size: 28px; }
+.identityProfileMenu { position: relative; align-self: center; }
+.identityProfileTrigger { display: grid; width: 100%; grid-template-columns: 48px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid color-mix(in srgb,var(--product-brand) 20%,var(--product-line)); border-radius: 16px; background: rgba(255,255,255,.88); color: var(--product-ink); text-align: left; cursor: pointer; }
+.identityProfileTrigger>span:nth-child(2) { display: grid; gap: 2px; }
+.identityProfileTrigger small,.identityProfileTrigger em,.identityVisibility { color: var(--product-ink-soft); font-size: 10px; font-style: normal; }
+.identityProfileTrigger strong { font-size: 20px; }
+.identityAvatar { display: grid; width: 48px; height: 48px; place-items: center; border-radius: 50%; background: var(--product-brand); color: #fff; font-size: 19px; font-weight: 900; }
+.identityVisibility { display: block; margin: 7px 4px 0; text-align: right; }
+.identityRoleMenu { position: absolute; z-index: 90; top: calc(100% + 8px); right: 0; display: grid; width: min(300px,calc(100vw - 44px)); gap: 5px; padding: 10px; border: 1px solid var(--product-line); border-radius: 14px; background: var(--product-surface); box-shadow: 0 20px 55px rgba(45,34,25,.18); }
+.identityRoleMenu>small { padding: 5px 7px; color: var(--product-ink-soft); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.identityRoleMenu button { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 0 11px; border: 0; border-radius: 9px; background: transparent; color: var(--product-ink); cursor: pointer; }
+.identityRoleMenu button:hover,.identityRoleMenu button:focus-visible,.identityRoleMenu button.current { background: var(--product-muted); }
+.identityRoleMenu button:disabled { cursor: default; opacity: .72; }
+.identityRoleMenu button em { color: var(--product-ink-soft); font-size: 10px; font-style: normal; }
+.identityRoleMenu button.manage { margin-top: 4px; background: var(--product-brand-soft); color: var(--product-brand); font-weight: 800; }
 .identityViewNav { display: flex; overflow-x: auto; gap: 8px; margin-bottom: 20px; padding: 6px; border: 1px solid var(--product-line); border-radius: 13px; background: var(--product-surface); }
 .identityViewNav button { min-height: 44px; flex: 1 0 auto; padding: 0 18px; border: 0; border-radius: 9px; background: transparent; color: var(--product-ink-soft); cursor: pointer; }
 .identityViewNav button.active { background: var(--product-brand-soft); color: var(--product-brand); font-weight: 800; }
@@ -44,6 +55,23 @@
 .identityCapabilityGrid a { width: fit-content; }
 .identityBoundaryNote { margin-top: 20px; padding: 17px; border: 1px solid #e6c98c; border-radius: 12px; background: #fbf2df; color: var(--product-amber); }
 .identityBoundaryNote p { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
+.identityCompactCapabilities { display: grid; grid-template-columns: minmax(190px,.8fr) minmax(0,1.2fr); gap: 18px; margin-top: 20px; padding: 18px; border: 1px solid var(--product-line); border-radius: 13px; background: var(--product-muted); }
+.identityCompactCapabilities h3 { margin: 5px 0; font-size: 17px; }
+.identityCompactCapabilities p { margin: 0; color: var(--product-ink-soft); font-size: 12px; line-height: 1.6; }
+.identityCompactCapabilities ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.identityCompactCapabilities li { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 10px; border-left: 3px solid var(--product-line); border-radius: 7px; background: var(--product-surface); font-size: 11px; }
+.identityCompactCapabilities li.is-available { border-left-color: var(--product-green); }
+.identityCompactCapabilities li.is-limited { border-left-color: var(--product-amber); }
+.identityCompactCapabilities li.is-blocked { border-left-color: #b26b63; }
+.identityCompactCapabilities li b { color: var(--product-ink-soft); font-size: 10px; }
+.identityCompactCapabilities li>span { display: grid; gap: 3px; }
+.identityCompactCapabilities li small { color: var(--product-ink-soft); font-size: 9px; line-height: 1.45; }
+.identityFootprintGrid { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 9px; }
+.identityFootprintGrid>div { display: grid; gap: 5px; padding: 15px; border: 1px solid var(--product-line); border-radius: 11px; background: var(--product-muted); }
+.identityFootprintGrid b { font-size: 24px; }
+.identityFootprintGrid span { color: var(--product-ink-soft); font-size: 10px; line-height: 1.4; }
+.identityGrowthNote { margin-top: 12px; padding: 15px; border: 1px solid #b8d9c2; border-radius: 11px; background: #eef8f0; color: var(--product-green); }
+.identityGrowthNote p { margin: 5px 0 0; color: var(--product-ink-soft); font-size: 11px; line-height: 1.65; }
 .identityRoleGrid { display: grid; gap: 10px; }
 .identityRoleGrid article { display: grid; grid-template-columns: 48px minmax(0,1fr) auto; align-items: center; gap: 14px; padding: 15px; border: 1px solid var(--product-line); border-radius: 13px; background: var(--product-muted); }
 .identityRoleGrid article.current { border-color: color-mix(in srgb,var(--product-brand) 30%,var(--product-line)); background: var(--product-brand-soft); }
@@ -64,6 +92,7 @@
 .identityTaskList li.completed { opacity: .68; }
 .identityTaskList span { color: var(--product-brand); font-size: 10px; font-weight: 800; }
 .identityTaskList li>b { color: var(--product-green); font-size: 11px; }
+.identityRowActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .identityAlert { margin-bottom: 16px; padding: 12px 14px; border: 1px solid #e2afa9; border-radius: 10px; background: #fbe9e6; color: #8b332d; font-size: 12px; }
 .identityDialogBackdrop { position: fixed; z-index: 200; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(33,28,23,.45); }
 .identityDialog { position: relative; display: grid; gap: 13px; width: min(100%,520px); padding: 28px; border-radius: 18px; background: var(--product-surface); box-shadow: 0 24px 90px rgba(0,0,0,.24); }
@@ -72,6 +101,7 @@
 .identityDialog label { display: grid; gap: 7px; font-size: 12px; font-weight: 750; }
 .identityDialog textarea { min-height: 130px; padding: 12px; border: 1px solid var(--product-line); border-radius: 10px; resize: vertical; }
 .identityDialogClose { position: absolute; top: 12px; right: 12px; width: 38px; height: 38px; border: 0; border-radius: 10px; background: var(--product-muted); font-size: 20px; cursor: pointer; }
+.identityManagerDialog { width: min(100%,760px); max-height: min(86vh,900px); overflow-y: auto; }
 .identitySettingsForm { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--product-line); }
 .identitySettingsForm label { display: grid; gap: 7px; color: var(--product-ink-soft); font-size: 12px; font-weight: 750; }
 .identitySettingsForm input,.identitySettingsForm textarea,.identitySettingsForm select { min-height: 44px; padding: 10px 12px; border: 1px solid var(--product-line); border-radius: 10px; background: var(--product-surface); color: var(--product-ink); font: inherit; }
@@ -85,5 +115,5 @@
 .authLoginForm input { min-height: 46px; padding: 10px 12px; border: 1px solid var(--product-line); border-radius: 10px; background: var(--product-muted); }
 .authPasswordField { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
 .authPasswordField button { min-width: 64px; border: 1px solid var(--product-line); border-radius: 10px; background: var(--product-surface); cursor: pointer; }
-@media(max-width:900px){.identityHero,.identityOverviewGrid{grid-template-columns:1fr}.identitySidePanel{position:static}.identityCurrentRole{width:min(100%,360px)}.identityActionGrid,.identityWorkspaceGrid{grid-template-columns:1fr 1fr}.identityCapabilityGrid{grid-template-columns:1fr 1fr}}
-@media(max-width:600px){.identityCenterPage{width:min(100% - 22px,540px)}.identityHero{padding:24px 20px}.identityHero h1{font-size:36px}.identityActionGrid,.identityWorkspaceGrid,.identityCapabilityGrid,.identityWorkbenchMetrics{grid-template-columns:1fr}.identityRoleGrid article{grid-template-columns:42px minmax(0,1fr)}.identityRoleGrid article>:last-child{grid-column:1/-1;width:100%}.identityTaskList li{grid-template-columns:1fr}.identityTaskList button{width:100%}.identitySectionHeading{align-items:flex-start;flex-direction:column}.identityViewNav{margin-inline:-2px}}
+@media(max-width:900px){.identityHero,.identityOverviewGrid{grid-template-columns:1fr}.identitySidePanel{position:static}.identityProfileMenu{width:min(100%,380px)}.identityActionGrid,.identityWorkspaceGrid{grid-template-columns:1fr 1fr}.identityCapabilityGrid{grid-template-columns:1fr 1fr}.identityFootprintGrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:600px){.identityCenterPage{width:min(100% - 22px,540px)}.identityHero{padding:24px 20px}.identityHero h1{font-size:36px}.identityActionGrid,.identityWorkspaceGrid,.identityCapabilityGrid,.identityWorkbenchMetrics,.identityCompactCapabilities{grid-template-columns:1fr}.identityFootprintGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.identityRoleGrid article{grid-template-columns:42px minmax(0,1fr)}.identityRoleGrid article>:last-child{grid-column:1/-1;width:100%}.identityTaskList li{grid-template-columns:1fr}.identityTaskList button{width:100%}.identityRowActions{width:100%;justify-content:stretch;flex-wrap:wrap}.identitySectionHeading{align-items:flex-start;flex-direction:column}.identityViewNav{margin-inline:-2px}}

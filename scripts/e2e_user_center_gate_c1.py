@@ -73,7 +73,13 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 if text in body:
                     return body
                 await asyncio.sleep(0.25)
-            raise TimeoutError(f"Timed out waiting for {text!r}: {body[-800:]}")
+            diagnostics = [item for item in events if item.get("method") in {
+                "Runtime.exceptionThrown", "Log.entryAdded", "Network.loadingFailed",
+            }][-10:]
+            page_state = await evaluate("""(() => {const b=document.querySelector('.productInteractionBar button'); return {readyState:document.readyState,toast:document.querySelector('.productToast')?.innerText||'',buttonDisabled:b?.disabled,reactKeys:b?Object.keys(b).filter(k=>k.startsWith('__react')):[],scripts:[...document.scripts].map(s=>({src:s.src,type:s.type})).slice(-8)}})()""")
+            raise TimeoutError(
+                f"Timed out waiting for {text!r}; page_state={page_state!r}; diagnostics={diagnostics!r}: {body[-800:]}"
+            )
 
         async def navigate(path: str, expected: str) -> str:
             await command("Page.navigate", {"url": f"{WEB_URL}{path}"})
@@ -90,11 +96,19 @@ async def run(websocket_url: str) -> dict[str, Any]:
         async def click(text: str) -> bool:
             deadline = time.monotonic() + 12
             while time.monotonic() < deadline:
-                clicked = bool(await evaluate(f"""(() => {{const text={json.dumps(text)}; const node=[...document.querySelectorAll('button,a')].find(el=>(el.innerText||'').trim().includes(text)&&!el.disabled); if(!node)return false; node.click(); return true;}})()"""))
+                clicked = bool(await evaluate(f"""(() => {{const text={json.dumps(text)}; const nodes=[...document.querySelectorAll('button,a')].filter(el=>!el.disabled); const node=nodes.find(el=>(el.innerText||'').trim()===text)||nodes.find(el=>(el.innerText||'').trim().includes(text)); if(!node)return false; node.click(); return true;}})()"""))
                 if clicked:
                     return True
                 await asyncio.sleep(0.25)
             return False
+
+        async def click_selector(selector: str) -> bool:
+            return bool(await evaluate(f"""(() => {{
+              const node=document.querySelector({json.dumps(selector)});
+              if(!node || node.disabled) return false;
+              node.click();
+              return true;
+            }})()"""))
 
         async def shot(name: str) -> None:
             result = await command("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": True})
@@ -110,7 +124,13 @@ async def run(websocket_url: str) -> dict[str, Any]:
             await command("Emulation.setDeviceMetricsOverride", {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": width <= 768})
             body = await navigate("/identity", "今天从这里继续")
             metrics = await evaluate("({viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth,nav:[...document.querySelectorAll('.identityViewNav button')].map(x=>x.innerText)})")
-            checks = {"loaded": "今天从这里继续" in body, "five_views": len(metrics["nav"]) == 5, "no_overflow": metrics["scrollWidth"] <= metrics["viewport"] + 1}
+            checks = {
+                "loaded": "今天从这里继续" in body,
+                "core_views": metrics["nav"] == ["今日", "文化资产", "消息与任务 1", "设置"],
+                "identity_removed_from_main_nav": "身份与工作台" not in metrics["nav"],
+                "top_role_menu": bool(await evaluate("Boolean(document.querySelector('.identityProfileTrigger'))")),
+                "no_overflow": metrics["scrollWidth"] <= metrics["viewport"] + 1,
+            }
             if not all(checks.values()):
                 raise RuntimeError(f"Viewport {width} failed: {checks} {metrics}")
             await shot(f"user-center-{width}.png")
@@ -119,14 +139,41 @@ async def run(websocket_url: str) -> dict[str, Any]:
         await command("Emulation.setDeviceMetricsOverride", {"width": 1280, "height": 900, "deviceScaleFactor": 1, "mobile": False})
         await command("Page.navigate", {"url": f"{WEB_URL}/content/content-embroidery-01"})
         await wait_selector(".productDetailGrid")
+        # The detail shell is server-rendered before React attaches handlers.  The
+        # automatic history sync is the observable readiness signal for the real
+        # client-side account bridge, so do not click inert pre-hydration markup.
+        await wait_for("观看历史已同步到文化账户")
         for label in ("收藏", "想学", "稍后看"):
-            assertions[f"{label}_clicked"] = await click(label)
-            await asyncio.sleep(1.2)
+            selector = f'.productInteractionBar button[aria-label="{label}"]'
+            deadline = time.monotonic() + 12
+            clicked = False
+            while time.monotonic() < deadline and not clicked:
+                clicked = await click_selector(selector)
+                if not clicked:
+                    await asyncio.sleep(0.25)
+            assertions[f"{label}_clicked"] = clicked
+            if not clicked:
+                raise RuntimeError(f"Could not click content interaction: {label}")
+            await asyncio.sleep(0.5)
+            feedback = str(await evaluate("document.querySelector('.productToast')?.innerText || ''"))
+            if feedback.startswith("操作失败"):
+                raise RuntimeError(f"Content interaction failed for {label}: {feedback}")
+            await wait_for(f"已{label}并同步到文化账户")
+        assertions["content_route_stable"] = bool(
+            await evaluate("location.pathname === '/content/content-embroidery-01'")
+        )
+        assertions["follow_clicked"] = await click_selector(".productCreatorRow button")
+        if not assertions["follow_clicked"]:
+            raise RuntimeError("Could not click creator follow button")
+        await wait_for("已关注并同步到文化账户")
         await navigate("/identity", "今天从这里继续")
         assertions["archive_opened"] = await click("文化资产")
         body = await wait_for("收藏、想学与稍后看已保存到服务端")
         assertions["assets_restored"] = int(await evaluate("document.querySelectorAll('.identityTaskList li').length")) >= 3
+        assertions["follow_restored"] = "阿锦（演示人物）" in body and "正在关注" in body
         assertions["history_restored"] = "观看记录" in body
+        assertions["footprint_real"] = "文化足迹与成长状态" in body and "文化足迹已经建立" in body
+        assertions["c3_boundary_honest"] = "学习路径、测验和成就属于 Gate C3" in body
 
         assertions["settings_opened"] = await click("设置")
         await wait_for("账户资料与隐私")
@@ -144,6 +191,9 @@ async def run(websocket_url: str) -> dict[str, Any]:
             await wait_for("消息已读")
         else:
             assertions["notification_read"] = True
+        assertions["notification_delete"] = await click("删除")
+        await wait_for("消息已删除")
+        assertions["notification_removed"] = "没有系统消息" in str(await evaluate("document.body.innerText"))
         await shot("user-center-final.png")
         browser_errors = [item for item in events if item.get("method") in {"Runtime.exceptionThrown", "Log.entryAdded"}]
         assertions["no_browser_exceptions"] = not browser_errors

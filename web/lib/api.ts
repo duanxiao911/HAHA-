@@ -254,6 +254,8 @@ export type UserCenterSnapshot = IdentitySnapshot & {
   history: { id: string; content_id: string; title: string; target_href: string; progress_seconds: number; duration_seconds: number; completed: boolean; viewed_at: string }[];
   notifications: { id: string; kind: string; title: string; body: string; target_href: string; read_at: string; created_at: string }[];
   summary: { bookmarks: number; want_to_learn: number; watch_later: number; following: number; history: number; unread_notifications: number; open_tasks: number };
+  footprint: { saved_assets: number; following: number; watched_items: number; completed_views: number; active_days: number; first_activity_at: string; latest_activity_at: string };
+  growth: { active_roles: number; completed_tasks: number; open_tasks: number; has_cultural_footprint: boolean };
   today: { continue_watching: UserCenterSnapshot["history"][number] | null; next_learning: UserCenterLibraryItem | null; open_tasks: number; unread_notifications: number };
 };
 
@@ -412,6 +414,9 @@ export async function clearUserCenterHistory(): Promise<{ removed: number }> {
 }
 export async function markUserCenterNotificationRead(id: string): Promise<void> {
   await request(`/api/user-center/notifications/${encodeURIComponent(id)}/read`, { method: "POST", headers: headers() });
+}
+export async function deleteUserCenterNotification(id: string): Promise<void> {
+  await request(`/api/user-center/notifications/${encodeURIComponent(id)}`, { method: "DELETE", headers: headers() });
 }
 
 function parseEventBlock(block: string): RunEvent | null {

@@ -91,8 +91,10 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 await evaluate(
                     f"""(() => {{
                       const text={json.dumps(fragment)};
-                      const node=[...document.querySelectorAll('button,a')]
-                        .find((item)=>(item.innerText||'').includes(text)&&!item.disabled);
+                      const nodes=[...document.querySelectorAll('button,a')]
+                        .filter((item)=>!item.disabled);
+                      const node=nodes.find((item)=>(item.innerText||'').trim()===text)
+                        ||nodes.find((item)=>(item.innerText||'').includes(text));
                       if(!node) return false; node.click(); return true;
                     }})()"""
                 )
@@ -159,8 +161,8 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["login"] = await click("安全登录")
         await wait_for("今天从这里继续")
 
-        assertions["workbench_tab"] = await click("身份与工作台")
-        body = await wait_for("浏览者工作台")
+        body = await wait_for("浏览者能力状态")
+        assertions["viewer_context_on_today"] = "浏览者能力状态" in body
         assertions["viewer_boundary_visible"] = (
             "社区内容仍含本地适配数据" in body and "有限可用" in body
         )
@@ -169,12 +171,16 @@ async def run(websocket_url: str) -> dict[str, Any]:
             forged["status"] == 200 and forged["body"].get("role") == "viewer"
         )
 
+        assertions["role_menu_at_page_top"] = await click("切换身份")
+        assertions["identity_manager_opened"] = await click("管理身份与申请")
         assertions["creator_activated"] = await click_in_article(
             "开通创作者", "开通身份"
         )
         await wait_for("创作者已开通")
         assertions["creator_switched"] = await click_in_article("创作者", "切换")
         await wait_for("创作者工作台")
+        assertions["professional_workbench_entry"] = await click("创作者工作台")
+        await wait_for("ACTIVE ROLE WORKBENCH")
         project = await api(
             "/api/backend/api/projects",
             "{method:'POST',body:JSON.stringify({title:'G4 真实浏览器创作项目'})}",
@@ -182,16 +188,20 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["creator_project_created"] = project["status"] == 201
         await command("Page.reload")
         await wait_for("今天从这里继续")
-        await click("身份与工作台")
+        await click("创作者工作台")
         body = await wait_for("G4 真实浏览器创作项目")
         assertions["creator_project_restored"] = "创作项目" in body
 
+        await click("当前身份")
+        await click("管理身份与申请")
         assertions["learner_activated"] = await click_in_article(
             "开通学习者", "开通身份"
         )
         await wait_for("学习者已开通")
         assertions["learner_switched"] = await click_in_article("学习者", "切换")
-        await wait_for("学习者工作台")
+        # Learning remains a Gate C1 account capability on Today; the full
+        # learning-growth workspace belongs to Gate C3 and must not be faked.
+        await wait_for("学习者能力状态")
         learned = await api(
             "/api/backend/api/user-center/library/want_to_learn/g4-heritage",
             "{method:'PUT',body:JSON.stringify({title:'G4 非遗学习样本',target_href:'/search'})}",
@@ -199,7 +209,6 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["learning_asset_saved"] = learned["status"] == 200
         await command("Page.reload")
         await wait_for("今天从这里继续")
-        await click("身份与工作台")
         body = await wait_for("G4 非遗学习样本")
         assertions["learner_boundary_visible"] = (
             "AI 非遗老师" in body and "等待真实模型 API" in body
@@ -209,8 +218,10 @@ async def run(websocket_url: str) -> dict[str, Any]:
             learner["status"] == 200 and learner["body"].get("role") == "learner"
         )
 
+        await click("当前身份")
+        await click("管理身份与申请")
         assertions["buyer_switched"] = await click_in_article("买家", "切换")
-        body = await wait_for("买家工作台")
+        body = await wait_for("买家能力状态")
         assertions["commerce_is_honestly_blocked"] = (
             "订单与履约" in body and "电商订单领域尚未接入" in body
         )

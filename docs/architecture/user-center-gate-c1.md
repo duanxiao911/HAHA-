@@ -1,8 +1,8 @@
 # HAHA 用户中心 Gate C1 架构、契约与验收基线
 
-日期：2026-10-13（Asia/Shanghai）
+日期：2026-10-15（Asia/Shanghai）
 
-状态：IMPLEMENTATION BASELINE
+状态：CLOSED（Gate C1 范围；不代表 Production Candidate）
 
 ## 1. 目标
 
@@ -83,11 +83,14 @@ Production Readiness Gate V1.0、AI/Agent 原始知识体系和独立 UI/UX 原�
 
 - 今日：继续观看、想学下一项、当前任务、资产摘要和当前身份快捷入口。
 - 文化资产：收藏、想学、稍后看、关注和观看历史。
-- 身份：保留授权、申请、切换和身份工作台入口。
+- 顶部账户菜单：保留授权、申请与身份切换；只有专业身份显示对应工作台入口。
 - 消息与任务：真实服务端通知与身份任务。
 - 账户设置：资料、可见范围、历史/推荐/画像/通知控制和清除历史。
 
 身份切换降为账户能力之一，不再成为用户中心默认主内容。
+
+文化资产同时展示服务端收藏、想学、稍后看、关注、观看历史，以及由这些真实记录聚合出的
+文化足迹与成长状态。学习路径、测验与成就属于 Gate C3，不在 C1 中伪造。
 
 ## 7. Gate C1 验收
 
@@ -102,4 +105,3 @@ Production Readiness Gate V1.0、AI/Agent 原始知识体系和独立 UI/UX 原�
 | UC-07 | 通知已读、删除和用户隔离有效 | unit + API + browser |
 | UC-08 | 原社区与身份链路无回归 | existing E2E suites |
 | UC-09 | 390/768/1440 无横向溢出 | real Chrome screenshots |
-

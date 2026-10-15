@@ -60,8 +60,12 @@ class UserCenterService:
 
     def bootstrap(self, user_id: str, workspace_id: str) -> dict[str, object]:
         self.identity.bootstrap(user_id, workspace_id)
+        first_bootstrap = not self.repository.has_user_center_settings(
+            user_id, workspace_id
+        )
         self.repository.ensure_user_center_settings(user_id, workspace_id)
-        self._ensure_welcome_notification(user_id, workspace_id)
+        if first_bootstrap:
+            self._ensure_welcome_notification(user_id, workspace_id)
         return self.snapshot(user_id, workspace_id)
 
     def snapshot(self, user_id: str, workspace_id: str) -> dict[str, object]:
@@ -74,10 +78,24 @@ class UserCenterService:
         history = self.repository.list_watch_history(user_id, workspace_id)
         notifications = self.repository.list_user_notifications(user_id, workspace_id)
         unread = sum(1 for item in notifications if not item.read_at)
+        active_roles = [
+            item for item in identity["roles"]
+            if isinstance(item, dict) and item.get("status") == "active"
+        ]
+        completed_tasks = sum(
+            1 for item in identity["tasks"]
+            if isinstance(item, dict) and item.get("status") == "completed"
+        )
         open_tasks = sum(
             1 for item in identity["tasks"]
             if isinstance(item, dict) and item.get("status") == "open"
         )
+        activity_times = [
+            *(item.updated_at for item in library),
+            *(item.updated_at for item in follows),
+            *(item.viewed_at for item in history),
+        ]
+        active_days = {value[:10] for value in activity_times if value}
         next_learning = next(
             (item for item in library if item.kind == LibraryKind.WANT_TO_LEARN.value),
             None,
@@ -108,6 +126,21 @@ class UserCenterService:
                 "history": len(history),
                 "unread_notifications": unread,
                 "open_tasks": open_tasks,
+            },
+            "footprint": {
+                "saved_assets": len(library),
+                "following": len(follows),
+                "watched_items": len(history),
+                "completed_views": sum(item.completed for item in history),
+                "active_days": len(active_days),
+                "first_activity_at": min(activity_times) if activity_times else "",
+                "latest_activity_at": max(activity_times) if activity_times else "",
+            },
+            "growth": {
+                "active_roles": len(active_roles),
+                "completed_tasks": completed_tasks,
+                "open_tasks": open_tasks,
+                "has_cultural_footprint": bool(activity_times),
             },
             "today": {
                 "continue_watching": asdict(history[0]) if history else None,

@@ -439,30 +439,33 @@ class SQLAlchemyCreatorRepository:
     ) -> None:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with self.engine.begin() as connection:
-            if not connection.scalar(select(users.c.id).where(users.c.id == user_id)):
-                connection.execute(users.insert().values(id=user_id, email=email, created_at=now))
-            if not connection.scalar(
-                select(workspaces.c.id).where(workspaces.c.id == workspace_id)
-            ):
-                connection.execute(
-                    workspaces.insert().values(
-                        id=workspace_id, name=workspace_name or workspace_id, created_at=now
-                    )
-                )
-            if not connection.scalar(
-                select(memberships.c.user_id).where(
-                    memberships.c.user_id == user_id,
-                    memberships.c.workspace_id == workspace_id,
-                )
-            ):
-                connection.execute(
-                    memberships.insert().values(
-                        user_id=user_id,
-                        workspace_id=workspace_id,
-                        role=role,
-                        created_at=now,
-                    )
-                )
+            self._insert_ignore(
+                connection,
+                users,
+                {"id": user_id, "email": email, "created_at": now},
+                ["id"],
+            )
+            self._insert_ignore(
+                connection,
+                workspaces,
+                {
+                    "id": workspace_id,
+                    "name": workspace_name or workspace_id,
+                    "created_at": now,
+                },
+                ["id"],
+            )
+            self._insert_ignore(
+                connection,
+                memberships,
+                {
+                    "user_id": user_id,
+                    "workspace_id": workspace_id,
+                    "role": role,
+                    "created_at": now,
+                },
+                ["user_id", "workspace_id"],
+            )
 
     def get_membership_role(self, user_id: str, workspace_id: str) -> str | None:
         with self.engine.connect() as connection:
@@ -833,6 +836,15 @@ class SQLAlchemyCreatorRepository:
         values["detail_json"] = json.loads(event.detail_json)
         with self.engine.begin() as connection:
             connection.execute(identity_audit_events.insert().values(**values))
+
+    def has_user_center_settings(self, user_id: str, workspace_id: str) -> bool:
+        with self.engine.connect() as connection:
+            return bool(connection.scalar(
+                select(func.count()).select_from(user_center_settings).where(
+                    user_center_settings.c.user_id == user_id,
+                    user_center_settings.c.workspace_id == workspace_id,
+                )
+            ))
 
     def ensure_user_center_settings(self, user_id: str, workspace_id: str) -> UserCenterSettings:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")
