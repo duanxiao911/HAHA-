@@ -21,7 +21,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from redis import Redis
 
@@ -40,6 +40,15 @@ from haha_auth.service import (
     InvalidCredentialsError,
     InvalidRefreshTokenError,
 )
+from haha_community.bootstrap import build_community_repository
+from haha_community.domain import (
+    CommunityConflictError,
+    CommunityNotFoundError,
+    CommunityPermissionError,
+    CommunityValidationError,
+)
+from haha_community.repository import CommunityRepository
+from haha_community.service import CommunityService
 from haha_core.bootstrap import build_repository, enqueue_run
 from haha_core.domain import TERMINAL_RUN_STATUSES
 from haha_core.repository import CreatorRepository
@@ -148,12 +157,71 @@ class AuthRefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=40, max_length=300)
 
 
-def create_app(repository: CreatorRepository | None = None) -> FastAPI:
+class CommunityHistoryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    progress_seconds: int = Field(default=0, ge=0, le=86400)
+
+
+class CommunityCommentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    body: str = Field(min_length=1, max_length=1000)
+    parent_id: str = Field(default="", max_length=64)
+
+
+class CommunityAnnotationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    timestamp_seconds: int = Field(ge=0, le=86400)
+    body: str = Field(min_length=1, max_length=1000)
+    kind: str = Field(pattern="^(craft|term|regional_difference|source|correction)$")
+    source_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
+class CommunitySubmissionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    submission_type: str = Field(pattern="^(video|article|project|event)$")
+    title: str = Field(default="", max_length=200)
+
+
+class CommunitySubmissionPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
+    title: str | None = Field(default=None, max_length=200)
+    summary: str | None = Field(default=None, max_length=4000)
+    categoryId: str | None = Field(default=None, max_length=100)
+    regionId: str | None = Field(default=None, max_length=200)
+    projectIds: list[str] | None = Field(default=None, max_length=20)
+    personIds: list[str] | None = Field(default=None, max_length=20)
+    sourceIds: list[str] | None = Field(default=None, max_length=20)
+    tags: list[str] | None = Field(default=None, max_length=12)
+    assets: list[dict[str, object]] | None = Field(default=None, max_length=20)
+    aiDisclosure: str | None = Field(default=None, pattern="^(none|assisted|generated)$")
+
+
+class CommunitySubmissionTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
+    status: str = Field(min_length=3, max_length=32)
+    reviewer_note: str = Field(default="", max_length=2000)
+
+
+class CommunityImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    local_state: dict[str, object]
+
+
+def create_app(
+    repository: CreatorRepository | None = None,
+    community_repository: CommunityRepository | None = None,
+) -> FastAPI:
     validate_security_configuration()
     active_repository = repository or build_repository()
     service = CreatorService(active_repository)
     identity_service = IdentityService(active_repository)  # type: ignore[arg-type]
     user_center_service = UserCenterService(active_repository)  # type: ignore[arg-type]
+    active_community_repository = community_repository or build_community_repository(
+        active_repository
+    )
+    community_service = CommunityService(active_community_repository, user_center_service)
     workbench_service = WorkbenchService(active_repository)  # type: ignore[arg-type]
     auth_service = AuthService(active_repository)  # type: ignore[arg-type]
     application = FastAPI(title="HAHA Creator API", version="0.2.0")
@@ -179,6 +247,30 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
             "X-Workspace-ID",
         ),
     )
+
+    @application.exception_handler(CommunityNotFoundError)
+    async def community_not_found_handler(
+        _request: Request, exc: CommunityNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @application.exception_handler(CommunityPermissionError)
+    async def community_permission_handler(
+        _request: Request, exc: CommunityPermissionError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    @application.exception_handler(CommunityConflictError)
+    async def community_conflict_handler(
+        _request: Request, exc: CommunityConflictError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @application.exception_handler(CommunityValidationError)
+    async def community_validation_handler(
+        _request: Request, exc: CommunityValidationError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     def resolve_membership(
         identity: Principal = Depends(authenticate),
@@ -221,6 +313,19 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
             auth_mode=principal.auth_mode,
         )
         return principal
+
+    def community_actor(principal: Principal) -> tuple[str, str]:
+        snapshot = user_center_service.bootstrap(
+            principal.user_id, principal.workspace_id
+        )
+        profile = snapshot["profile"]
+        account = snapshot["account"]
+        assert isinstance(profile, dict)
+        assert isinstance(account, dict)
+        return (
+            str(profile.get("active_role", "viewer")),
+            str(account.get("display_name", principal.user_id)),
+        )
 
     def execute_run_locally(run_id: str) -> None:
         completed = service.execute_run(run_id)
@@ -872,6 +977,272 @@ def create_app(repository: CreatorRepository | None = None) -> FastAPI:
         except UserCenterNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"deleted": True}
+
+    @application.get("/api/community/bootstrap")
+    def get_community_bootstrap(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.bootstrap(principal.user_id, principal.workspace_id)
+
+    @application.get("/api/community/feed")
+    def get_community_feed(
+        mode: str = Query(default="recommended", pattern="^(recommended|following|nearby|learning)$"),
+        channel_id: str = Query(default="", max_length=100),
+        region_id: str = Query(default="", max_length=200),
+        cursor: int = Query(default=0, ge=0),
+        limit: int = Query(default=20, ge=1, le=50),
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.feed(
+            principal.user_id,
+            principal.workspace_id,
+            mode=mode,
+            channel_id=channel_id,
+            region_id=region_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    @application.get("/api/community/contents/{content_id}")
+    def get_community_content(
+        content_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.content(
+            principal.user_id, principal.workspace_id, content_id
+        )
+
+    @application.get("/api/community/search")
+    def search_community(
+        q: str = Query(min_length=1, max_length=100),
+        scope: str = Query(default="all", pattern="^(all|content|project|person|region)$"),
+        sort: str = Query(
+            default="relevance",
+            pattern="^(relevance|latest|popular|verified)$",
+        ),
+        cursor: int = Query(default=0, ge=0),
+        limit: int = Query(default=20, ge=1, le=50),
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.search(
+            principal.user_id,
+            principal.workspace_id,
+            query=q,
+            scope=scope,
+            sort=sort,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    @application.put("/api/community/contents/{content_id}/reactions/{reaction}")
+    def save_community_reaction(
+        content_id: str,
+        reaction: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.set_reaction(
+            principal.user_id, principal.workspace_id, content_id, reaction, True
+        )
+
+    @application.delete("/api/community/contents/{content_id}/reactions/{reaction}")
+    def delete_community_reaction(
+        content_id: str,
+        reaction: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.set_reaction(
+            principal.user_id, principal.workspace_id, content_id, reaction, False
+        )
+
+    @application.put("/api/community/people/{person_id}/follow")
+    def save_community_follow(
+        person_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.set_follow(
+            principal.user_id, principal.workspace_id, person_id, True
+        )
+
+    @application.delete("/api/community/people/{person_id}/follow")
+    def delete_community_follow(
+        person_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.set_follow(
+            principal.user_id, principal.workspace_id, person_id, False
+        )
+
+    @application.put("/api/community/contents/{content_id}/history")
+    def save_community_history(
+        content_id: str,
+        payload: CommunityHistoryUpdate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.record_history(
+            principal.user_id,
+            principal.workspace_id,
+            content_id,
+            payload.progress_seconds,
+        )
+
+    @application.delete("/api/community/contents/{content_id}/history")
+    def delete_community_history(
+        content_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, bool]:
+        community_service.remove_history(
+            principal.user_id, principal.workspace_id, content_id
+        )
+        return {"deleted": True}
+
+    @application.post(
+        "/api/community/contents/{content_id}/comments",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_community_comment(
+        content_id: str,
+        payload: CommunityCommentCreate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        _, display_name = community_actor(principal)
+        return community_service.create_comment(
+            principal.user_id,
+            principal.workspace_id,
+            display_name,
+            content_id,
+            payload.body,
+            payload.parent_id,
+        )
+
+    @application.delete("/api/community/comments/{comment_id}")
+    def delete_community_comment(
+        comment_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, bool]:
+        community_service.delete_comment(
+            principal.user_id, principal.workspace_id, comment_id
+        )
+        return {"deleted": True}
+
+    @application.post(
+        "/api/community/contents/{content_id}/annotations",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_community_annotation(
+        content_id: str,
+        payload: CommunityAnnotationCreate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        _, display_name = community_actor(principal)
+        return community_service.create_annotation(
+            principal.user_id,
+            principal.workspace_id,
+            display_name,
+            content_id,
+            **payload.model_dump(),
+        )
+
+    @application.delete("/api/community/annotations/{annotation_id}")
+    def delete_community_annotation(
+        annotation_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, bool]:
+        community_service.delete_annotation(
+            principal.user_id, principal.workspace_id, annotation_id
+        )
+        return {"deleted": True}
+
+    @application.get("/api/community/submissions")
+    def list_community_submissions(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        role, _ = community_actor(principal)
+        items = community_service.list_submissions(
+            principal.user_id, principal.workspace_id, role
+        )
+        return {"items": items, "count": len(items)}
+
+    @application.post(
+        "/api/community/submissions", status_code=status.HTTP_201_CREATED
+    )
+    def create_community_submission(
+        payload: CommunitySubmissionCreate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        role, _ = community_actor(principal)
+        return community_service.create_submission(
+            principal.user_id,
+            principal.workspace_id,
+            role,
+            payload.submission_type,
+            payload.title,
+        )
+
+    @application.get("/api/community/submissions/{submission_id}")
+    def get_community_submission(
+        submission_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        role, _ = community_actor(principal)
+        return community_service.get_submission(
+            principal.user_id, principal.workspace_id, role, submission_id
+        )
+
+    @application.patch("/api/community/submissions/{submission_id}")
+    def update_community_submission(
+        submission_id: str,
+        payload: CommunitySubmissionPatch,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        role, _ = community_actor(principal)
+        patch = payload.model_dump(exclude={"expected_version"}, exclude_none=True)
+        return community_service.update_submission(
+            principal.user_id,
+            principal.workspace_id,
+            role,
+            submission_id,
+            payload.expected_version,
+            patch,
+        )
+
+    @application.post("/api/community/submissions/{submission_id}/transition")
+    def transition_community_submission(
+        submission_id: str,
+        payload: CommunitySubmissionTransition,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        role, _ = community_actor(principal)
+        return community_service.transition_submission(
+            principal.user_id,
+            principal.workspace_id,
+            role,
+            submission_id,
+            payload.expected_version,
+            payload.status,
+            payload.reviewer_note,
+        )
+
+    @application.post("/api/community/imports/preview")
+    def preview_community_import(
+        payload: CommunityImportRequest,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return community_service.preview_import(
+            principal.user_id, principal.workspace_id, payload.local_state
+        )
+
+    @application.post("/api/community/imports/commit")
+    def commit_community_import(
+        payload: CommunityImportRequest,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        _, display_name = community_actor(principal)
+        return community_service.commit_import(
+            principal.user_id,
+            principal.workspace_id,
+            display_name,
+            payload.local_state,
+        )
 
     return application
 

@@ -10,12 +10,16 @@ import {
 } from "react";
 
 import type { CommunityActions, CommunityContextValue } from "./contract";
+import { createApiCommunityAdapter } from "./api-adapter";
 import { createLocalCommunityAdapter } from "./local-adapter";
+import { DEMO_MODE } from "@/lib/api";
 
 const CommunityContext = createContext<CommunityContextValue | null>(null);
 
 export function CommunityProvider({ children }: { children: ReactNode }) {
-  const [adapter] = useState(() => createLocalCommunityAdapter());
+  const [adapter] = useState(() => (
+    DEMO_MODE ? createLocalCommunityAdapter() : createApiCommunityAdapter()
+  ));
   const [snapshot, setSnapshot] = useState(() => adapter.getSnapshot());
 
   useEffect(() => {
@@ -46,6 +50,8 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
     rememberSearchTerm: (term) => adapter.rememberSearchTerm(term),
     removeSearchTerm: (term) => adapter.removeSearchTerm(term),
     clearSearchHistory: () => adapter.clearSearchHistory(),
+    previewLocalArchive: (localState) => adapter.previewLocalArchive(localState),
+    importLocalArchive: (localState) => adapter.importLocalArchive(localState),
     createSubmissionDraft: (input) => adapter.createSubmissionDraft(input),
     updateSubmissionDraft: (draftId, patch) => adapter.updateSubmissionDraft(draftId, patch),
     transitionSubmissionDraft: (draftId, nextStatus, reviewerNote) => adapter.transitionSubmissionDraft(draftId, nextStatus, reviewerNote),

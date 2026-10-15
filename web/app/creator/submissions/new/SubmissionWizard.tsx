@@ -73,6 +73,8 @@ export function SubmissionWizard({
   const [feedback, setFeedback] = useState("");
   const loadedDraftId = useRef("");
   const loadedAiHandoff = useRef(false);
+  const apiMode = snapshot.runtime.mode === "api";
+  const canCreate = !apiMode || ["creator", "contributor"].includes(snapshot.viewer.roleLabel);
 
   const currentDraft = snapshot.drafts.find((item) => item.id === draftId);
   const editable = !currentDraft || ["draft", "needs_revision", "rejected"].includes(currentDraft.status);
@@ -137,7 +139,7 @@ export function SubmissionWizard({
     for (const file of files) {
       const kind = assetKind(file);
       if (file.size > maxBytes[kind]) {
-        setError(`${file.name} 超过${kind === "video" ? "100 MB" : kind === "image" ? "15 MB" : "10 MB"}的前端演示限制。`);
+        setError(`${file.name} 超过${kind === "video" ? "100 MB" : kind === "image" ? "15 MB" : "10 MB"}的素材登记限制。`);
         continue;
       }
       next.push({ id: crypto.randomUUID(), name: file.name, kind, mimeType: file.type || "application/octet-stream", sizeBytes: file.size, localOnly: true });
@@ -176,7 +178,7 @@ export function SubmissionWizard({
     try {
       await persist();
       setStep(Math.max(0, Math.min(steps.length - 1, nextStep)));
-      setFeedback("草稿已保存到当前浏览器。 ");
+      setFeedback(apiMode ? "草稿和新版本已保存到服务端。" : "草稿已保存到当前浏览器。");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "草稿保存失败。 ");
     } finally {
@@ -193,10 +195,10 @@ export function SubmissionWizard({
     setError("");
     try {
       let draft = await persist();
-      if (draft.status === "rejected") draft = await actions.transitionSubmissionDraft(draft.id, "needs_revision", "创作者已在本地演示中重新编辑。 ");
+      if (draft.status === "rejected") draft = await actions.transitionSubmissionDraft(draft.id, "needs_revision", "创作者已重新编辑。 ");
       if (["draft", "needs_revision"].includes(draft.status)) draft = await actions.transitionSubmissionDraft(draft.id, "checking");
       if (draft.status === "checking") draft = await actions.transitionSubmissionDraft(draft.id, "submitted");
-      setFeedback("已进入本地演示审核队列；这不代表真实平台已收到投稿。 ");
+      setFeedback(apiMode ? "已进入服务端内部审核队列。" : "已进入本地演示审核队列；这不代表真实平台已收到投稿。 ");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "提交失败。 ");
     } finally {
@@ -204,22 +206,34 @@ export function SubmissionWizard({
     }
   }
 
-  if (initialDraftId && snapshot.runtime.hydrated && !currentDraft) {
-    return <ProductFrame><StateNotice kind="empty" title="没有找到这份投稿草稿" description="草稿可能已被清除，或属于另一个浏览器。" actionLabel="新建投稿" actionHref="/creator/submissions/new" /></ProductFrame>;
+  if (!snapshot.runtime.hydrated) {
+    return <ProductFrame><StateNotice kind="loading" title="正在读取投稿工作区" description={apiMode ? "正在从服务端恢复草稿和版本。" : "正在从当前浏览器恢复草稿。"} /></ProductFrame>;
+  }
+
+  if (snapshot.runtime.recoveryNotice) {
+    return <ProductFrame><StateNotice kind="offline" title="投稿工作区暂时不可用" description={snapshot.runtime.recoveryNotice} /></ProductFrame>;
+  }
+
+  if (!canCreate) {
+    return <ProductFrame><StateNotice kind="forbidden" title="当前身份不能创建投稿" description="请先开通并切换到创作者或知识贡献者身份。" actionLabel="前往身份中心" actionHref="/identity" /></ProductFrame>;
+  }
+
+  if (initialDraftId && !currentDraft) {
+    return <ProductFrame><StateNotice kind="empty" title="没有找到这份投稿草稿" description={apiMode ? "草稿可能已归档，或属于另一个账户。" : "草稿可能已被清除，或属于另一个浏览器。"} actionLabel="新建投稿" actionHref="/creator/submissions/new" /></ProductFrame>;
   }
 
   if (currentDraft && !editable) {
     return (
       <ProductFrame>
-        <div className="productDemoStrip"><b>本地审核状态</b><span>这份投稿当前为 {currentDraft.status}，内容已锁定，避免审核中被静默修改。</span></div>
-        <section className="productPanel"><div className="productPanelBody"><span className="productStatusPill is-good">{currentDraft.status}</span><h1>{currentDraft.title}</h1><p>{currentDraft.summary}</p><div className="productFormActions"><Link className="productButton" href="/review">进入本地审核中心</Link><Link className="productButtonSecondary" href="/profile/demo-user">查看投稿管理</Link></div></div></section>
+        <div className="productDemoStrip"><b>{apiMode ? "服务端审核状态" : "本地审核状态"}</b><span>这份投稿当前为 {currentDraft.status}，内容已锁定，避免审核中被静默修改。</span></div>
+        <section className="productPanel"><div className="productPanelBody"><span className="productStatusPill is-good">{currentDraft.status}</span><h1>{currentDraft.title}</h1><p>{currentDraft.summary}</p><div className="productFormActions"><Link className="productButton" href="/review">进入审核中心</Link><Link className="productButtonSecondary" href={`/profile/${encodeURIComponent(snapshot.viewer.id || "demo-user")}`}>查看投稿管理</Link></div></div></section>
       </ProductFrame>
     );
   }
 
   return (
     <ProductFrame>
-      <div className="productDemoStrip" role="note"><b>投稿演示模式</b><span>文件仅登记名称、类型和大小，不上传 Blob；提交与审核状态仅保存在当前浏览器。</span></div>
+      <div className="productDemoStrip" role="note"><b>{apiMode ? "内部投稿工作区" : "投稿演示模式"}</b><span>文件仅登记名称、类型和大小，不上传文件内容；{apiMode ? "草稿、版本和审核状态保存在服务端。" : "提交与审核状态仅保存在当前浏览器。"}</span></div>
       <div className="productWizard">
         <ol className="productWizardSteps" aria-label="投稿步骤">
           {steps.map((label, index) => <li className={index === step ? "active" : index < step ? "done" : ""} aria-current={index === step ? "step" : undefined} key={label}><span>{index < step ? "✓" : index + 1}</span><b>{label}</b></li>)}
@@ -227,11 +241,11 @@ export function SubmissionWizard({
         <section className="productWizardPanel" aria-live="polite">
           <small className="productEyebrow">STEP {step + 1} / {steps.length}</small>
           {step === 0 ? <><h1>选择内容类型</h1><p>四类投稿共用同一套来源、披露和审核规则。</p><div className="productTypeGrid">{submissionTypes.map((item) => <button type="button" aria-pressed={type === item.value} onClick={() => setType(item.value)} key={item.value}><b>{item.title}</b><span>{item.detail}</span></button>)}</div></> : null}
-          {step === 1 ? <><h1>登记素材</h1><p>当前只保存文件元数据。真实对象存储、MIME 复核、病毒扫描和服务端大小限制留到 API 接入。</p><label className="productButtonSecondary">选择本地文件<input className="productVisuallyHidden" type="file" multiple accept="video/*,image/*,.pdf,.docx" onChange={selectFiles} /></label>{assets.length ? <ul className="productSourceList">{assets.map((asset) => <li key={asset.id}><b>{asset.name}</b><p>{asset.kind} · {asset.mimeType} · {fileSize(asset.sizeBytes)} · 仅本地元数据</p><button className="productButtonQuiet" type="button" onClick={() => setAssets((items) => items.filter((item) => item.id !== asset.id))}>移除</button></li>)}</ul> : <StateNotice compact kind="empty" title="尚未登记素材" description="内部演示可选择一个小型图片或视频文件；文件内容不会写入浏览器存储。" />}</> : null}
+          {step === 1 ? <><h1>登记素材</h1><p>当前只保存文件元数据，尚未接入对象存储、服务端 MIME 复核和病毒扫描；选择文件不代表上传成功。</p><label className="productButtonSecondary">选择本地文件<input className="productVisuallyHidden" type="file" multiple accept="video/*,image/*,.pdf,.docx" onChange={selectFiles} /></label>{assets.length ? <ul className="productSourceList">{assets.map((asset) => <li key={asset.id}><b>{asset.name}</b><p>{asset.kind} · {asset.mimeType} · {fileSize(asset.sizeBytes)} · 仅登记元数据</p><button className="productButtonQuiet" type="button" onClick={() => setAssets((items) => items.filter((item) => item.id !== asset.id))}>移除</button></li>)}</ul> : <StateNotice compact kind="empty" title="尚未登记素材" description="可选择一个小型图片或视频文件用于登记；文件内容不会被上传或写入浏览器存储。" />}</> : null}
           {step === 2 ? <><h1>填写基础信息</h1><p>标题和简介将同时用于预览与事实检查。</p><div className="productForm"><label>标题<input value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} placeholder="准确描述内容，不使用夸张数字" /></label><label>内容简介<textarea value={summary} maxLength={4000} onChange={(event) => setSummary(event.target.value)} placeholder="说明人物、地方、材料、过程和内容边界" /></label><div className="productFormGrid"><label>内容分类<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">请选择</option>{Array.from(new Map(snapshot.contents.map((item) => [item.categoryId, item.categoryLabel]))).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label><label>地区<select value={regionId} onChange={(event) => setRegionId(event.target.value)}><option value="">请选择</option>{snapshot.regions.map((region) => <option value={region.id} key={region.id}>{region.name}</option>)}</select></label></div><label>标签<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="用中文逗号分隔，例如：苗绣，人物故事" /></label></div></> : null}
           {step === 3 ? <><h1>关联项目、人物与来源</h1><p>来源是事实层的一部分，不能在发布时静默丢失。</p><div className="productForm"><fieldset><legend>非遗项目（至少一项）</legend>{snapshot.projects.map((project) => <label key={project.id}><input type="checkbox" checked={projectIds.includes(project.id)} onChange={() => toggle(projectIds, project.id, setProjectIds)} /> {project.name}</label>)}</fieldset><fieldset><legend>相关人物</legend>{snapshot.people.map((person) => <label key={person.id}><input type="checkbox" checked={personIds.includes(person.id)} onChange={() => toggle(personIds, person.id, setPersonIds)} /> {person.displayName}</label>)}</fieldset><fieldset><legend>事实来源（至少一条）</legend>{snapshot.sources.map((source) => <label key={source.id}><input type="checkbox" checked={sourceIds.includes(source.id)} onChange={() => toggle(sourceIds, source.id, setSourceIds)} /> {source.title} · {source.publisher}</label>)}</fieldset></div></> : null}
           {step === 4 ? <><h1>AI 披露与自动检查</h1><p>同一事实层可以被多个平台版本复用，但不能因改写而产生新事实。</p><div className="productTypeGrid">{(["none", "assisted", "generated"] as const).map((value) => <button type="button" aria-pressed={aiDisclosure === value} onClick={() => setAiDisclosure(value)} key={value}><b>{value === "none" ? "未使用 AI" : value === "assisted" ? "AI 辅助" : "AI 主要生成"}</b><span>{value === "none" ? "完全人工整理" : value === "assisted" ? "人工主导，AI 协助表达" : "需重点复核事实与归因"}</span></button>)}</div><ul className="productClaimList">{checks.map((check) => <li key={check.label}><b>{check.pass ? "✓" : "○"} {check.label}</b><small>{check.pass ? " 已完成" : " 仍需补充"}</small></li>)}</ul><div className="productInlineAlert">这是一组前端完整性检查，不等于后端 Verifier、文件安全扫描或人工文化审核。</div></> : null}
-          {step === 5 ? <><h1>预览并提交</h1><p>提交后进入本地状态机，审核期间内容不可编辑。</p><article className="productPanel"><div className="productPanelBody"><span className="productStatusPill">{submissionTypes.find((item) => item.value === type)?.title}</span><h2>{title || "未填写标题"}</h2><p>{summary || "未填写简介"}</p><p>素材 {assets.length} 项 · 项目 {projectIds.length} 项 · 来源 {sourceIds.length} 条 · AI：{aiDisclosure}</p></div></article><ul className="productClaimList">{checks.map((check) => <li key={check.label}><b>{check.pass ? "✓" : "!"} {check.label}</b></li>)}</ul><button className="productButton" type="button" disabled={busy || !checksPass} onClick={() => void submitForReview()}>{busy ? "正在提交…" : "提交本地审核"}</button></> : null}
+          {step === 5 ? <><h1>预览并提交</h1><p>提交后进入{apiMode ? "服务端" : "本地"}状态机，审核期间内容不可编辑。</p><article className="productPanel"><div className="productPanelBody"><span className="productStatusPill">{submissionTypes.find((item) => item.value === type)?.title}</span><h2>{title || "未填写标题"}</h2><p>{summary || "未填写简介"}</p><p>素材 {assets.length} 项 · 项目 {projectIds.length} 项 · 来源 {sourceIds.length} 条 · AI：{aiDisclosure}</p></div></article><ul className="productClaimList">{checks.map((check) => <li key={check.label}><b>{check.pass ? "✓" : "!"} {check.label}</b></li>)}</ul><button className="productButton" type="button" disabled={busy || !checksPass} onClick={() => void submitForReview()}>{busy ? "正在提交…" : apiMode ? "提交内部审核" : "提交本地审核"}</button></> : null}
           {error ? <div className="productInlineAlert" role="alert">{error}</div> : null}
           <div className="productFormActions"><button className="productButtonSecondary" type="button" disabled={busy || step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>上一步</button>{step < steps.length - 1 ? <button className="productButton" type="button" disabled={busy} onClick={() => void saveAndMove(step + 1)}>{busy ? "保存中…" : "保存并继续"}</button> : null}</div>
         </section>

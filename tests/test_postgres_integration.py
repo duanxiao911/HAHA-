@@ -9,6 +9,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from haha_auth.service import AuthService, InvalidRefreshTokenError
+from haha_community.domain import CommunityConflictError
+from haha_community.service import CommunityService
+from haha_community.sqlalchemy_repository import SQLAlchemyCommunityRepository
 from haha_core.domain import RunStatus, ScriptVersion, new_id, utc_now
 from haha_core.service import CreatorService
 from haha_core.sqlalchemy_repository import SQLAlchemyCreatorRepository
@@ -137,6 +140,72 @@ def test_postgres_user_center_assets_preferences_and_history_are_durable(reposit
     assert reloaded["summary"]["want_to_learn"] == 1
     assert reloaded["summary"]["history"] == 1
     assert reloaded["history"][0]["completed"] is True
+
+
+def test_postgres_community_state_is_durable_and_submission_lock_is_atomic(
+    repository,
+) -> None:
+    with repository.engine.begin() as connection:
+        connection.execute(text(
+            "TRUNCATE community_import_receipts, community_submission_events, "
+            "community_submission_revisions, community_submissions, "
+            "community_annotations, community_comments, community_respects, "
+            "community_entities CASCADE"
+        ))
+    repository.ensure_identity("community-user", "pg-workspace", role="owner")
+    community_repository = SQLAlchemyCommunityRepository(POSTGRES_URL)
+    service = CommunityService(
+        community_repository,
+        UserCenterService(repository),
+    )
+    snapshot = service.bootstrap("community-user", "pg-workspace")
+    content_id = str(snapshot["contents"][0]["id"])
+    service.set_reaction(
+        "community-user", "pg-workspace", content_id, "bookmark", True
+    )
+    comment = service.create_comment(
+        "community-user",
+        "pg-workspace",
+        "PostgreSQL 用户",
+        content_id,
+        "持久评论",
+    )
+    draft = service.create_submission(
+        "community-user", "pg-workspace", "creator", "article", "并发版本"
+    )
+
+    def update_once(title: str) -> str:
+        fresh = CommunityService(
+            SQLAlchemyCommunityRepository(POSTGRES_URL),
+            UserCenterService(SQLAlchemyCreatorRepository(POSTGRES_URL)),
+        )
+        try:
+            fresh.update_submission(
+                "community-user",
+                "pg-workspace",
+                "creator",
+                str(draft["id"]),
+                1,
+                {"title": title},
+            )
+        except CommunityConflictError:
+            return "conflict"
+        return "updated"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(update_once, ("版本 A", "版本 B")))
+
+    restored = CommunityService(
+        SQLAlchemyCommunityRepository(POSTGRES_URL),
+        UserCenterService(SQLAlchemyCreatorRepository(POSTGRES_URL)),
+    ).bootstrap("community-user", "pg-workspace")
+    restored_content = next(
+        item for item in restored["contents"] if item["id"] == content_id
+    )
+    assert "bookmark" in restored_content["viewer"]["reactions"]
+    assert any(item["id"] == comment["id"] for item in restored["comments"])
+    assert sorted(outcomes) == ["conflict", "updated"]
+    assert restored["drafts"][0]["version"] == 2
 
 
 def test_postgres_role_workbench_uses_durable_active_context(repository) -> None:

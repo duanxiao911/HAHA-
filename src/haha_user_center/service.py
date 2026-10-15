@@ -359,6 +359,40 @@ class UserCenterService:
             notification_id, user_id, workspace_id
         )
 
+    def create_notification(
+        self,
+        user_id: str,
+        workspace_id: str,
+        *,
+        kind: str,
+        title: str,
+        body: str,
+        target_href: str,
+        idempotency_key: str,
+    ) -> UserNotification:
+        """Create one durable notification for an external domain event."""
+        digest = hashlib.sha256(
+            f"{user_id}:{workspace_id}:{idempotency_key}".encode()
+        ).hexdigest()[:32]
+        notification = UserNotification(
+            id=f"notice_{digest}",
+            user_id=user_id,
+            workspace_id=workspace_id,
+            kind=_clean(kind, label="通知类型", maximum=32, required=True),
+            title=_clean(title, label="通知标题", maximum=200, required=True),
+            body=_clean(body, label="通知内容", maximum=1000, required=True),
+            target_href=_href(target_href),
+            read_at="",
+            created_at=_now(),
+        )
+        existing = self.repository.get_user_notification(
+            notification.id, user_id, workspace_id
+        )
+        if existing:
+            return existing
+        self.repository.save_user_notification(notification)
+        return notification
+
     def _ensure_welcome_notification(self, user_id: str, workspace_id: str) -> None:
         digest = hashlib.sha256(
             f"{user_id}:{workspace_id}:welcome".encode()

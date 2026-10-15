@@ -5,6 +5,15 @@ const API_BASE_URL = AUTH_REQUIRED
   : process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 type JsonObject = Record<string, unknown>;
+export class ApiRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
 export type AuthSessionState = "unknown" | "authenticated" | "anonymous";
 const authListeners = new Set<() => void>();
 let authState: AuthSessionState = AUTH_REQUIRED ? "unknown" : "authenticated";
@@ -88,9 +97,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     if (response.status === 401 && AUTH_REQUIRED) setAuthState("anonymous");
     const payload = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new Error(String(payload.detail ?? `请求失败：${response.status}`));
+    throw new ApiRequestError(
+      response.status,
+      String(payload.detail ?? `请求失败：${response.status}`),
+    );
   }
   return response.json() as Promise<T>;
+}
+
+/** Auth-aware transport shared by bounded-context client adapters. */
+export async function communityApiRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  idempotencyKey?: string,
+): Promise<T> {
+  const merged = new Headers(headers(idempotencyKey));
+  new Headers(init.headers).forEach((value, key) => merged.set(key, value));
+  return request<T>(path, { ...init, headers: merged });
 }
 
 export type AuthSession = {

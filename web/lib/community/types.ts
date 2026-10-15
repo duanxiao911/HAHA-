@@ -4,7 +4,7 @@ export type ISODateString = string;
 export const LOCAL_DEMO_WORKSPACE_ID = "demo-workspace";
 export const LOCAL_DEMO_VIEWER_ID = "demo-user";
 
-export type DemoProvenance = "local_demo";
+export type DemoProvenance = "local_demo" | "demo_seed" | "server";
 
 export type ContentType =
   | "short_video"
@@ -236,6 +236,7 @@ export interface SubmissionDraft extends DemoEntity {
   ownerId: EntityId;
   submissionType: SubmissionType;
   status: SubmissionStatus;
+  version: number;
   title: string;
   summary: string;
   categoryId?: EntityId;
@@ -269,17 +270,17 @@ export type SubmissionDraftPatch = Partial<
 >;
 
 export interface LocalDemoViewer {
-  id: typeof LOCAL_DEMO_VIEWER_ID;
-  workspaceId: typeof LOCAL_DEMO_WORKSPACE_ID;
+  id: string;
+  workspaceId: string;
   displayName: string;
-  authState: "local_demo";
+  authState: "local_demo" | "authenticated";
   roleLabel: string;
 }
 
 export interface LocalDemoRuntime {
-  mode: "local_demo";
+  mode: "local_demo" | "api";
   hydrated: boolean;
-  persistence: "memory" | "local_storage";
+  persistence: "memory" | "local_storage" | "postgresql";
   recoveryNotice: string | null;
   schemaVersion: number;
   dataNotice: string;

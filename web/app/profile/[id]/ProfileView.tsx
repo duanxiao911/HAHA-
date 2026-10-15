@@ -8,7 +8,13 @@ import { ContentTile } from "@/components/community/ContentTile";
 import { EntityCard } from "@/components/community/EntityCard";
 import { ProductFrame } from "@/components/community/ProductFrame";
 import { StateNotice } from "@/components/community/StateNotice";
-import { LOCAL_DEMO_VIEWER_ID, useCommunity } from "@/lib/community";
+import {
+  COMMUNITY_LOCAL_STORAGE_KEY,
+  type CommunityImportPreview,
+  type CommunityImportResult,
+  LOCAL_DEMO_VIEWER_ID,
+  useCommunity,
+} from "@/lib/community";
 
 type ArchiveTab = "saved" | "learning" | "history" | "following" | "created" | "contributions";
 
@@ -45,13 +51,44 @@ function normalizeArchiveTab(value: string): ArchiveTab {
   return archiveTabs.some((item) => item.value === value) ? value as ArchiveTab : "saved";
 }
 
+function readLocalArchive(): {
+  detected: boolean;
+  value: Record<string, unknown> | null;
+  error: string;
+} {
+  if (typeof window === "undefined") return { detected: false, value: null, error: "" };
+  try {
+    const raw = window.localStorage.getItem(COMMUNITY_LOCAL_STORAGE_KEY);
+    if (!raw) return { detected: false, value: null, error: "" };
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("invalid local archive");
+    }
+    return { detected: true, value: parsed as Record<string, unknown>, error: "" };
+  } catch {
+    return {
+      detected: true,
+      value: null,
+      error: "检测到本地档案，但数据已损坏；平台没有修改或删除原始副本。",
+    };
+  }
+}
+
 export function ProfileView({ profileId }: { profileId: string }) {
   const searchParams = useSearchParams();
   const { snapshot, actions } = useCommunity();
   const [tab, setTab] = useState<ArchiveTab>(() => normalizeArchiveTab(searchParams.get("tab") ?? "saved"));
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
-  const isViewer = profileId === LOCAL_DEMO_VIEWER_ID;
+  const [archiveDetection] = useState(readLocalArchive);
+  const [importPreview, setImportPreview] = useState<CommunityImportPreview | null>(null);
+  const [importResult, setImportResult] = useState<CommunityImportResult | null>(null);
+  const [importError, setImportError] = useState(archiveDetection.error);
+  const archiveDetected = archiveDetection.detected;
+  const localArchive = archiveDetection.value;
+  const apiMode = snapshot.runtime.mode === "api";
+  const isViewer = profileId === snapshot.viewer.id
+    || (!apiMode && profileId === LOCAL_DEMO_VIEWER_ID);
   const person = snapshot.people.find((item) => item.id === profileId || item.slug === profileId);
 
   const saved = snapshot.contents.filter((item) => item.viewer.reactions.includes("bookmark"));
@@ -80,6 +117,7 @@ export function ProfileView({ profileId }: { profileId: string }) {
   }
 
   async function resetDemo() {
+    if (apiMode) return;
     if (!globalThis.confirm("只清除这个浏览器中的 HAHA 演示互动、历史和草稿，确定继续吗？")) return;
     setBusy(true);
     try {
@@ -90,10 +128,48 @@ export function ProfileView({ profileId }: { profileId: string }) {
     }
   }
 
+  async function previewArchive() {
+    if (!localArchive) return;
+    setBusy(true);
+    setImportError("");
+    try {
+      setImportPreview(await actions.previewLocalArchive(localArchive));
+      setImportResult(null);
+    } catch (cause) {
+      setImportError(cause instanceof Error ? cause.message : "本地档案检查失败。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importArchive() {
+    if (!localArchive || !importPreview || importPreview.alreadyImported) return;
+    setBusy(true);
+    setImportError("");
+    try {
+      const result = await actions.importLocalArchive(localArchive);
+      setImportResult(result);
+      setImportPreview({ ...importPreview, alreadyImported: true });
+      setFeedback("本地文化档案已迁移到账户；浏览器原始副本仍保留。");
+    } catch (cause) {
+      setImportError(cause instanceof Error ? cause.message : "本地档案迁移失败。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!snapshot.runtime.hydrated) {
+    return <ProductFrame><StateNotice kind="loading" title="正在打开文化档案" description="正在读取人物、互动和投稿数据。" /></ProductFrame>;
+  }
+
+  if (snapshot.runtime.recoveryNotice) {
+    return <ProductFrame><StateNotice kind="offline" title="文化档案暂时不可用" description={snapshot.runtime.recoveryNotice} /></ProductFrame>;
+  }
+
   if (!isViewer && !person) {
     return (
       <ProductFrame>
-        <StateNotice kind="empty" title="没有找到这份人物档案" description="该人物可能不在本地演示数据中。" actionLabel="浏览传承人" actionHref="/inheritors" />
+        <StateNotice kind="empty" title="没有找到这份人物档案" description="该人物可能不在当前目录中。" actionLabel="浏览传承人" actionHref="/inheritors" />
       </ProductFrame>
     );
   }
@@ -129,8 +205,8 @@ export function ProfileView({ profileId }: { profileId: string }) {
   return (
     <ProductFrame>
       <div className="productDemoStrip" role="note">
-        <b>本地体验身份</b>
-        <span>这不是注册账号。档案和操作只保存在当前浏览器，不能跨设备同步。</span>
+        <b>{apiMode ? "文化账户档案" : "本地体验身份"}</b>
+        <span>{apiMode ? "收藏、想学、关注、观看和贡献均来自服务端账户。" : "这不是注册账号。档案和操作只保存在当前浏览器，不能跨设备同步。"}</span>
       </div>
       <section className="productProfileHero">
         <div className="productProfileAvatar" aria-hidden="true">哈</div>
@@ -139,8 +215,48 @@ export function ProfileView({ profileId }: { profileId: string }) {
           <h1>{snapshot.viewer.displayName}</h1>
           <p>{snapshot.viewer.roleLabel} · 把收藏、想学、关注、观看和知识贡献整理成个人非遗探索档案。</p>
         </div>
-        <button className="productButtonSecondary" type="button" disabled={busy} onClick={() => void resetDemo()}>重置本地演示</button>
+        {!apiMode ? <button className="productButtonSecondary" type="button" disabled={busy} onClick={() => void resetDemo()}>重置本地演示</button> : null}
       </section>
+
+      {apiMode && archiveDetected ? (
+        <section className="productPanel" aria-labelledby="local-archive-migration-title">
+          <div className="productPanelBody">
+            <small className="productEyebrow">LOCAL ARCHIVE MIGRATION</small>
+            <h2 id="local-archive-migration-title">迁移浏览器文化档案</h2>
+            <p>先由服务端检查可迁移数量，再由你明确确认。原始浏览器副本不会自动删除，本地“已核验、已审核、已发布”状态不会提升为账户可信状态。</p>
+            {importError ? <div className="productInlineAlert" role="alert">{importError}</div> : null}
+            {!importPreview ? (
+              <button className="productButtonSecondary" type="button" disabled={busy || !localArchive} onClick={() => void previewArchive()}>
+                {busy ? "正在检查…" : "检查本地档案"}
+              </button>
+            ) : (
+              <>
+                <div className="productStatGrid" aria-label="本地档案可迁移数量">
+                  <div><b>{importPreview.importable.reactionTargets}</b><span>互动目标</span></div>
+                  <div><b>{importPreview.importable.follows}</b><span>关注人物</span></div>
+                  <div><b>{importPreview.importable.history}</b><span>观看记录</span></div>
+                  <div><b>{importPreview.importable.comments + importPreview.importable.annotations + importPreview.importable.drafts}</b><span>贡献与草稿</span></div>
+                </div>
+                <div className="productInlineAlert">
+                  {importPreview.alreadyImported
+                    ? "这份本地档案已经迁移过；幂等保护会阻止重复写入。"
+                    : `不会迁移：${importPreview.ignored.join("、")}。`}
+                </div>
+                {!importPreview.alreadyImported ? (
+                  <button className="productButton" type="button" disabled={busy} onClick={() => void importArchive()}>
+                    {busy ? "正在迁移…" : "确认迁移到当前账户"}
+                  </button>
+                ) : null}
+              </>
+            )}
+            {importResult ? (
+              <p role="status">
+                迁移完成：互动 {importResult.imported.reactions}、关注 {importResult.imported.follows}、历史 {importResult.imported.history}、评论 {importResult.imported.comments}、注释 {importResult.imported.annotations}、草稿 {importResult.imported.drafts}；跳过 {importResult.skipped}。{importResult.trustBoundary}。
+              </p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <div className="productStatGrid" aria-label="文化档案概览">
         <div><b>{saved.length}</b><span>收藏内容</span></div>
@@ -157,10 +273,10 @@ export function ProfileView({ profileId }: { profileId: string }) {
 
       {tab === "saved" && (saved.length ? <div className="productContentGrid">{saved.map((item) => <ContentTile content={item} key={item.id} />)}</div> : <StateNotice kind="empty" title="还没有收藏" description="打开任意内容详情，点“收藏”后会出现在这里。" actionLabel="发现内容" actionHref="/" />)}
       {tab === "learning" && (learning.length ? <div className="productContentGrid">{learning.map((item) => <ContentTile content={item} key={item.id} />)}</div> : <StateNotice kind="empty" title="想学清单还是空的" description="在内容详情点“想学”，建立自己的技艺学习清单。" actionLabel="搜索技艺" actionHref="/search" />)}
-      {tab === "history" && (history.length ? <div className="productSearchResults">{history.map(({ entry, content }) => <div key={content.id}><ContentTile content={content} compact /><p>最近观看：{dateTimeFormatter.format(new Date(entry.viewedAt))} · {entry.progressSeconds} 秒</p></div>)}</div> : <StateNotice kind="empty" title="还没有观看记录" description="进入内容详情后会在当前浏览器记录观看历史。" actionLabel="浏览首页" actionHref="/" />)}
+      {tab === "history" && (history.length ? <div className="productSearchResults">{history.map(({ entry, content }) => <div key={content.id}><ContentTile content={content} compact /><p>最近观看：{dateTimeFormatter.format(new Date(entry.viewedAt))} · {entry.progressSeconds} 秒</p></div>)}</div> : <StateNotice kind="empty" title="还没有观看记录" description={apiMode ? "进入内容详情后会记录到账户观看历史。" : "进入内容详情后会在当前浏览器记录观看历史。"} actionLabel="浏览首页" actionHref="/" />)}
       {tab === "following" && (following.length ? <div className="productEntityGrid">{following.map((item) => <EntityCard kind="profile" id={item.id} href={`/inheritors/${item.id}`} title={item.displayName} summary={item.bio} verificationStatus={item.verified ? "verified" : "pending"} key={item.id} />)}</div> : <StateNotice kind="empty" title="还没有关注人物" description="人物档案和内容详情都可以关注。" actionLabel="浏览人物" actionHref="/inheritors" />)}
       {tab === "created" && (snapshot.drafts.length ? <ul className="productDraftList">{snapshot.drafts.map((draft) => <li key={draft.id}><span className="productStatusPill">{statusLabels[draft.status] ?? draft.status}</span><h2>{draft.title || "未命名投稿"}</h2><p>{draft.summary || "还没有填写内容简介。"}</p><Link className="productButtonSecondary" href={`/creator/submissions/new?draft=${encodeURIComponent(draft.id)}`}>继续处理</Link></li>)}</ul> : <StateNotice kind="empty" title="还没有投稿草稿" description="从 AI 创作结果或投稿向导创建第一份草稿。" actionLabel="开始投稿" actionHref="/creator/submissions/new" />)}
-      {tab === "contributions" && (contributionCount ? <div className="productPanel"><div className="productPanelBody"><h2>你的本地知识贡献</h2><p>评论 {snapshot.comments.filter((item) => item.authorId === snapshot.viewer.id && item.status === "visible").length} 条，时间点知识注释 {snapshot.annotations.filter((item) => item.authorId === snapshot.viewer.id).length} 条。正式系统接入后，贡献会经历身份、来源和审核校验。</p></div></div> : <StateNotice kind="empty" title="还没有知识贡献" description="在内容详情中添加评论、来源或时间点知识注释。" actionLabel="去浏览内容" actionHref="/" />)}
+      {tab === "contributions" && (contributionCount ? <div className="productPanel"><div className="productPanelBody"><h2>你的知识贡献</h2><p>评论 {snapshot.comments.filter((item) => item.authorId === snapshot.viewer.id && item.status === "visible").length} 条，时间点知识注释 {snapshot.annotations.filter((item) => item.authorId === snapshot.viewer.id).length} 条。{apiMode ? "注释在服务端保持待核验，不能自动成为可信事实。" : "正式系统接入后，贡献会经历身份、来源和审核校验。"}</p></div></div> : <StateNotice kind="empty" title="还没有知识贡献" description="在内容详情中添加评论、来源或时间点知识注释。" actionLabel="去浏览内容" actionHref="/" />)}
       {feedback ? <div className="productToast" role="status">{feedback}</div> : null}
     </ProductFrame>
   );

@@ -9,6 +9,7 @@ import {
   initializeAuthSession,
   subscribeAuthSession,
 } from "@/lib/api";
+import { useCommunity } from "@/lib/community/provider";
 
 type AppHeaderProps = {
   initialQuery?: string;
@@ -40,14 +41,18 @@ function SearchIcon() {
   );
 }
 
-export function AppHeader({ initialQuery = "", demoLabel = "本地演示" }: AppHeaderProps) {
+export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { snapshot } = useCommunity();
   const [query, setQuery] = useState(initialQuery);
   const authState = useSyncExternalStore(
     subscribeAuthSession, getAuthSessionSnapshot, getServerAuthSessionSnapshot,
   );
   const signedIn = authState === "authenticated";
+  const environmentLabel = demoLabel ?? (
+    snapshot.runtime.mode === "api" ? "内部 API" : "本地演示"
+  );
   useEffect(() => { void initializeAuthSession(); }, []);
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
@@ -63,9 +68,9 @@ export function AppHeader({ initialQuery = "", demoLabel = "本地演示" }: App
           <span>HA</span>HA
         </Link>
 
-        <span className="productEnvironmentBadge" title="当前数据保存在本地演示环境中">
+        <span className="productEnvironmentBadge" title={snapshot.runtime.dataNotice}>
           <i aria-hidden="true" />
-          {demoLabel}
+          {environmentLabel}
         </span>
 
         <nav className="productPrimaryNav" aria-label="主要导航">

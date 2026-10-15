@@ -15,13 +15,6 @@ import { ProductFrame } from "@/components/community/ProductFrame";
 import { StateNotice } from "@/components/community/StateNotice";
 import { TrustBadge } from "@/components/community/TrustBadge";
 import {
-  hasAccessToken,
-  initializeAuthSession,
-  recordUserCenterHistory,
-  setUserCenterFollow,
-  setUserCenterLibrary,
-} from "@/lib/api";
-import {
   CommunityDataError,
   type ReactionKind,
   type TimedKnowledgeAnnotation,
@@ -70,6 +63,7 @@ function describeError(error: unknown): string {
 
 export function ContentDetailView({ contentId }: ContentDetailViewProps) {
   const { snapshot, actions } = useCommunity();
+  const apiMode = snapshot.runtime.mode === "api";
   const content = snapshot.contents.find((item) => item.id === contentId);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -80,27 +74,17 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
   const [annotationSourceId, setAnnotationSourceId] = useState("");
   const historyRecordedFor = useRef<string | null>(null);
   const historyContentId = content?.id;
-  const historyContentTitle = content?.title;
-  const historyContentDuration = content?.durationSeconds ?? 0;
 
   useEffect(() => {
-    if (!snapshot.runtime.hydrated || !historyContentId || !historyContentTitle || historyRecordedFor.current === historyContentId) return;
+    if (!snapshot.runtime.hydrated || !historyContentId || historyRecordedFor.current === historyContentId) return;
     historyRecordedFor.current = historyContentId;
     let cancelled = false;
     setBusyAction("history");
-    let authenticated = false;
-    void initializeAuthSession().then((signedIn) => {
-      authenticated = signedIn;
-      const operations: Promise<unknown>[] = [actions.recordWatchHistory(historyContentId, 0)];
-      if (signedIn) operations.push(
-        recordUserCenterHistory(historyContentId, historyContentTitle, `/content/${encodeURIComponent(historyContentId)}`, 0, historyContentDuration),
-      );
-      return Promise.all(operations);
-    })
+    void actions.recordWatchHistory(historyContentId, 0)
       .then(() => {
         if (!cancelled) setFeedback({
           kind: "success",
-          message: authenticated ? "观看历史已同步到文化账户。" : "观看历史已保存在此浏览器；登录后可跨设备同步。",
+          message: apiMode ? "观看历史已同步到文化账户。" : "观看历史已保存在此浏览器演示数据中。",
         });
       })
       .catch((error: unknown) => {
@@ -110,7 +94,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
         if (!cancelled) setBusyAction((current) => current === "history" ? null : current);
     });
     return () => { cancelled = true; };
-  }, [actions, historyContentDuration, historyContentId, historyContentTitle, snapshot.runtime.hydrated]);
+  }, [actions, apiMode, historyContentId, snapshot.runtime.hydrated]);
 
   const comments = useMemo(
     () => snapshot.comments.filter((comment) => comment.contentId === contentId),
@@ -123,13 +107,21 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
     [contentId, snapshot.annotations],
   );
 
+  if (!snapshot.runtime.hydrated) {
+    return (
+      <ProductFrame demoLabel={apiMode ? "服务端内容" : "本地演示"}>
+        <StateNotice kind="loading" title="正在加载内容" description="正在读取内容、来源与账户互动状态。" />
+      </ProductFrame>
+    );
+  }
+
   if (!content) {
     return (
-      <ProductFrame demoLabel="本地演示">
+      <ProductFrame demoLabel={apiMode ? "服务端内容" : "本地演示"}>
         <StateNotice
-          kind="empty"
+          kind={snapshot.runtime.recoveryNotice ? "offline" : "empty"}
           title="没有找到这条内容"
-          description="该内容 ID 不在当前本地演示数据中，可能已被移除或链接有误。"
+          description={snapshot.runtime.recoveryNotice ?? "该内容可能已被移除、尚未发布或链接有误。"}
           actionLabel="返回内容社区"
           actionHref="/"
         />
@@ -138,7 +130,6 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
   }
 
   const sourcesById = new Map(snapshot.sources.map((source) => [source.id, source]));
-  const contentTitle = content.title;
   const projects = snapshot.projects.filter((project) => content.projectIds.includes(project.id));
   const relatedPersonIds = new Set([content.creatorId, ...content.personIds]);
   const people = snapshot.people.filter((person) => relatedPersonIds.has(person.id));
@@ -170,14 +161,8 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
   function changeReaction(reaction: ReactionKind, active: boolean, label: string): void {
     void runWrite(
       `reaction-${reaction}`,
-      async () => {
-        await actions.setReaction(contentId, reaction, active);
-        if (reaction !== "respect" && hasAccessToken()) await setUserCenterLibrary(
-          reaction, contentId, contentTitle,
-          `/content/${encodeURIComponent(contentId)}`, active,
-        );
-      },
-      `${active ? "已" : "已取消"}${label}${reaction === "respect" || !hasAccessToken() ? "（本机互动）" : "并同步到文化账户"}。`,
+      () => actions.setReaction(contentId, reaction, active),
+      `${active ? "已" : "已取消"}${label}${apiMode ? "并同步到文化账户" : "（本机演示）"}。`,
     );
   }
 
@@ -194,7 +179,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
         await actions.createComment({ contentId, body });
         setCommentBody("");
       },
-      "评论已保存到本地演示数据。",
+      apiMode ? "评论已保存到服务端账户。" : "评论已保存到本地演示数据。",
     );
   }
 
@@ -224,17 +209,17 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
         setAnnotationSeconds("0");
         setAnnotationSourceId("");
       },
-      "知识注释已保存，并明确标记为“待核验”的本地贡献。",
+      `知识注释已保存，并标记为“待核验”的${apiMode ? "账户贡献" : "本地贡献"}。`,
     );
   }
 
   const coverMark = content.cover.placeholder?.mark ?? "影";
 
   return (
-    <ProductFrame demoLabel="本地内容闭环演示">
+    <ProductFrame demoLabel={apiMode ? "服务端内容闭环" : "本地内容闭环演示"}>
       <div className="productDemoStrip" role="note">
-        <b>本地演示</b>
-        <span>当前内容、人物、来源和审核状态均为功能演示；互动仅保存在此浏览器，不代表真实发布、真实账号或正式核验。</span>
+        <b>{apiMode ? "内部测试" : "本地演示"}</b>
+        <span>{snapshot.runtime.dataNotice}</span>
       </div>
 
       {snapshot.runtime.recoveryNotice ? (
@@ -254,9 +239,8 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
                 async () => {
                   const progress = Math.min(10, content.durationSeconds ?? 10);
                   await actions.recordWatchHistory(content.id, progress);
-                  if (hasAccessToken()) await recordUserCenterHistory(content.id, content.title, `/content/${encodeURIComponent(content.id)}`, progress, content.durationSeconds ?? 0);
                 },
-                "媒体演示进度已同步到文化账户；当前没有接入真实视频流。",
+                `${apiMode ? "媒体进度已同步到文化账户" : "媒体进度已保存到本机演示"}；当前没有接入真实视频流。`,
               )}
             >
               ▶
@@ -282,9 +266,8 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
                 async () => {
                   const active = !content.viewer.followedCreator;
                   await actions.setPersonFollow(content.creatorId, active);
-                  if (hasAccessToken()) await setUserCenterFollow(content.creatorId, content.creator.displayName, `/inheritors/${encodeURIComponent(content.creatorId)}`, active);
                 },
-                `${content.viewer.followedCreator ? "已取消关注" : "已关注"}${hasAccessToken() ? "并同步到文化账户" : "（本机互动）"}。`,
+                `${content.viewer.followedCreator ? "已取消关注" : "已关注"}${apiMode ? "并同步到文化账户" : "（本机演示）"}。`,
               )}
             >
               {busyAction === "follow" ? "处理中…" : content.viewer.followedCreator ? "已关注" : "关注"}
@@ -310,7 +293,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
           />
 
           <div className="productMetaRow">
-            <span>{content.metrics.viewCount.toLocaleString("zh-CN")} 次演示播放</span>
+            <span>{content.metrics.viewCount.toLocaleString("zh-CN")} 次播放</span>
             <button
               className="productButtonQuiet"
               type="button"
@@ -336,9 +319,9 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
               sourceCount={content.trust.sourceCount}
               aiAssisted={content.trust.aiAssisted}
             />
-            <p>AI 披露：{content.trust.aiAssisted ? "包含 AI 辅助内容" : "本演示条目未标记为 AI 辅助"}</p>
+            <p>AI 披露：{content.trust.aiAssisted ? "包含 AI 辅助内容" : "当前条目未标记为 AI 辅助"}</p>
             <p>最后核验：{formatDate(content.trust.checkedAt)}</p>
-            <p>说明：该核验状态属于本地演示，真实发布仍需服务端事实库和人工审核。</p>
+            <p>说明：{apiMode ? "该目录仍是内部测试种子，正式发布前仍需人工文化审核。" : "该核验状态属于本地演示，不能视为正式审核结论。"}</p>
           </section>
         </aside>
       </div>
@@ -384,7 +367,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
                 {source.url ? (
                   <a href={source.url} target="_blank" rel="noreferrer">打开外部来源 ↗</a>
                 ) : (
-                  <small>本地演示索引，没有可打开的外部链接。</small>
+                  <small>当前来源记录没有可打开的外部链接。</small>
                 )}
               </li>
             ))}
@@ -432,7 +415,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
         </section>
 
         <section className="productDetailSection" aria-labelledby="comments-title">
-          <h2 id="comments-title">评论 · 本地演示</h2>
+          <h2 id="comments-title">评论 · {apiMode ? "账户互动" : "本地演示"}</h2>
           <form className="productCommentForm" onSubmit={submitComment}>
             <label>
               添加评论
@@ -445,7 +428,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
               />
             </label>
             <div className="productFormActions">
-              <small>评论仅保存在当前浏览器。</small>
+              <small>{apiMode ? "评论将保存到服务端账户。" : "评论仅保存在当前浏览器。"}</small>
               <button className="productButton" type="submit" disabled={disabled || !commentBody.trim()}>
                 {busyAction === "comment-create" ? "保存中…" : "提交评论"}
               </button>
@@ -465,14 +448,14 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
                     onClick={() => void runWrite(
                       `comment-delete-${comment.id}`,
                       () => actions.deleteOwnComment(comment.id),
-                      "评论已从本地演示中删除。",
+                      apiMode ? "评论已从服务端账户中删除。" : "评论已从本地演示中删除。",
                     )}
                   >
                     {busyAction === `comment-delete-${comment.id}` ? "删除中…" : "删除自己的评论"}
                   </button>
                 ) : null}
               </li>
-            )) : <li><p>还没有本地评论，你可以提交第一条。</p></li>}
+            )) : <li><p>还没有评论，你可以提交第一条。</p></li>}
           </ul>
         </section>
 
@@ -518,7 +501,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
               />
             </label>
             <div className="productFormActions">
-              <small>本地贡献不会自动成为已核验事实。</small>
+              <small>用户贡献不会自动成为已核验事实。</small>
               <button className="productButton" type="submit" disabled={disabled || !annotationBody.trim()}>
                 {busyAction === "annotation-create" ? "保存中…" : "提交知识注释"}
               </button>
@@ -541,7 +524,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
                     onClick={() => void runWrite(
                       `annotation-delete-${annotation.id}`,
                       () => actions.deleteOwnTimedAnnotation(annotation.id),
-                      "知识注释已从本地演示中删除。",
+                      apiMode ? "知识注释已从服务端账户中删除。" : "知识注释已从本地演示中删除。",
                     )}
                   >
                     {busyAction === `annotation-delete-${annotation.id}` ? "删除中…" : "删除自己的注释"}
@@ -559,7 +542,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
               {relatedContents.map((item) => <ContentTile content={item} compact key={item.id} />)}
             </div>
           ) : (
-            <StateNotice kind="empty" compact title="暂无相关内容" description="本地演示数据尚未建立更多关联。" />
+            <StateNotice kind="empty" compact title="暂无相关内容" description="当前目录尚未建立更多关联。" />
           )}
         </section>
       </div>

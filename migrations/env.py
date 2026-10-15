@@ -6,6 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from haha_community.sqlalchemy_repository import community_metadata
 from haha_core.sqlalchemy_repository import metadata
 
 config = context.config
@@ -13,7 +14,7 @@ if config.config_file_name:
     fileConfig(config.config_file_name)
 database_url = os.getenv("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
 config.set_main_option("sqlalchemy.url", database_url)
-target_metadata = metadata
+target_metadata = [metadata, community_metadata]
 
 
 def run_migrations_offline() -> None:

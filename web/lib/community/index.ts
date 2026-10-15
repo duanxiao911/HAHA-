@@ -3,6 +3,8 @@ export type {
   CommunityAdapter,
   CommunityContextValue,
   CommunityChangeListener,
+  CommunityImportPreview,
+  CommunityImportResult,
   CreateCommentInput,
   CreateDraftInput,
   CreateTimedAnnotationInput,
@@ -17,6 +19,8 @@ export {
   LocalCommunityAdapter,
   createLocalCommunityAdapter,
 } from "./local-adapter";
+
+export { ApiCommunityAdapter, createApiCommunityAdapter } from "./api-adapter";
 
 export { CommunityProvider, useCommunity } from "./provider";
 

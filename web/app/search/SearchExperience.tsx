@@ -64,6 +64,7 @@ export function SearchExperience({
 }) {
   const router = useRouter();
   const { snapshot, actions } = useCommunity();
+  const apiMode = snapshot.runtime.mode === "api";
   const [query, setQuery] = useState(initialQuery);
   const [submittedQuery, setSubmittedQuery] = useState(initialQuery.trim());
   const [scope, setScope] = useState<NonNullable<SearchQuery["scope"]>>(
@@ -119,8 +120,8 @@ export function SearchExperience({
   return (
     <ProductFrame initialQuery={submittedQuery} mainClassName="productSearchPage">
       <div className="productDemoStrip" role="note">
-        <b>搜索演示边界</b>
-        <span>本轮使用本地领域数据完成分类、排序与历史闭环；真实中文全文检索将在社区 API 接入时由 PostgreSQL 提供。</span>
+        <b>{apiMode ? "内部搜索" : "搜索演示边界"}</b>
+        <span>{apiMode ? "搜索通过社区 API 查询服务端目录；当前采用 PostgreSQL 目录检索，尚未引入独立搜索集群。" : "本轮使用本地领域数据完成分类、排序与历史闭环。"}</span>
       </div>
       <header className="productPageHead">
         <div>
@@ -164,7 +165,7 @@ export function SearchExperience({
               <div>
                 <small>RESULTS</small>
                 <h2>“{submittedQuery}”的结果</h2>
-                {state === "success" ? <p>共找到 {hits.length} 项本地演示结果。</p> : null}
+                {state === "success" ? <p>共找到 {hits.length} 项{apiMode ? "服务端" : "本地演示"}结果。</p> : null}
               </div>
               <label>
                 <span className="productVisuallyHidden">排序方式</span>

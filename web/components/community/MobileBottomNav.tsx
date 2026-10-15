@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useCommunity } from "@/lib/community/provider";
 
 const mobileNavigation = [
   { href: "/", label: "首页", icon: "home" },
@@ -34,14 +35,19 @@ function NavigationIcon({ type }: { type: (typeof mobileNavigation)[number]["ico
 
 export function MobileBottomNav() {
   const pathname = usePathname();
+  const { snapshot } = useCommunity();
+  const profileHref = snapshot.viewer.id
+    ? `/profile/${encodeURIComponent(snapshot.viewer.id)}`
+    : "/identity";
 
   return (
     <nav className="productMobileNav" aria-label="移动端主要导航">
       {mobileNavigation.map(({ href, label, icon, ...item }) => {
+        const resolvedHref = icon === "profile" ? profileHref : href;
         const activePath = "activePath" in item ? item.activePath : href;
         const active = isActivePath(pathname, activePath);
         return (
-          <Link href={href} aria-current={active ? "page" : undefined} key={href}>
+          <Link href={resolvedHref} aria-current={active ? "page" : undefined} key={href}>
             <NavigationIcon type={icon} />
             <span>{label}</span>
           </Link>

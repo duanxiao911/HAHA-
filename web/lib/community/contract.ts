@@ -56,6 +56,35 @@ export interface CreateDraftInput {
   title?: string;
 }
 
+export interface CommunityImportPreview {
+  fingerprint: string;
+  alreadyImported: boolean;
+  importable: {
+    reactionTargets: number;
+    follows: number;
+    history: number;
+    comments: number;
+    annotations: number;
+    drafts: number;
+  };
+  ignored: string[];
+}
+
+export interface CommunityImportResult {
+  fingerprint: string;
+  alreadyImported: boolean;
+  imported: {
+    reactions: number;
+    follows: number;
+    history: number;
+    comments: number;
+    annotations: number;
+    drafts: number;
+  };
+  skipped: number;
+  trustBoundary: string;
+}
+
 export type CommunityChangeListener = () => void;
 
 /**
@@ -101,6 +130,13 @@ export interface CommunityAdapter {
   removeSearchTerm(term: string): Promise<string[]>;
   clearSearchHistory(): Promise<void>;
 
+  previewLocalArchive(
+    localState: Record<string, unknown>,
+  ): Promise<CommunityImportPreview>;
+  importLocalArchive(
+    localState: Record<string, unknown>,
+  ): Promise<CommunityImportResult>;
+
   createSubmissionDraft(input: CreateDraftInput): Promise<SubmissionDraft>;
   updateSubmissionDraft(
     draftId: EntityId,
@@ -136,6 +172,8 @@ export interface CommunityActions {
   rememberSearchTerm: CommunityAdapter["rememberSearchTerm"];
   removeSearchTerm: CommunityAdapter["removeSearchTerm"];
   clearSearchHistory: CommunityAdapter["clearSearchHistory"];
+  previewLocalArchive: CommunityAdapter["previewLocalArchive"];
+  importLocalArchive: CommunityAdapter["importLocalArchive"];
   createSubmissionDraft: CommunityAdapter["createSubmissionDraft"];
   updateSubmissionDraft: CommunityAdapter["updateSubmissionDraft"];
   transitionSubmissionDraft: CommunityAdapter["transitionSubmissionDraft"];

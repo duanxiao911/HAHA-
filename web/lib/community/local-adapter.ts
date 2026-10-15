@@ -1,5 +1,7 @@
 import type {
   CommunityAdapter,
+  CommunityImportPreview,
+  CommunityImportResult,
   CommunityChangeListener,
   CreateCommentInput,
   CreateDraftInput,
@@ -384,7 +386,7 @@ export class LocalCommunityAdapter implements CommunityAdapter {
     if (!query.scope || query.scope === "all" || query.scope === "content") {
       for (const content of snapshot.contents) {
         const relevance = score(content.title, content.summary, content.categoryLabel, content.regionLabel, content.creator.displayName, ...content.tags);
-        if (relevance > 0) hits.push({ kind: "content", id: content.id, title: content.title, summary: `${content.categoryLabel} · ${content.regionLabel} · ${content.creator.displayName}`, href: `/contents/${content.id}`, score: relevance, verificationStatus: content.trust.status });
+        if (relevance > 0) hits.push({ kind: "content", id: content.id, title: content.title, summary: `${content.categoryLabel} · ${content.regionLabel} · ${content.creator.displayName}`, href: `/content/${content.id}`, score: relevance, verificationStatus: content.trust.status });
       }
     }
     if (!query.scope || query.scope === "all" || query.scope === "project") {
@@ -405,7 +407,32 @@ export class LocalCommunityAdapter implements CommunityAdapter {
         if (relevance > 0) hits.push({ kind: "region", id: region.id, title: region.name, summary: region.featuredCrafts.join(" · "), href: `/map?region=${encodeURIComponent(region.id)}`, score: relevance });
       }
     }
-    hits.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, "zh-CN"));
+    const contentById = new Map(snapshot.contents.map((content) => [content.id, content]));
+    const verificationRank: Record<string, number> = {
+      verified: 5,
+      inheritor_confirmed: 4,
+      expert_reviewed: 3,
+      pending: 2,
+      disputed: 1,
+    };
+    if (query.sort === "latest") {
+      hits.sort((a, b) =>
+        (contentById.get(b.id)?.publishedAt ?? "").localeCompare(contentById.get(a.id)?.publishedAt ?? "") ||
+        b.score - a.score ||
+        a.title.localeCompare(b.title, "zh-CN"));
+    } else if (query.sort === "popular") {
+      hits.sort((a, b) =>
+        (contentById.get(b.id)?.metrics.viewCount ?? 0) - (contentById.get(a.id)?.metrics.viewCount ?? 0) ||
+        b.score - a.score ||
+        a.title.localeCompare(b.title, "zh-CN"));
+    } else if (query.sort === "verified") {
+      hits.sort((a, b) =>
+        (verificationRank[b.verificationStatus ?? ""] ?? 0) - (verificationRank[a.verificationStatus ?? ""] ?? 0) ||
+        b.score - a.score ||
+        a.title.localeCompare(b.title, "zh-CN"));
+    } else {
+      hits.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, "zh-CN"));
+    }
     assertNotAborted(signal);
     return page(hits, query.cursor, query.limit);
   }
@@ -564,6 +591,18 @@ export class LocalCommunityAdapter implements CommunityAdapter {
     this.mutate((next) => { next.searchHistory = []; });
   }
 
+  async previewLocalArchive(
+    _localState: Record<string, unknown>,
+  ): Promise<CommunityImportPreview> {
+    throw new CommunityDataError("validation", "本地演示模式没有服务端账户可供迁移");
+  }
+
+  async importLocalArchive(
+    _localState: Record<string, unknown>,
+  ): Promise<CommunityImportResult> {
+    throw new CommunityDataError("validation", "本地演示模式没有服务端账户可供迁移");
+  }
+
   async createSubmissionDraft(input: CreateDraftInput): Promise<SubmissionDraft> {
     const now = nowIso();
     const draft: SubmissionDraft = {
@@ -571,6 +610,7 @@ export class LocalCommunityAdapter implements CommunityAdapter {
       ownerId: LOCAL_DEMO_VIEWER_ID,
       submissionType: input.submissionType,
       status: "draft",
+      version: 1,
       title: input.title?.trim().slice(0, 200) ?? "",
       summary: "",
       projectIds: [],
@@ -596,6 +636,7 @@ export class LocalCommunityAdapter implements CommunityAdapter {
         title: patch.title === undefined ? target.title : patch.title.trim(),
         summary: patch.summary === undefined ? target.summary : patch.summary.trim(),
         updatedAt: nowIso(),
+        version: target.version + 1,
       });
     });
     return clone(this.draftOrThrow(draftId));
@@ -611,6 +652,7 @@ export class LocalCommunityAdapter implements CommunityAdapter {
       if (!target) return;
       target.status = nextStatus;
       target.updatedAt = now;
+      target.version += 1;
       if (reviewerNote !== undefined) target.reviewerNote = reviewerNote.trim().slice(0, 2000);
       if (nextStatus === "submitted") target.submittedAt = now;
       if (nextStatus === "published") target.publishedAt = now;
