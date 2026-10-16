@@ -100,6 +100,45 @@ def test_product_creation_is_idempotent_and_rejects_payload_reuse() -> None:
     assert conflict.status_code == 409
 
 
+def test_rejected_seller_cannot_open_store_and_listing_can_be_delisted() -> None:
+    client, identity = _stack()
+    applicant = _headers("seller-rejected")
+    identity.ensure_identity("seller-rejected", "commerce-ws", role="owner")
+    service = IdentityService(identity)
+    service.bootstrap("seller-rejected", "commerce-ws")
+    application = service.apply_for_role(
+        "seller-rejected", "commerce-ws", "seller", "申请内部沙盒卖家"
+    )
+    service.decide_application(
+        application.id, "independent-owner", "rejected", "材料不完整"
+    )
+    denied = client.post(
+        "/api/commerce/stores", headers=applicant, json={"name": "不可创建的店铺"}
+    )
+    assert denied.status_code == 403
+
+    product_id, seller, _reviewer = _approved_listing(client, identity)
+    delisted = client.put(
+        f"/api/commerce/products/{product_id}/inventory",
+        headers=seller,
+        json={"quantity": 0, "expected_version": 1},
+    )
+    assert delisted.status_code == 200
+    product = delisted.json()["seller_products"][0]
+    assert product["status"] == "delisted"
+    assert product["inventory"]["available_qty"] == 0
+    assert delisted.json()["catalog"] == []
+
+    relisted = client.put(
+        f"/api/commerce/products/{product_id}/inventory",
+        headers=seller,
+        json={"quantity": 3, "expected_version": 2},
+    )
+    assert relisted.status_code == 200
+    assert relisted.json()["seller_products"][0]["status"] == "listed"
+    assert relisted.json()["catalog"][0]["inventory"]["available_qty"] == 3
+
+
 def test_full_sandbox_transaction_is_authorized_durable_and_auditable() -> None:
     client, identity = _stack()
     product_id, seller, _reviewer = _approved_listing(client, identity)
@@ -173,6 +212,29 @@ def test_full_sandbox_transaction_is_authorized_durable_and_auditable() -> None:
     )
     assert decision.status_code == 200
     assert decision.json()["seller_after_sales"][0]["status"] == "approved"
+
+    seller_notices = [
+        item
+        for item in identity.list_user_notifications("seller-a", "commerce-ws")
+        if item.kind == "commerce"
+    ]
+    buyer_notices = [
+        item
+        for item in identity.list_user_notifications("buyer-c", "commerce-ws")
+        if item.kind == "commerce"
+    ]
+    assert {item.title for item in seller_notices} == {
+        "商品审核结果：通过",
+        "收到新的沙盒订单",
+        "沙盒订单已支付",
+        "沙盒订单已确认收货",
+        "收到沙盒售后申请",
+    }
+    assert {item.title for item in buyer_notices} == {
+        "沙盒订单已发货",
+        "沙盒售后已受理",
+    }
+    assert len({item.id for item in seller_notices}) == len(seller_notices)
 
 
 def test_permissions_versions_inventory_and_order_isolation_fail_closed() -> None:

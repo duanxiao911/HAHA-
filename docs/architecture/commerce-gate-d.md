@@ -25,7 +25,7 @@ HTTP 入口统一位于 `/api/commerce`。Next.js 页面位于 `/commerce`，通
 
 ## 核心状态
 
-- Product：`draft → submitted → approved/rejected → listed`；卖家不能审核自己的商品。
+- Product：`draft → submitted → approved/rejected → listed ↔ delisted`；卖家不能审核自己的商品，下架保留历史订单与审计记录。
 - Inventory：`available_qty`、`sold_qty`、`version`；结算以版本条件更新防止超卖。
 - Order：`awaiting_sandbox_payment → paid → shipped → completed`，或支付前 `cancelled`，或支付后进入 `after_sales`。
 - Payment：仅 `provider=internal_sandbox`、`status=authorized`；每个订单一条，账户 + 工作空间 + 幂等键唯一。
@@ -42,6 +42,7 @@ HTTP 入口统一位于 `/api/commerce`。Next.js 页面位于 `/commerce`，通
 - 未支付订单取消时，在同一事务内恢复库存。
 - 订单查询按买家或卖家归属过滤；支付、收货、履约和售后再次执行服务端所有权校验。
 - `commerce_events` 保存关键状态变化的不可变审计事件。
+- 商品审核、订单、履约与售后变化以稳定幂等键回流统一账户通知中心，重复请求不重复生成通知。
 
 ## 数据迁移
 
@@ -57,6 +58,7 @@ Alembic `20261016_0011` 新增 `commerce_*` 表、唯一约束、状态检查和
 6. API 重启后商品、库存、订单、支付、履约与售后状态仍存在。
 7. 页面覆盖 loading、empty、error、permission、success、确认对话框与 390/768/1440 响应式视口。
 8. PostgreSQL 真实迁移完成 `0010 → 0011 → 0012 → 0011 → 0012` 往返验证。
+9. 被驳回的卖家申请不产生 seller grant，不能创建店铺；卖家下架后商品立即退出买家目录，并可显式重新上架。
 
 ## 仍然阻断
 

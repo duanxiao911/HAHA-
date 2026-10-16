@@ -40,7 +40,11 @@ def find_chrome() -> Path:
     raise RuntimeError("Chrome or Chromium was not found")
 
 
-async def run(websocket_url: str, headers: dict[str, str]) -> dict[str, Any]:
+async def run(
+    websocket_url: str,
+    buyer_headers: dict[str, str],
+    seller_headers: dict[str, str],
+) -> dict[str, Any]:
     command_id = 0
     events: list[dict[str, Any]] = []
     screenshots: list[str] = []
@@ -94,7 +98,7 @@ async def run(websocket_url: str, headers: dict[str, str]) -> dict[str, Any]:
         await command("Runtime.enable")
         await command("Page.enable")
         await command("Network.enable")
-        await command("Network.setExtraHTTPHeaders", {"headers": headers})
+        await command("Network.setExtraHTTPHeaders", {"headers": buyer_headers})
         for width in (390, 768, 1440):
             await command("Emulation.setDeviceMetricsOverride", {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": width <= 768})
             await command("Page.navigate", {"url": f"{WEB_URL}/commerce"})
@@ -135,6 +139,17 @@ async def run(websocket_url: str, headers: dict[str, str]) -> dict[str, Any]:
         body = await wait_for("沙盒已支付")
         assertions["refresh_restored_order"] = "Gate D 来源待核验测试作品" in body
         await shot("commerce-paid.png")
+
+        await command("Network.setExtraHTTPHeaders", {"headers": seller_headers})
+        await command("Page.navigate", {"url": f"{WEB_URL}/commerce?view=seller"})
+        await wait_for("卖家工作台")
+        await click("下架商品")
+        body = await wait_for("下架这个商品？")
+        assertions["delist_confirmation"] = "历史订单和审计记录会保留" in body
+        await click("确认下架")
+        body = await wait_for("确认下架已完成")
+        assertions["seller_delist_visible"] = "已下架" in body
+        await shot("commerce-delisted.png")
         browser_errors = [item for item in events if item.get("method") in {"Runtime.exceptionThrown", "Log.entryAdded"}]
         assertions["no_browser_exceptions"] = not browser_errors
         if not all(assertions.values()):
@@ -145,7 +160,14 @@ async def run(websocket_url: str, headers: dict[str, str]) -> dict[str, Any]:
 def main() -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     state = json.loads(API_STATE.read_text(encoding="utf-8"))
-    headers = {"X-User-ID": f"browser-buyer-{uuid4().hex[:8]}", "X-Workspace-ID": state["workspace"]}
+    buyer_headers = {
+        "X-User-ID": f"browser-buyer-{uuid4().hex[:8]}",
+        "X-Workspace-ID": state["workspace"],
+    }
+    seller_headers = {
+        "X-User-ID": state["seller"],
+        "X-Workspace-ID": state["workspace"],
+    }
     with tempfile.TemporaryDirectory(prefix="haha-d-e2e-", ignore_cleanup_errors=True) as profile:
         process = subprocess.Popen([str(find_chrome()), "--headless=new", f"--remote-debugging-port={DEBUG_PORT}", "--remote-allow-origins=*", f"--user-data-dir={profile}", "--disable-extensions", "--no-first-run", "--hide-scrollbars", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
@@ -160,7 +182,9 @@ def main() -> None:
                     time.sleep(0.15)
             if not target:
                 raise RuntimeError("Chrome debug endpoint did not start")
-            report = asyncio.run(run(target["webSocketDebuggerUrl"], headers))
+            report = asyncio.run(
+                run(target["webSocketDebuggerUrl"], buyer_headers, seller_headers)
+            )
             (ARTIFACTS / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
             print(json.dumps(report, ensure_ascii=False, indent=2))
         finally:

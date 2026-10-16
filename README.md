@@ -184,6 +184,10 @@ Commerce Gate D 已复用 `buyer`、`seller`、`reviewer` 与统一账户，补�
 [`docs/architecture/commerce-gate-d.md`](docs/architecture/commerce-gate-d.md)。真实支付、退款、分账、
 物流和商业合规仍为 `BLOCKED`，Gate D 不代表 Production Candidate。
 
+Gate A–D 的统一收口口径见
+[`docs/architecture/gates-a-d-closure.md`](docs/architecture/gates-a-d-closure.md)：已冻结的内部范围已经闭环，
+但正式媒体链路与真实 AI 非遗老师仍分别为 `OPEN` / `BLOCKED`，不能把前四 Gate 无条件表述为 100%。
+
 ## 项目结构
 
 ```text

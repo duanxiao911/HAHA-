@@ -19,6 +19,7 @@ from haha_commerce.domain import (
 from haha_commerce.repository import CommerceRepository
 from haha_identity.domain import RoleGrant
 from haha_identity.service import IdentityService
+from haha_user_center.service import UserCenterService
 
 
 def _now() -> str:
@@ -46,6 +47,7 @@ class CommerceService:
         self.repository = repository
         self.identity_repository = identity_repository
         self.identity_service = IdentityService(identity_repository)
+        self.user_center = UserCenterService(identity_repository)
 
     def snapshot(self, user_id: str, workspace_id: str) -> dict[str, object]:
         roles = self._roles(user_id, workspace_id)
@@ -194,11 +196,19 @@ class CommerceService:
             reviewer_note=_clean(note, "审核意见", 1000), reviewed_by=user_id,
             updated_at=_now(),
         ), expected_version)
+        self._notify(
+            product.seller_user_id,
+            workspace_id,
+            title=f"商品审核结果：{'通过' if decision == 'approved' else '退回'}",
+            body=_clean(note, "审核意见", 1000),
+            target_href="/commerce?view=seller",
+            key=f"product-review:{product.id}:v{product.version + 1}",
+        )
         return self.snapshot(user_id, workspace_id)
 
     def set_inventory(self, user_id: str, workspace_id: str, product_id: str, quantity: int, expected_version: int) -> dict[str, object]:
         product = self._owned_product(user_id, workspace_id, product_id)
-        if product.status not in {"approved", "listed"}:
+        if product.status not in {"approved", "listed", "delisted"}:
             raise CommerceConflictError("商品通过审核后才能设置库存")
         if not 0 <= quantity <= 1_000_000:
             raise ValueError("库存数量无效")
@@ -208,8 +218,11 @@ class CommerceService:
             raise CommerceConflictError("库存版本已变化，请刷新后重试")
         now = _now()
         stock = Inventory(product_id, workspace_id, quantity, current.sold_qty if current else 0, current_version + 1, now)
+        next_status = "listed" if quantity > 0 else (
+            "delisted" if product.status in {"listed", "delisted"} else "approved"
+        )
         product_update = replace(
-            product, status="listed" if quantity > 0 else "approved",
+            product, status=next_status,
             version=product.version + 1, updated_at=now,
         )
         self.repository.set_inventory(stock, expected_version, product_update)
@@ -243,25 +256,79 @@ class CommerceService:
 
     def checkout(self, user_id: str, workspace_id: str, idempotency_key: str) -> dict[str, object]:
         self._require_role(user_id, workspace_id, "buyer")
-        self.repository.checkout(user_id, workspace_id, _key(idempotency_key))
+        order, _created = self.repository.checkout(
+            user_id, workspace_id, _key(idempotency_key)
+        )
+        self._notify(
+            order.seller_user_id,
+            workspace_id,
+            title="收到新的沙盒订单",
+            body="买家已创建内部沙盒订单，请等待沙盒支付状态更新。",
+            target_href="/commerce?view=seller",
+            key=f"order-created:{order.id}",
+        )
         return self.snapshot(user_id, workspace_id)
 
     def sandbox_pay(self, user_id: str, workspace_id: str, order_id: str, expected_version: int, idempotency_key: str) -> dict[str, object]:
         self._require_role(user_id, workspace_id, "buyer")
-        self.repository.authorize_sandbox_payment(order_id, user_id, workspace_id, _key(idempotency_key), expected_version)
+        order, _payment, _created = self.repository.authorize_sandbox_payment(
+            order_id, user_id, workspace_id, _key(idempotency_key), expected_version
+        )
+        self._notify(
+            order.seller_user_id,
+            workspace_id,
+            title="沙盒订单已支付",
+            body="内部沙盒支付状态已更新；未发生真实资金划转。",
+            target_href="/commerce?view=seller",
+            key=f"order-paid:{order.id}:v{order.version}",
+        )
         return self.snapshot(user_id, workspace_id)
 
     def cancel_order(self, user_id: str, workspace_id: str, order_id: str, expected_version: int) -> dict[str, object]:
-        self.repository.cancel_order(order_id, user_id, workspace_id, expected_version)
+        order = self.repository.cancel_order(
+            order_id, user_id, workspace_id, expected_version
+        )
+        self._notify(
+            order.seller_user_id,
+            workspace_id,
+            title="沙盒订单已取消",
+            body="买家取消了待支付订单，占用库存已经恢复。",
+            target_href="/commerce?view=seller",
+            key=f"order-cancelled:{order.id}:v{order.version}",
+        )
         return self.snapshot(user_id, workspace_id)
 
     def ship_order(self, user_id: str, workspace_id: str, order_id: str, tracking_note: str, expected_version: int) -> dict[str, object]:
         self._require_role(user_id, workspace_id, "seller")
-        self.repository.ship_order(order_id, user_id, workspace_id, _clean(tracking_note, "履约备注", 500), expected_version)
+        order, _fulfillment = self.repository.ship_order(
+            order_id,
+            user_id,
+            workspace_id,
+            _clean(tracking_note, "履约备注", 500),
+            expected_version,
+        )
+        self._notify(
+            order.buyer_user_id,
+            workspace_id,
+            title="沙盒订单已发货",
+            body="卖家已记录内部沙盒履约信息，请在确认后完成收货。",
+            target_href="/commerce?view=orders",
+            key=f"order-shipped:{order.id}:v{order.version}",
+        )
         return self.snapshot(user_id, workspace_id)
 
     def confirm_delivery(self, user_id: str, workspace_id: str, order_id: str, expected_version: int) -> dict[str, object]:
-        self.repository.confirm_delivery(order_id, user_id, workspace_id, expected_version)
+        order, _fulfillment = self.repository.confirm_delivery(
+            order_id, user_id, workspace_id, expected_version
+        )
+        self._notify(
+            order.seller_user_id,
+            workspace_id,
+            title="沙盒订单已确认收货",
+            body="买家已确认内部沙盒履约完成。",
+            target_href="/commerce?view=seller",
+            key=f"order-delivered:{order.id}:v{order.version}",
+        )
         return self.snapshot(user_id, workspace_id)
 
     def request_after_sale(self, user_id: str, workspace_id: str, order_id: str, reason: str, expected_order_version: int) -> dict[str, object]:
@@ -269,11 +336,19 @@ class CommerceService:
         if not order:
             raise CommerceNotFoundError("订单不存在")
         now = _now()
-        self.repository.request_after_sale(AfterSale(
+        after_sale = self.repository.request_after_sale(AfterSale(
             f"after_{uuid4().hex}", order_id, workspace_id, user_id,
             order.seller_user_id, _clean(reason, "售后原因", 1000),
             "requested", "", 1, now, now,
         ), expected_order_version)
+        self._notify(
+            order.seller_user_id,
+            workspace_id,
+            title="收到沙盒售后申请",
+            body=after_sale.reason,
+            target_href="/commerce?view=seller",
+            key=f"after-sale-requested:{after_sale.id}",
+        )
         return self.snapshot(user_id, workspace_id)
 
     def decide_after_sale(self, user_id: str, workspace_id: str, after_sale_id: str, decision: str, note: str, expected_version: int) -> dict[str, object]:
@@ -285,11 +360,39 @@ class CommerceService:
             raise CommerceConflictError("售后状态或版本已变化")
         if decision not in {"approved", "rejected"}:
             raise ValueError("售后决定无效")
-        self.repository.decide_after_sale(replace(
+        decided = self.repository.decide_after_sale(replace(
             current, status=decision, decision_note=_clean(note, "售后意见", 1000),
             version=current.version + 1, updated_at=_now(),
         ), expected_version)
+        self._notify(
+            decided.buyer_user_id,
+            workspace_id,
+            title=f"沙盒售后已{'受理' if decision == 'approved' else '驳回'}",
+            body=decided.decision_note,
+            target_href="/commerce?view=orders",
+            key=f"after-sale-decision:{decided.id}:v{decided.version}",
+        )
         return self.snapshot(user_id, workspace_id)
+
+    def _notify(
+        self,
+        user_id: str,
+        workspace_id: str,
+        *,
+        title: str,
+        body: str,
+        target_href: str,
+        key: str,
+    ) -> None:
+        self.user_center.create_notification(
+            user_id,
+            workspace_id,
+            kind="commerce",
+            title=title,
+            body=body,
+            target_href=target_href,
+            idempotency_key=key,
+        )
 
     def _roles(self, user_id: str, workspace_id: str) -> set[str]:
         self.identity_service.bootstrap(user_id, workspace_id)

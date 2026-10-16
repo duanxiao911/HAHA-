@@ -112,6 +112,29 @@ def exercise() -> dict[str, object]:
     assertions["after_sale_requested"] = status == 200 and after_sale["status"] == "requested"
     status, decided = request("POST", f"/api/commerce/after-sales/{after_sale['id']}/decision", seller, workspace, {"expected_version": after_sale["version"], "decision": "approved", "note": "内部沙盒已受理。"})
     assertions["after_sale_audited"] = status == 200 and decided["seller_after_sales"][0]["status"] == "approved"
+    _, seller_center = request("GET", "/api/user-center", seller, workspace)
+    _, buyer_center = request("GET", "/api/user-center", buyer, workspace)
+    seller_titles = {
+        item["title"]
+        for item in seller_center["notifications"]
+        if item["kind"] == "commerce"
+    }
+    buyer_titles = {
+        item["title"]
+        for item in buyer_center["notifications"]
+        if item["kind"] == "commerce"
+    }
+    assertions["seller_event_notifications"] = {
+        "商品审核结果：通过",
+        "收到新的沙盒订单",
+        "沙盒订单已支付",
+        "沙盒订单已确认收货",
+        "收到沙盒售后申请",
+    }.issubset(seller_titles)
+    assertions["buyer_event_notifications"] = {
+        "沙盒订单已发货",
+        "沙盒售后已受理",
+    }.issubset(buyer_titles)
     if not all(assertions.values()):
         raise RuntimeError({key: value for key, value in assertions.items() if not value})
     state = {"workspace": workspace, "seller": seller, "reviewer": reviewer, "buyer": buyer, "order_id": order["id"], "product_id": product["id"], "assertions": assertions}
