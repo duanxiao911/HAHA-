@@ -77,10 +77,10 @@ def test_workbench_projects_active_identity_and_capability_boundaries() -> None:
 
     identity.switch_context("member-a", "workspace-a", "buyer")
     buyer = workbench.snapshot("member-a", "workspace-a")
-    assert buyer["maturity"] == "blocked"
+    assert buyer["maturity"] == "partial"
     assert (
         next(item for item in buyer["capabilities"] if item["key"] == "orders")["status"]
-        == "blocked"
+        == "limited"
     )
 
 

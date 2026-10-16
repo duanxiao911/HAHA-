@@ -40,6 +40,14 @@ from haha_auth.service import (
     InvalidCredentialsError,
     InvalidRefreshTokenError,
 )
+from haha_commerce.bootstrap import build_commerce_repository
+from haha_commerce.domain import (
+    CommerceConflictError,
+    CommerceNotFoundError,
+    CommercePermissionError,
+)
+from haha_commerce.repository import CommerceRepository
+from haha_commerce.service import CommerceService
 from haha_community.bootstrap import build_community_repository
 from haha_community.domain import (
     CommunityConflictError,
@@ -238,9 +246,58 @@ class QuizAttemptCreate(BaseModel):
     expected_progress_version: int = Field(ge=0)
 
 
+class CommerceStoreCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=200)
+
+
+class CommerceProductCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=2000)
+    price_cents: int = Field(ge=1, le=10_000_000)
+    source_note: str = Field(min_length=1, max_length=1000)
+
+
+class CommerceVersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
+
+
+class CommerceReviewRequest(CommerceVersionRequest):
+    decision: str = Field(pattern="^(approved|rejected)$")
+    note: str = Field(min_length=1, max_length=1000)
+
+
+class CommerceInventoryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    quantity: int = Field(ge=0, le=1_000_000)
+    expected_version: int = Field(ge=0)
+
+
+class CommerceCartUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    quantity: int = Field(ge=1, le=99)
+    expected_version: int = Field(ge=0)
+
+
+class CommerceShipRequest(CommerceVersionRequest):
+    tracking_note: str = Field(min_length=1, max_length=500)
+
+
+class CommerceAfterSaleRequest(CommerceVersionRequest):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class CommerceAfterSaleDecision(CommerceVersionRequest):
+    decision: str = Field(pattern="^(approved|rejected)$")
+    note: str = Field(min_length=1, max_length=1000)
+
+
 def create_app(
     repository: CreatorRepository | None = None,
     community_repository: CommunityRepository | None = None,
+    commerce_repository: CommerceRepository | None = None,
 ) -> FastAPI:
     validate_security_configuration()
     active_repository = repository or build_repository()
@@ -251,8 +308,14 @@ def create_app(
         active_repository
     )
     community_service = CommunityService(active_community_repository, user_center_service)
-    workbench_service = WorkbenchService(active_repository)  # type: ignore[arg-type]
     learning_service = LearningService(active_repository)  # type: ignore[arg-type]
+    active_commerce_repository = commerce_repository or build_commerce_repository(
+        active_repository
+    )
+    commerce_service = CommerceService(active_commerce_repository, active_repository)
+    workbench_service = WorkbenchService(
+        active_repository, active_commerce_repository
+    )  # type: ignore[arg-type]
     auth_service = AuthService(active_repository)  # type: ignore[arg-type]
     application = FastAPI(title="HAHA Creator API", version="0.2.0")
     allowed_origins = tuple(
@@ -317,6 +380,24 @@ def create_app(
     @application.exception_handler(LearningConflictError)
     async def learning_conflict_handler(
         _request: Request, exc: LearningConflictError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @application.exception_handler(CommercePermissionError)
+    async def commerce_permission_handler(
+        _request: Request, exc: CommercePermissionError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    @application.exception_handler(CommerceNotFoundError)
+    async def commerce_not_found_handler(
+        _request: Request, exc: CommerceNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @application.exception_handler(CommerceConflictError)
+    async def commerce_conflict_handler(
+        _request: Request, exc: CommerceConflictError
     ) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
@@ -1106,6 +1187,226 @@ def create_app(
                 quiz_id,
                 idempotency_key=idempotency_key,
                 **payload.model_dump(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.get("/api/commerce")
+    def get_commerce_center(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        """Return account-scoped commerce state with explicit sandbox boundaries."""
+        return commerce_service.snapshot(principal.user_id, principal.workspace_id)
+
+    @application.post("/api/commerce/stores")
+    def open_commerce_store(
+        payload: CommerceStoreCreate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.open_store(
+                principal.user_id, principal.workspace_id, payload.name
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/commerce/products", status_code=status.HTTP_201_CREATED)
+    def create_commerce_product(
+        payload: CommerceProductCreate,
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.create_product(
+                principal.user_id,
+                principal.workspace_id,
+                idempotency_key=idempotency_key,
+                **payload.model_dump(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/commerce/products/{product_id}/submit")
+    def submit_commerce_product(
+        product_id: str,
+        payload: CommerceVersionRequest,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return commerce_service.submit_product(
+            principal.user_id,
+            principal.workspace_id,
+            product_id,
+            payload.expected_version,
+        )
+
+    @application.post("/api/commerce/products/{product_id}/review")
+    def review_commerce_product(
+        product_id: str,
+        payload: CommerceReviewRequest,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.moderate_product(
+                principal.user_id,
+                principal.workspace_id,
+                product_id,
+                payload.decision,
+                payload.note,
+                payload.expected_version,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.put("/api/commerce/products/{product_id}/inventory")
+    def update_commerce_inventory(
+        product_id: str,
+        payload: CommerceInventoryUpdate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.set_inventory(
+                principal.user_id,
+                principal.workspace_id,
+                product_id,
+                payload.quantity,
+                payload.expected_version,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.put("/api/commerce/cart/{product_id}")
+    def update_commerce_cart(
+        product_id: str,
+        payload: CommerceCartUpdate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return commerce_service.set_cart_item(
+            principal.user_id,
+            principal.workspace_id,
+            product_id,
+            payload.quantity,
+            payload.expected_version,
+        )
+
+    @application.delete("/api/commerce/cart/{product_id}")
+    def delete_commerce_cart_item(
+        product_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return commerce_service.remove_cart_item(
+            principal.user_id, principal.workspace_id, product_id
+        )
+
+    @application.post("/api/commerce/checkout")
+    def checkout_commerce_cart(
+        principal: Principal = Depends(resolve_membership),
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.checkout(
+                principal.user_id, principal.workspace_id, idempotency_key
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/commerce/orders/{order_id}/sandbox-payment")
+    def authorize_commerce_sandbox_payment(
+        order_id: str,
+        payload: CommerceVersionRequest,
+        principal: Principal = Depends(resolve_membership),
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.sandbox_pay(
+                principal.user_id,
+                principal.workspace_id,
+                order_id,
+                payload.expected_version,
+                idempotency_key,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/commerce/orders/{order_id}/cancel")
+    def cancel_commerce_order(
+        order_id: str,
+        payload: CommerceVersionRequest,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return commerce_service.cancel_order(
+            principal.user_id,
+            principal.workspace_id,
+            order_id,
+            payload.expected_version,
+        )
+
+    @application.post("/api/commerce/orders/{order_id}/ship")
+    def ship_commerce_order(
+        order_id: str,
+        payload: CommerceShipRequest,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.ship_order(
+                principal.user_id,
+                principal.workspace_id,
+                order_id,
+                payload.tracking_note,
+                payload.expected_version,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/commerce/orders/{order_id}/confirm-delivery")
+    def confirm_commerce_delivery(
+        order_id: str,
+        payload: CommerceVersionRequest,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return commerce_service.confirm_delivery(
+            principal.user_id,
+            principal.workspace_id,
+            order_id,
+            payload.expected_version,
+        )
+
+    @application.post("/api/commerce/orders/{order_id}/after-sales")
+    def request_commerce_after_sale(
+        order_id: str,
+        payload: CommerceAfterSaleRequest,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.request_after_sale(
+                principal.user_id,
+                principal.workspace_id,
+                order_id,
+                payload.reason,
+                payload.expected_version,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/commerce/after-sales/{after_sale_id}/decision")
+    def decide_commerce_after_sale(
+        after_sale_id: str,
+        payload: CommerceAfterSaleDecision,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.decide_after_sale(
+                principal.user_id,
+                principal.workspace_id,
+                after_sale_id,
+                payload.decision,
+                payload.note,
+                payload.expected_version,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -9,12 +9,16 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from haha_auth.service import AuthService, InvalidRefreshTokenError
+from haha_commerce.domain import CommerceConflictError
+from haha_commerce.service import CommerceService
+from haha_commerce.sqlalchemy_repository import SQLAlchemyCommerceRepository
 from haha_community.domain import CommunityConflictError
 from haha_community.service import CommunityService
 from haha_community.sqlalchemy_repository import SQLAlchemyCommunityRepository
 from haha_core.domain import RunStatus, ScriptVersion, new_id, utc_now
 from haha_core.service import CreatorService
 from haha_core.sqlalchemy_repository import SQLAlchemyCreatorRepository
+from haha_identity.domain import RoleGrant
 from haha_identity.service import IdentityService
 from haha_learning.seed import LESSON_UNIT_ID, PATH_ID, QUIZ_ID, QUIZ_UNIT_ID
 from haha_learning.service import LearningService
@@ -314,6 +318,70 @@ def test_postgres_parallel_workbench_bootstrap_is_idempotent(repository) -> None
     notifications = repository.list_user_notifications("parallel-user", "pg-workspace")
     assert len(notifications) == 1
     assert notifications[0].title == "文化账户已启用"
+
+
+def test_postgres_commerce_checkout_serializes_inventory(repository) -> None:
+    workspace_id = "commerce-pg-workspace"
+    seller_id = "commerce-pg-seller"
+    reviewer_id = "commerce-pg-reviewer"
+    buyers = ("commerce-pg-buyer-a", "commerce-pg-buyer-b")
+    identity = IdentityService(repository)
+    for user_id in (seller_id, reviewer_id, *buyers):
+        repository.ensure_identity(user_id, workspace_id, role="owner")
+        identity.bootstrap(user_id, workspace_id)
+    now = utc_now()
+    for user_id, role in ((seller_id, "seller"), (reviewer_id, "reviewer")):
+        repository.save_role_grant(RoleGrant(
+            id=new_id("grant"), user_id=user_id, workspace_id=workspace_id,
+            role=role, status="active", scope_json="{}", granted_by="pg-test",
+            created_at=now, revoked_at="",
+        ))
+
+    commerce_repository = SQLAlchemyCommerceRepository(POSTGRES_URL)
+    commerce = CommerceService(commerce_repository, repository)
+    commerce.open_store(seller_id, workspace_id, "PostgreSQL 沙盒店铺")
+    created = commerce.create_product(
+        seller_id, workspace_id,
+        title="PostgreSQL 库存并发样品",
+        summary="只用于验证库存事务，不代表正式商品。",
+        price_cents=100,
+        source_note="内部测试，来源与授权未核验。",
+        idempotency_key="pg-product-create-0001",
+    )
+    product = created["seller_products"][0]
+    submitted = commerce.submit_product(
+        seller_id, workspace_id, product["id"], product["version"]
+    )
+    queued = submitted["seller_products"][0]
+    commerce.moderate_product(
+        reviewer_id, workspace_id, product["id"], "approved",
+        "仅用于 PostgreSQL 集成测试。", queued["version"],
+    )
+    commerce.set_inventory(seller_id, workspace_id, product["id"], 1, 0)
+    for buyer_id in buyers:
+        commerce.set_cart_item(buyer_id, workspace_id, product["id"], 1, 0)
+
+    def checkout(buyer_id: str) -> str:
+        try:
+            CommerceService(
+                SQLAlchemyCommerceRepository(POSTGRES_URL),
+                SQLAlchemyCreatorRepository(POSTGRES_URL),
+            ).checkout(buyer_id, workspace_id, f"pg-checkout-{buyer_id}")
+        except CommerceConflictError:
+            return "inventory_conflict"
+        return "created"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(checkout, buyers))
+
+    assert sorted(outcomes) == ["created", "inventory_conflict"]
+    inventory = commerce_repository.get_inventory(product["id"], workspace_id)
+    assert inventory is not None
+    assert inventory.available_qty == 0
+    assert sum(
+        len(commerce_repository.list_orders(workspace_id, buyer_user_id=buyer_id))
+        for buyer_id in buyers
+    ) == 1
 
 
 def test_postgres_refresh_rotation_is_atomic(repository) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from haha_commerce.repository import CommerceRepository
 from haha_identity.domain import BusinessRole
 from haha_identity.service import ROLE_LABELS
 from haha_user_center.domain import LibraryKind
@@ -24,10 +25,10 @@ ROLE_COPY: dict[BusinessRole, tuple[str, str, WorkbenchMaturity, str]] = {
         "社区目录仍有本地数据适配器；文化资产与观看状态已经服务端持久化。",
     ),
     BusinessRole.BUYER: (
-        "管理文化收藏与未来的购买旅程",
-        "当前可管理文化收藏；订单、支付和售后领域尚未接入。",
-        WorkbenchMaturity.BLOCKED,
-        "没有真实商品、订单或支付服务，因此不展示虚构交易数据。",
+        "管理文化收藏与内部沙盒购买旅程",
+        "商品、购物车、订单、沙盒支付、履约和售后状态由服务端持久化。",
+        WorkbenchMaturity.PARTIAL,
+        "仅限内部交易沙盒，不处理真实资金，也不代表商品获得权威认证。",
     ),
     BusinessRole.LEARNER: (
         "沿真实学习路径积累可追溯的文化成长",
@@ -48,10 +49,10 @@ ROLE_COPY: dict[BusinessRole, tuple[str, str, WorkbenchMaturity, str]] = {
         "本阶段不会把普通收藏或模型文本伪装成已核验知识贡献。",
     ),
     BusinessRole.SELLER: (
-        "查看入驻身份与交易能力边界",
-        "身份申请可追踪，但店铺、商品、库存和订单尚未开发。",
-        WorkbenchMaturity.BLOCKED,
-        "未接入交易沙盒与合规支付前，不提供经营数据或正式交易入口。",
+        "管理内部沙盒店铺与履约任务",
+        "店铺、商品审核、库存、订单、履约和售后状态由服务端持久化。",
+        WorkbenchMaturity.PARTIAL,
+        "当前不接真实支付、物流或结算，不可作为正式经营凭证。",
     ),
     BusinessRole.REVIEWER: (
         "处理被明确授权的审核任务",
@@ -130,15 +131,19 @@ CAPABILITIES: dict[BusinessRole, tuple[dict[str, str], ...]] = {
             "orders",
             "订单与履约",
             "查看订单、物流和收货状态。",
-            CapabilityStatus.BLOCKED,
-            reason="电商订单领域尚未接入。",
+            CapabilityStatus.LIMITED,
+            href="/commerce",
+            action_label="进入交易沙盒",
+            reason="仅限内部沙盒订单与模拟履约。",
         ),
         _capability(
             "after_sales",
             "售后服务",
             "退款、退货和售后进度。",
-            CapabilityStatus.BLOCKED,
-            reason="尚无交易沙盒和售后状态机。",
+            CapabilityStatus.LIMITED,
+            href="/commerce",
+            action_label="查看售后",
+            reason="售后状态可审计，但不触发真实退款。",
         ),
     ),
     BusinessRole.LEARNER: (
@@ -237,15 +242,18 @@ CAPABILITIES: dict[BusinessRole, tuple[dict[str, str], ...]] = {
             "catalog",
             "商品与库存",
             "管理商品草稿、审核和库存。",
-            CapabilityStatus.BLOCKED,
-            reason="电商领域尚未建立。",
+            CapabilityStatus.AVAILABLE,
+            href="/commerce",
+            action_label="管理商品",
         ),
         _capability(
             "orders",
             "经营订单",
             "处理订单、履约与售后。",
-            CapabilityStatus.BLOCKED,
-            reason="交易沙盒尚未建立。",
+            CapabilityStatus.LIMITED,
+            href="/commerce",
+            action_label="处理沙盒订单",
+            reason="只处理内部沙盒订单，不产生真实资金与物流。",
         ),
     ),
     BusinessRole.REVIEWER: (
@@ -279,8 +287,13 @@ CAPABILITIES: dict[BusinessRole, tuple[dict[str, str], ...]] = {
 
 
 class WorkbenchService:
-    def __init__(self, repository: WorkbenchRepository) -> None:
+    def __init__(
+        self,
+        repository: WorkbenchRepository,
+        commerce_repository: CommerceRepository | None = None,
+    ) -> None:
         self.repository = repository
+        self.commerce_repository = commerce_repository
         self.user_center = UserCenterService(repository)
 
     def snapshot(self, user_id: str, workspace_id: str) -> dict[str, object]:
@@ -355,10 +368,25 @@ class WorkbenchService:
                 ("unread", "未读消息", int(summary["unread_notifications"])),
             ]
         elif role is BusinessRole.BUYER:
+            orders = self.commerce_repository.list_orders(
+                workspace_id, buyer_user_id=str(center["profile"]["user_id"])
+            ) if self.commerce_repository else []
+            after_sales = self.commerce_repository.list_after_sales(
+                workspace_id, buyer_user_id=str(center["profile"]["user_id"])
+            ) if self.commerce_repository else []
             values = [
                 ("bookmarks", "文化收藏", int(summary["bookmarks"])),
-                ("orders", "真实订单", 0),
-                ("after_sales", "售后处理中", 0),
+                ("orders", "沙盒订单", len(orders)),
+                ("after_sales", "售后处理中", sum(item.status == "requested" for item in after_sales)),
+            ]
+        elif role is BusinessRole.SELLER and self.commerce_repository:
+            profile = center["profile"]
+            assert isinstance(profile, dict)
+            seller_id = str(profile["user_id"])
+            values = [
+                ("products", "商品", len(self.commerce_repository.list_products(workspace_id, seller_user_id=seller_id))),
+                ("orders", "沙盒订单", len(self.commerce_repository.list_orders(workspace_id, seller_user_id=seller_id))),
+                ("after_sales", "售后处理中", sum(item.status == "requested" for item in self.commerce_repository.list_after_sales(workspace_id, seller_user_id=seller_id))),
             ]
         else:
             applications = center["applications"]

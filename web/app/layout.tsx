@@ -9,6 +9,7 @@ import "./community-product.css";
 import "./product-pages.css";
 import "./identity-center.css";
 import "./learning-ux.css";
+import "./commerce.css";
 import { CommunityProvider } from "@/lib/community";
 
 export const metadata: Metadata = {

@@ -347,6 +347,38 @@ export type LearningSnapshot = {
   last_quiz_result?: { attempt_id: string; score: number; passed: boolean; correct: number; total: number };
 };
 
+export type CommerceProduct = {
+  id: string; workspace_id: string; store_id: string; seller_user_id: string;
+  title: string; summary: string; price_cents: number; currency: "CNY";
+  source_note: string; provenance: string;
+  status: "draft" | "submitted" | "approved" | "rejected" | "listed" | "delisted";
+  version: number; reviewer_note: string; reviewed_by: string; updated_at: string;
+  inventory: { available_qty: number; sold_qty: number; version: number; updated_at: string };
+};
+
+export type CommerceOrder = {
+  id: string; buyer_user_id: string; seller_user_id: string; store_id: string;
+  status: "awaiting_sandbox_payment" | "paid" | "shipped" | "completed" | "after_sales" | "cancelled";
+  total_cents: number; currency: "CNY"; version: number; created_at: string; updated_at: string;
+  items: { id: string; product_id: string; title_snapshot: string; unit_price_cents: number; quantity: number }[];
+  payment: null | { provider: "internal_sandbox"; status: "authorized"; amount_cents: number; created_at: string };
+  fulfillment: null | { status: "shipped" | "delivered"; tracking_note: string; version: number };
+};
+
+export type CommerceSnapshot = {
+  roles: BusinessRole[];
+  store: null | { id: string; name: string; status: string; version: number };
+  catalog: CommerceProduct[];
+  seller_products: CommerceProduct[];
+  review_queue: CommerceProduct[];
+  cart: { id: string; product_id: string; quantity: number; version: number; product: CommerceProduct | null }[];
+  buyer_orders: CommerceOrder[];
+  seller_orders: CommerceOrder[];
+  buyer_after_sales: { id: string; order_id: string; reason: string; status: string; decision_note: string; version: number }[];
+  seller_after_sales: { id: string; order_id: string; reason: string; status: string; decision_note: string; version: number }[];
+  sandbox: { status: "internal_test_only"; payment_provider: "internal_sandbox"; real_money_moved: false; notice: string; checkout_scope: "single_store" };
+};
+
 export async function createProject(title: string): Promise<{ id: string }> {
   return request("/api/projects", {
     method: "POST",
@@ -478,6 +510,51 @@ export async function submitLearningQuiz(
     method: "POST", headers: headers(crypto.randomUUID()),
     body: JSON.stringify({ answers, expected_progress_version: expectedProgressVersion }),
   });
+}
+export async function getCommerceCenter(): Promise<CommerceSnapshot> {
+  return request("/api/commerce", { headers: headers() });
+}
+export async function openCommerceStore(name: string): Promise<CommerceSnapshot> {
+  return request("/api/commerce/stores", { method: "POST", headers: headers(), body: JSON.stringify({ name }) });
+}
+export async function createCommerceProduct(payload: { title: string; summary: string; price_cents: number; source_note: string }): Promise<CommerceSnapshot> {
+  return request("/api/commerce/products", { method: "POST", headers: headers(crypto.randomUUID()), body: JSON.stringify(payload) });
+}
+export async function submitCommerceProduct(productId: string, expectedVersion: number): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/products/${encodeURIComponent(productId)}/submit`, { method: "POST", headers: headers(), body: JSON.stringify({ expected_version: expectedVersion }) });
+}
+export async function reviewCommerceProduct(productId: string, decision: "approved" | "rejected", note: string, expectedVersion: number): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/products/${encodeURIComponent(productId)}/review`, { method: "POST", headers: headers(), body: JSON.stringify({ decision, note, expected_version: expectedVersion }) });
+}
+export async function updateCommerceInventory(productId: string, quantity: number, expectedVersion: number): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/products/${encodeURIComponent(productId)}/inventory`, { method: "PUT", headers: headers(), body: JSON.stringify({ quantity, expected_version: expectedVersion }) });
+}
+export async function updateCommerceCart(productId: string, quantity: number, expectedVersion: number): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/cart/${encodeURIComponent(productId)}`, { method: "PUT", headers: headers(), body: JSON.stringify({ quantity, expected_version: expectedVersion }) });
+}
+export async function removeCommerceCartItem(productId: string): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/cart/${encodeURIComponent(productId)}`, { method: "DELETE", headers: headers() });
+}
+export async function checkoutCommerceCart(): Promise<CommerceSnapshot> {
+  return request("/api/commerce/checkout", { method: "POST", headers: headers(crypto.randomUUID()) });
+}
+export async function payCommerceSandboxOrder(orderId: string, expectedVersion: number): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/orders/${encodeURIComponent(orderId)}/sandbox-payment`, { method: "POST", headers: headers(crypto.randomUUID()), body: JSON.stringify({ expected_version: expectedVersion }) });
+}
+export async function cancelCommerceOrder(orderId: string, expectedVersion: number): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/orders/${encodeURIComponent(orderId)}/cancel`, { method: "POST", headers: headers(), body: JSON.stringify({ expected_version: expectedVersion }) });
+}
+export async function shipCommerceOrder(orderId: string, expectedVersion: number, trackingNote: string): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/orders/${encodeURIComponent(orderId)}/ship`, { method: "POST", headers: headers(), body: JSON.stringify({ expected_version: expectedVersion, tracking_note: trackingNote }) });
+}
+export async function confirmCommerceDelivery(orderId: string, expectedVersion: number): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/orders/${encodeURIComponent(orderId)}/confirm-delivery`, { method: "POST", headers: headers(), body: JSON.stringify({ expected_version: expectedVersion }) });
+}
+export async function requestCommerceAfterSale(orderId: string, expectedVersion: number, reason: string): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/orders/${encodeURIComponent(orderId)}/after-sales`, { method: "POST", headers: headers(), body: JSON.stringify({ expected_version: expectedVersion, reason }) });
+}
+export async function decideCommerceAfterSale(afterSaleId: string, expectedVersion: number, decision: "approved" | "rejected", note: string): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/after-sales/${encodeURIComponent(afterSaleId)}/decision`, { method: "POST", headers: headers(), body: JSON.stringify({ expected_version: expectedVersion, decision, note }) });
 }
 export async function updateUserCenterProfile(payload: UserCenterSnapshot["account"]): Promise<UserCenterSnapshot> {
   return request("/api/user-center/profile", { method: "PATCH", headers: headers(), body: JSON.stringify(payload) });

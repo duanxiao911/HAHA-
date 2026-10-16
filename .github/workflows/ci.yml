@@ -210,6 +210,40 @@ jobs:
         run: python scripts/e2e_learning_gate_c3.py --phase verify
       - name: Run Learning Gate C3 real-browser acceptance
         run: python scripts/e2e_learning_gate_c3_browser.py
+      - name: Exercise Commerce Gate D through real API
+        shell: bash
+        run: |
+          docker compose run --rm --no-deps \
+            --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            -e HAHA_E2E_API_URL=http://api:8000 \
+            -e HAHA_TEST_POSTGRES_URL=postgresql+psycopg://haha:${POSTGRES_PASSWORD:-local-change-me}@postgres:5432/haha \
+            api python scripts/e2e_commerce_gate_d.py --phase exercise
+      - name: Restart API to verify durable commerce state
+        shell: bash
+        run: |
+          docker compose restart api
+          for attempt in {1..40}; do
+            if curl --fail --silent http://127.0.0.1:8000/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          exit 1
+      - name: Verify Commerce Gate D after service restart
+        shell: bash
+        run: |
+          docker compose run --rm --no-deps \
+            --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            -e HAHA_E2E_API_URL=http://api:8000 \
+            -e HAHA_TEST_POSTGRES_URL=postgresql+psycopg://haha:${POSTGRES_PASSWORD:-local-change-me}@postgres:5432/haha \
+            api python scripts/e2e_commerce_gate_d.py --phase verify
+      - name: Run Commerce Gate D real-browser acceptance
+        run: python scripts/e2e_commerce_gate_d_browser.py
       - name: Capture service logs on failure
         if: failure()
         shell: bash
