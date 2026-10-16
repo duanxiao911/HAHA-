@@ -4,6 +4,7 @@ __pycache__/
 .pytest_tmp/
 .pytest-tmp/
 .pytest_cache/
+.pytest-*/
 .ruff_cache/
 .venv/
 venv/
@@ -12,6 +13,8 @@ venv/
 !.env.example
 model-config.ps1
 artifacts/
+.test-artifacts/
+.tmp/
 data/*.db
 %SystemDrive%/
 web/.contract-test-build/

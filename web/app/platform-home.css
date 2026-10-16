@@ -1,0 +1,70 @@
+.platformHomeFrame { min-height: 100vh; background: var(--color-canvas); }
+.platformHomePage { display: grid; width: min(100%, 1440px); gap: 22px; margin-inline: auto; padding: 34px clamp(18px, 3vw, 42px) 96px; }
+.platformHero { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(290px, .8fr); gap: 18px; }
+.platformWelcome,
+.platformToday,
+.platformModuleCard,
+.platformResumePanel,
+.platformBoundaryPanel { border: 1px solid var(--color-border); background: var(--color-surface); }
+.platformWelcome { position: relative; min-width: 0; min-height: 280px; overflow: hidden; padding: 38px 40px; border-radius: 24px; background: linear-gradient(135deg,#fffdf9 34%,#f3e4d8 100%); box-shadow: var(--shadow-m); }
+.platformWelcome::after { position: absolute; right: -30px; bottom: -100px; width: 285px; height: 285px; border: 54px solid rgba(200,77,66,.08); border-radius: 50%; content: ""; }
+.platformWelcome > * { position: relative; z-index: 1; }
+.platformWelcome > small,
+.platformToday small,
+.platformSectionHeading small,
+.platformBoundaryPanel > small { color: var(--color-brand); font-size: 10px; font-weight: 900; letter-spacing: .17em; }
+.platformWelcome h1 { max-width: 760px; margin: 12px 0 13px; font-family: Georgia,"Noto Serif SC",serif; font-size: clamp(36px,4.1vw,58px); line-height: 1.08; letter-spacing: -.045em; }
+.platformWelcome > p { max-width: 720px; margin: 0; color: var(--color-text-secondary); font-size: 14px; line-height: 1.8; }
+.platformHeroActions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-top: 26px; }
+.platformHeroActions > span { color: var(--color-text-secondary); font-size: 12px; }
+.platformToday { min-width: 0; padding: 26px; border-radius: 24px; box-shadow: var(--shadow-m); }
+.platformToday header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.platformToday h2 { margin: 6px 0 0; font-size: 21px; }
+.platformToday header > span { padding: 7px 10px; border-radius: 999px; background: var(--color-success-soft); color: var(--color-success); font-size: 11px; font-weight: 800; white-space: nowrap; }
+.platformToday > a { display: grid; min-height: 57px; grid-template-columns: 38px 1fr auto; align-items: center; gap: 9px; margin-top: 10px; padding: 10px 13px; border-radius: 13px; background: var(--color-surface-subtle); color: var(--color-text); text-decoration: none; }
+.platformToday > a > b { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 50%; background: var(--color-success-soft); color: var(--color-success); font-size: 12px; }
+.platformToday > a > span { font-size: 13px; font-weight: 720; }
+.platformToday > a > em { color: var(--color-brand); font-size: 11px; font-style: normal; font-weight: 800; }
+.platformTodayLoading { display: grid; gap: 10px; }
+.platformTodayLoading i { height: 57px; border-radius: 13px; background: linear-gradient(90deg,#f1ece4,#faf7f2,#f1ece4); background-size: 200% 100%; animation: platformSkeleton 1.2s linear infinite; }
+.platformTodayEmpty { margin: 38px 0 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.8; }
+@keyframes platformSkeleton { to { background-position: -200% 0; } }
+.platformModuleSection { margin-top: 16px; }
+.platformSectionHeading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 17px; }
+.platformSectionHeading h2 { margin: 7px 0 0; font-size: 27px; letter-spacing: -.025em; }
+.platformSectionHeading p { max-width: 590px; margin: 0; color: var(--color-text-secondary); font-size: 12px; text-align: right; }
+.platformModuleGrid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; }
+.platformModuleCard { display: flex; min-width: 0; min-height: 228px; flex-direction: column; padding: 23px; border-radius: 20px; color: var(--color-text); text-decoration: none; transition: transform .18s ease,border-color .18s ease,box-shadow .18s ease; }
+.platformModuleCard:hover { border-color: color-mix(in srgb,var(--color-brand) 48%,var(--color-border)); box-shadow: var(--shadow-s); transform: translateY(-2px); }
+.platformModuleCard.is-learning { background: linear-gradient(150deg,#fffdf9,#eef5ee); }
+.platformModuleCard.is-commerce { background: linear-gradient(150deg,#fffdf9,#f6efe4); }
+.platformModuleIcon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 12px; background: var(--color-brand-soft); color: var(--color-brand); font-size: 19px; }
+.platformModuleCard h3 { margin: 21px 0 7px; font-size: 20px; }
+.platformModuleCard p { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.75; }
+.platformModuleCard footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--color-border); font-size: 11px; }
+.platformModuleCard footer b { color: var(--color-brand); white-space: nowrap; }
+.platformModuleStatus { padding: 5px 8px; border-radius: 999px; font-size: 9px; font-weight: 850; }
+.platformModuleStatus.is-ready { background: var(--color-success-soft); color: var(--color-success); }
+.platformModuleStatus.is-sandbox { background: #f8edda; color: var(--color-warning); }
+.platformModuleStatus.is-bounded { background: #eee9f7; color: #654b91; }
+.platformLowerGrid { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(300px,.72fr); gap: 18px; }
+.platformResumePanel,
+.platformBoundaryPanel { min-width: 0; padding: 24px; border-radius: 19px; }
+.platformResumePanel .platformSectionHeading h2 { font-size: 21px; }
+.platformResumeGrid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.platformResumeGrid > a { display: flex; min-height: 145px; flex-direction: column; padding: 16px; border-radius: 13px; background: var(--color-surface-subtle); color: var(--color-text); text-decoration: none; }
+.platformResumeGrid small { color: var(--color-brand); font-size: 10px; font-weight: 850; }
+.platformResumeGrid b { margin: 9px 0 5px; font-size: 13px; }
+.platformResumeGrid span { color: var(--color-text-secondary); font-size: 10px; line-height: 1.5; }
+.platformResumeGrid em { margin-top: auto; color: var(--color-brand); font-size: 11px; font-style: normal; font-weight: 800; }
+.platformBoundaryPanel h2 { margin: 7px 0 15px; font-size: 21px; }
+.platformBoundaryPanel > div { padding: 13px; border-left: 3px solid var(--color-warning); border-radius: 9px; background: #fff8ea; color: #684a1f; }
+.platformBoundaryPanel > div + div { margin-top: 10px; }
+.platformBoundaryPanel > div.is-sandbox { border-color: var(--color-brand); background: var(--color-brand-soft); color: #733932; }
+.platformBoundaryPanel strong { font-size: 11px; }
+.platformBoundaryPanel p { margin: 5px 0 0; font-size: 10px; line-height: 1.7; }
+.platformBoundaryPanel > a { display: block; margin-top: 16px; color: var(--color-brand); font-size: 11px; font-weight: 800; }
+@media(max-width:1100px){.platformModuleGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.platformResumeGrid{grid-template-columns:1fr 1fr}.platformResumeGrid>a:last-child{grid-column:1/-1}}
+@media(max-width:820px){.platformHero,.platformLowerGrid{grid-template-columns:1fr}.platformWelcome,.platformToday{box-shadow:none}.platformToday{padding:22px}.platformSectionHeading{align-items:flex-start;flex-direction:column;gap:6px}.platformSectionHeading p{text-align:left}.platformResumeGrid{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.platformHomePage{padding:20px 14px 88px}.platformWelcome{min-height:0;padding:27px 23px;border-radius:19px}.platformWelcome h1{font-size:35px;overflow-wrap:anywhere}.platformWelcome>p{font-size:12px}.platformHeroActions{align-items:flex-start;flex-direction:column}.platformToday{border-radius:19px}.platformModuleSection{margin-top:8px}.platformSectionHeading h2{font-size:24px}.platformModuleGrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.platformModuleCard{min-height:210px;padding:17px;border-radius:16px}.platformModuleCard h3{margin-top:16px;font-size:16px}.platformModuleCard p{font-size:10px}.platformModuleCard footer{align-items:flex-start;flex-direction:column}.platformResumeGrid{grid-template-columns:1fr}.platformResumeGrid>a:last-child{grid-column:auto}.platformResumePanel,.platformBoundaryPanel{padding:19px}}
+@media(prefers-reduced-motion:reduce){.platformModuleCard{transition:none}.platformTodayLoading i{animation:none}}

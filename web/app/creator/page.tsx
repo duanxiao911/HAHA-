@@ -1,4 +1,4 @@
-import { CreatorWorkbench } from "../page";
+import { CreatorWorkbench } from "./CreatorWorkbench";
 
 export const metadata = {
   title: "HAHA AI 创作台",

@@ -10,11 +10,12 @@ import "./product-pages.css";
 import "./identity-center.css";
 import "./learning-ux.css";
 import "./commerce.css";
+import "./platform-home.css";
 import { CommunityProvider } from "@/lib/community";
 
 export const metadata: Metadata = {
-  title: "HAHA 非遗创作平台",
-  description: "可追踪、可验证的非遗内容创作工作台",
+  title: "HAHA 非遗文化平台",
+  description: "连接视频社区、非遗电商、文化学习与统一身份成长空间。",
   icons: { icon: "/icon.svg" },
 };
 
