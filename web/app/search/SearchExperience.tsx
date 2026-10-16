@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { ConfirmDialog } from "@/components/community/ConfirmDialog";
 import { ContentTile } from "@/components/community/ContentTile";
 import { EntityCard } from "@/components/community/EntityCard";
 import { ProductFrame } from "@/components/community/ProductFrame";
@@ -36,6 +37,12 @@ function normalizeScope(value: string): NonNullable<SearchQuery["scope"]> {
     : "all";
 }
 
+function normalizeSort(value: string): NonNullable<SearchQuery["sort"]> {
+  return sorts.some((sort) => sort.value === value)
+    ? value as NonNullable<SearchQuery["sort"]>
+    : "relevance";
+}
+
 function HitCard({ hit }: { hit: CommunitySearchHit }) {
   const { snapshot } = useCommunity();
   if (hit.kind === "content") {
@@ -59,9 +66,11 @@ function HitCard({ hit }: { hit: CommunitySearchHit }) {
 export function SearchExperience({
   initialQuery,
   initialScope,
+  initialSort,
 }: {
   initialQuery: string;
   initialScope: string;
+  initialSort: string;
 }) {
   const router = useRouter();
   const { snapshot, actions } = useCommunity();
@@ -71,12 +80,15 @@ export function SearchExperience({
   const [scope, setScope] = useState<NonNullable<SearchQuery["scope"]>>(
     normalizeScope(initialScope),
   );
-  const [sort, setSort] = useState<NonNullable<SearchQuery["sort"]>>("relevance");
+  const [sort, setSort] = useState<NonNullable<SearchQuery["sort"]>>(normalizeSort(initialSort));
   const [hits, setHits] = useState<CommunitySearchHit[]>([]);
   const [state, setState] = useState<"idle" | "loading" | "success" | "error">(
     initialQuery.trim() ? "loading" : "idle",
   );
   const [error, setError] = useState("");
+  const [clearHistoryOpen, setClearHistoryOpen] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
+  const [feedback, setFeedback] = useState("");
 
   useEffect(() => {
     if (!submittedQuery) return;
@@ -99,6 +111,14 @@ export function SearchExperience({
     return () => controller.abort();
   }, [actions, scope, sort, submittedQuery]);
 
+  function searchHref(nextQuery: string, nextScope = scope, nextSort = sort) {
+    const params = new URLSearchParams();
+    if (nextQuery) params.set("q", nextQuery);
+    if (nextScope !== "all") params.set("type", nextScope);
+    if (nextSort !== "relevance") params.set("sort", nextSort);
+    return `/search${params.size ? `?${params.toString()}` : ""}`;
+  }
+
   async function runSearch(event?: FormEvent) {
     event?.preventDefault();
     const clean = query.trim();
@@ -110,10 +130,29 @@ export function SearchExperience({
     }
     setSubmittedQuery(clean);
     if (clean) await actions.rememberSearchTerm(clean);
-    const params = new URLSearchParams();
-    if (clean) params.set("q", clean);
-    if (scope !== "all") params.set("type", scope);
-    router.replace(`/search${params.size ? `?${params.toString()}` : ""}`, { scroll: false });
+    router.push(searchHref(clean), { scroll: false });
+  }
+
+  function selectSearchTerm(term: string) {
+    setQuery(term);
+    setState("loading");
+    setSubmittedQuery(term);
+    void actions.rememberSearchTerm(term);
+    router.push(searchHref(term), { scroll: false });
+  }
+
+  async function clearHistory() {
+    setClearingHistory(true);
+    setFeedback("");
+    try {
+      await actions.clearSearchHistory();
+      setClearHistoryOpen(false);
+      setFeedback("最近搜索已清空。");
+    } catch (cause) {
+      setFeedback(cause instanceof Error ? cause.message : "清空失败，请重试。");
+    } finally {
+      setClearingHistory(false);
+    }
   }
 
   const groupedCounts = useMemo(() => hits.reduce<Record<SearchEntityKind, number>>(
@@ -156,7 +195,7 @@ export function SearchExperience({
             type="button"
             className={scope === item.value ? "active" : ""}
             aria-pressed={scope === item.value}
-            onClick={() => { setState(submittedQuery ? "loading" : "idle"); setScope(item.value ?? "all"); }}
+            onClick={() => { const nextScope = item.value ?? "all"; setState(submittedQuery ? "loading" : "idle"); setScope(nextScope); router.replace(searchHref(submittedQuery, nextScope, sort), { scroll: false }); }}
             key={item.value}
           >
             {item.label}
@@ -175,7 +214,7 @@ export function SearchExperience({
               </div>
               <label>
                 <span className="productVisuallyHidden">排序方式</span>
-                <select value={sort} onChange={(event) => { setState("loading"); setSort(event.target.value as typeof sort); }}>
+                <select value={sort} onChange={(event) => { const nextSort = event.target.value as typeof sort; setState("loading"); setSort(nextSort); router.replace(searchHref(submittedQuery, scope, nextSort), { scroll: false }); }}>
                   {sorts.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}
                 </select>
               </label>
@@ -210,11 +249,11 @@ export function SearchExperience({
             <h2>最近搜索</h2>
             <div className="productTabs">
               {snapshot.searchHistory.length ? snapshot.searchHistory.map((term) => (
-                <button type="button" onClick={() => { setQuery(term); setState("loading"); setSubmittedQuery(term); }} key={term}>{term}</button>
+                <button type="button" onClick={() => selectSearchTerm(term)} key={term}>{term}</button>
               )) : <p>搜索过的词会只保存在当前浏览器。</p>}
             </div>
             {snapshot.searchHistory.length ? (
-              <button className="productButtonQuiet" type="button" onClick={() => void actions.clearSearchHistory()}>清空历史</button>
+              <button className="productButtonQuiet productDangerText" type="button" onClick={() => setClearHistoryOpen(true)}>清空最近搜索</button>
             ) : null}
           </aside>
         </div>
@@ -223,7 +262,7 @@ export function SearchExperience({
           <div className="productSectionHead"><div><small>START HERE</small><h2>热门探索入口</h2><p>选择一个主题开始。</p></div></div>
           <div className="productTabs">
             {suggestedTerms.map((term) => (
-              <button type="button" onClick={() => { setQuery(term); setState("loading"); setSubmittedQuery(term); void actions.rememberSearchTerm(term); }} key={term}>{term}</button>
+              <button type="button" onClick={() => selectSearchTerm(term)} key={term}>{term}</button>
             ))}
           </div>
           <div className="productEntityGrid">
@@ -240,11 +279,13 @@ export function SearchExperience({
           </div>
         </section>
       )}
+      <ConfirmDialog open={clearHistoryOpen} title="清空最近搜索？" description="只会删除当前账户或浏览器保存的搜索词，不会删除收藏、想学或观看记录。" confirmLabel="确认清空" busy={clearingHistory} onCancel={() => setClearHistoryOpen(false)} onConfirm={() => void clearHistory()} />
+      {feedback ? <div className="productToast" role="status">{feedback}</div> : null}
     </ProductFrame>
   );
 }
 
 export function SearchExperienceFromRoute() {
   const params = useSearchParams();
-  return <SearchExperience initialQuery={params.get("q") ?? ""} initialScope={params.get("type") ?? "all"} />;
+  return <SearchExperience key={params.toString()} initialQuery={params.get("q") ?? ""} initialScope={params.get("type") ?? "all"} initialSort={params.get("sort") ?? "relevance"} />;
 }

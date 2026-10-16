@@ -16,6 +16,8 @@ from haha_core.domain import RunStatus, ScriptVersion, new_id, utc_now
 from haha_core.service import CreatorService
 from haha_core.sqlalchemy_repository import SQLAlchemyCreatorRepository
 from haha_identity.service import IdentityService
+from haha_learning.seed import LESSON_UNIT_ID, PATH_ID, QUIZ_ID, QUIZ_UNIT_ID
+from haha_learning.service import LearningService
 from haha_user_center.service import UserCenterService
 from haha_workbench.service import WorkbenchService
 
@@ -142,6 +144,52 @@ def test_postgres_user_center_assets_preferences_and_history_are_durable(reposit
     assert reloaded["history"][0]["completed"] is True
 
 
+def test_postgres_learning_loop_is_durable_server_graded_and_idempotent(repository) -> None:
+    repository.ensure_identity("learning-user", "pg-workspace", role="owner")
+    identity = IdentityService(repository)
+    identity.bootstrap("learning-user", "pg-workspace")
+    identity.activate_role("learning-user", "pg-workspace", "learner")
+    service = LearningService(repository)
+    initial = service.bootstrap("learning-user", "pg-workspace")
+    assert initial["ai_tutor"]["status"] == "blocked"
+
+    service.enroll_path(
+        "learning-user", "pg-workspace", PATH_ID,
+        source_content_id="", idempotency_key="pg-learning-enroll-01",
+    )
+
+    def complete_same_unit() -> dict[str, object]:
+        return LearningService(SQLAlchemyCreatorRepository(POSTGRES_URL)).complete_unit(
+            "learning-user", "pg-workspace", LESSON_UNIT_ID,
+            expected_version=0, idempotency_key="pg-learning-unit-0001",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: complete_same_unit(), range(2)))
+    assert all(item["summary"]["completed_units"] == 1 for item in results)
+
+    quiz_unit = next(
+        unit
+        for path in results[0]["paths"]
+        for unit in path["units"]
+        if unit["id"] == QUIZ_UNIT_ID
+    )
+    answers = {question["id"]: 1 for question in quiz_unit["quiz"]["questions"]}
+    result = service.submit_quiz(
+        "learning-user", "pg-workspace", QUIZ_ID,
+        answers=answers, expected_progress_version=0,
+        idempotency_key="pg-learning-quiz-0001",
+    )
+    assert result["last_quiz_result"]["passed"] is True
+
+    restored = LearningService(SQLAlchemyCreatorRepository(POSTGRES_URL)).bootstrap(
+        "learning-user", "pg-workspace"
+    )
+    assert restored["paths"][0]["completion_percent"] == 100
+    assert restored["summary"]["quiz_attempts"] == 1
+    assert restored["summary"]["achievements"] == 2
+
+
 def test_postgres_community_state_is_durable_and_submission_lock_is_atomic(
     repository,
 ) -> None:
@@ -263,6 +311,9 @@ def test_postgres_parallel_workbench_bootstrap_is_idempotent(repository) -> None
         "viewer",
         "buyer",
     }
+    notifications = repository.list_user_notifications("parallel-user", "pg-workspace")
+    assert len(notifications) == 1
+    assert notifications[0].title == "文化账户已启用"
 
 
 def test_postgres_refresh_rotation_is_atomic(repository) -> None:

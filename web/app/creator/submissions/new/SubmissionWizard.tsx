@@ -4,6 +4,7 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { ConfirmDialog } from "@/components/community/ConfirmDialog";
 import { ProductFrame } from "@/components/community/ProductFrame";
 import { StateNotice } from "@/components/community/StateNotice";
 import {
@@ -71,6 +72,7 @@ export function SubmissionWizard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [exitDialogOpen, setExitDialogOpen] = useState(false);
   const loadedDraftId = useRef("");
   const loadedAiHandoff = useRef(false);
   const apiMode = snapshot.runtime.mode === "api";
@@ -234,6 +236,7 @@ export function SubmissionWizard({
   return (
     <ProductFrame>
       <div className="productDemoStrip" role="note"><b>{apiMode ? "内部投稿工作区" : "投稿演示模式"}</b><span>文件仅登记名称、类型和大小，不上传文件内容；{apiMode ? "草稿、版本和审核状态保存在服务端。" : "提交与审核状态仅保存在当前浏览器。"}</span></div>
+      <div className="productPageToolbar"><button className="productButtonQuiet" type="button" onClick={() => setExitDialogOpen(true)}>← 退出投稿</button><span>{currentDraft ? "已保存草稿可从创作中心继续" : "尚未创建草稿"}</span></div>
       <div className="productWizard">
         <ol className="productWizardSteps" aria-label="投稿步骤">
           {steps.map((label, index) => <li className={index === step ? "active" : index < step ? "done" : ""} aria-current={index === step ? "step" : undefined} key={label}><span>{index < step ? "✓" : index + 1}</span><b>{label}</b></li>)}
@@ -250,6 +253,7 @@ export function SubmissionWizard({
           <div className="productFormActions"><button className="productButtonSecondary" type="button" disabled={busy || step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>上一步</button>{step < steps.length - 1 ? <button className="productButton" type="button" disabled={busy} onClick={() => void saveAndMove(step + 1)}>{busy ? "保存中…" : "保存并继续"}</button> : null}</div>
         </section>
       </div>
+      <ConfirmDialog open={exitDialogOpen} title="退出投稿编辑？" description="尚未通过“保存并继续”写入的更改不会保留；已经保存的草稿仍可从创作中心继续。" confirmLabel="退出投稿" cancelLabel="继续编辑" onCancel={() => setExitDialogOpen(false)} onConfirm={() => router.push("/creator")} />
       {feedback ? <div className="productToast" role="status">{feedback}</div> : null}
     </ProductFrame>
   );

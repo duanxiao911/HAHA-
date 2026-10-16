@@ -169,13 +169,19 @@ async def run(websocket_url: str) -> dict[str, Any]:
         await navigate("/identity", "今天从这里继续")
         assertions["archive_opened"] = await click("文化资产")
         body = await wait_for("收藏、想学与稍后看已保存到服务端")
+        assertions["archive_url_synced"] = "tab=archive" in str(await evaluate("location.search"))
         assertions["assets_restored"] = int(await evaluate("document.querySelectorAll('.identityTaskList li').length")) >= 3
         assertions["follow_restored"] = "阿锦（演示人物）" in body and "正在关注" in body
         assertions["history_restored"] = "观看记录" in body
         assertions["footprint_real"] = "文化足迹与成长状态" in body and "文化足迹已经建立" in body
-        assertions["c3_boundary_honest"] = "学习路径、测验和成就属于 Gate C3" in body
+        assertions["c3_boundary_honest"] = "学习成长汇总来自 Gate C3 的服务端权威记录" in body
 
         assertions["settings_opened"] = await click("设置")
+        await wait_for("账户资料与隐私")
+        await evaluate("history.back(); true")
+        await wait_for("文化足迹与成长状态")
+        assertions["browser_back_restored_archive"] = "tab=archive" in str(await evaluate("location.search"))
+        assertions["settings_reopened"] = await click("设置")
         await wait_for("账户资料与隐私")
         await evaluate("""(() => {const values=['真实浏览器体验员','贵州','G1 跨设备文化账户']; const nodes=[...document.querySelectorAll('.identitySettingsForm input:not([type=checkbox]),.identitySettingsForm textarea')]; nodes.forEach((node,i)=>{const p=node.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(p,'value').set.call(node,values[i]||''); node.dispatchEvent(new Event('input',{bubbles:true}));}); return nodes.length;})()""")
         assertions["profile_submitted"] = await click("保存账户资料")
@@ -191,9 +197,36 @@ async def run(websocket_url: str) -> dict[str, Any]:
             await wait_for("消息已读")
         else:
             assertions["notification_read"] = True
+        assertions["notification_delete_requested"] = await click("删除")
+        await wait_for("删除这条消息")
+        await shot("user-center-delete-confirm.png")
+        await command("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Escape", "code": "Escape"})
+        await command("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Escape", "code": "Escape"})
+        await asyncio.sleep(0.2)
+        assertions["delete_cancelled_with_escape"] = not bool(await evaluate("Boolean(document.querySelector('.productConfirmDialog'))"))
         assertions["notification_delete"] = await click("删除")
+        await wait_for("删除这条消息")
+        assertions["notification_delete_confirmed"] = await click("删除消息")
         await wait_for("消息已删除")
         assertions["notification_removed"] = "没有系统消息" in str(await evaluate("document.body.innerText"))
+        await navigate("/search", "搜索与发现")
+        assertions["search_submitted"] = bool(await evaluate("""(() => {const input=document.querySelector('#community-search-query'); const form=input?.closest('form'); if(!input||!form)return false; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'苗绣'); input.dispatchEvent(new Event('input',{bubbles:true})); form.requestSubmit(); return true;})()"""))
+        await wait_for("“苗绣”的结果")
+        assertions["search_url_synced"] = str(await evaluate("new URLSearchParams(location.search).get('q')")) == "苗绣"
+        assertions["search_scope_selected"] = await click("人物")
+        await asyncio.sleep(0.4)
+        assertions["search_scope_url_synced"] = str(await evaluate("new URLSearchParams(location.search).get('type')")) == "person"
+        assertions["search_sort_selected"] = bool(await evaluate("""(() => {const select=document.querySelector('.productSectionHead select'); if(!select)return false; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,'popular'); select.dispatchEvent(new Event('change',{bubbles:true})); return true;})()"""))
+        await asyncio.sleep(0.4)
+        assertions["search_sort_url_synced"] = str(await evaluate("new URLSearchParams(location.search).get('sort')")) == "popular"
+        assertions["search_clear_requested"] = await click("清空最近搜索")
+        await wait_for("清空最近搜索？")
+        assertions["search_clear_cancelled"] = await click("取消")
+        assertions["search_history_kept_after_cancel"] = "苗绣" in str(await evaluate("document.body.innerText"))
+        await click("清空最近搜索")
+        await click("确认清空")
+        await wait_for("最近搜索已清空")
+        assertions["search_history_cleared"] = not bool(await evaluate("[...document.querySelectorAll('.productSidePanel .productTabs button')].some(node=>node.innerText.trim()==='苗绣')"))
         await shot("user-center-final.png")
         browser_errors = [item for item in events if item.get("method") in {"Runtime.exceptionThrown", "Log.entryAdded"}]
         assertions["no_browser_exceptions"] = not browser_errors

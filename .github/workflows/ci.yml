@@ -192,6 +192,24 @@ jobs:
             api python scripts/e2e_community_gate_c2.py
       - name: Run Community Gate C2 real-browser acceptance
         run: python scripts/e2e_community_gate_c2_browser.py
+      - name: Exercise Learning Gate C3 through real API
+        run: python scripts/e2e_learning_gate_c3.py --phase exercise
+      - name: Restart API to verify durable learning state
+        shell: bash
+        run: |
+          docker compose restart api
+          for attempt in {1..40}; do
+            if curl --fail --silent http://127.0.0.1:8000/ready >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          exit 1
+      - name: Verify Learning Gate C3 after service restart
+        run: python scripts/e2e_learning_gate_c3.py --phase verify
+      - name: Run Learning Gate C3 real-browser acceptance
+        run: python scripts/e2e_learning_gate_c3_browser.py
       - name: Capture service logs on failure
         if: failure()
         shell: bash

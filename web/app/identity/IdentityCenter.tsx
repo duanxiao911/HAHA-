@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
+import { ConfirmDialog } from "@/components/community/ConfirmDialog";
 import { ProductFrame } from "@/components/community/ProductFrame";
 import { StateNotice } from "@/components/community/StateNotice";
 import {
@@ -35,6 +37,18 @@ import {
 } from "@/lib/api";
 
 type CenterView = "today" | "archive" | "workbench" | "tasks" | "settings";
+type ConfirmationRequest = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  actionKey: string;
+  action: () => Promise<unknown>;
+  message: string;
+  reload?: boolean;
+  onSuccess?: () => void;
+};
+
+const centerViews = new Set<CenterView>(["today", "archive", "workbench", "tasks", "settings"]);
 
 const professionalRoles = new Set<BusinessRole>([
   "creator", "contributor", "seller", "reviewer", "admin",
@@ -58,13 +72,14 @@ const maturityLabels = { operational: "可运行", partial: "部分打通", bloc
 const formatError = (cause: unknown) => cause instanceof Error ? cause.message : "操作失败，请稍后重试。";
 
 export function IdentityCenter() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const authState = useSyncExternalStore(
     subscribeAuthSession, getAuthSessionSnapshot, getServerAuthSessionSnapshot,
   );
   const canLoad = !AUTH_REQUIRED || authState === "authenticated";
   const [snapshot, setSnapshot] = useState<UserCenterSnapshot | null>(null);
   const [workbench, setWorkbench] = useState<WorkbenchSnapshot | null>(null);
-  const [view, setView] = useState<CenterView>("today");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -75,6 +90,15 @@ export function IdentityCenter() {
   const [account, setAccount] = useState<UserCenterSnapshot["account"] | null>(null);
   const [preferences, setPreferences] = useState<UserCenterSnapshot["preferences"] | null>(null);
   const [sessions, setSessions] = useState<AccountSession[]>([]);
+  const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const requestedView = searchParams.get("tab");
+  const routeView = requestedView && centerViews.has(requestedView as CenterView)
+    ? requestedView as CenterView
+    : "today";
+  const view = routeView === "workbench" && snapshot && !professionalRoles.has(snapshot.profile.active_role)
+    ? "today"
+    : routeView;
 
   useEffect(() => { void initializeAuthSession(); }, []);
 
@@ -111,17 +135,57 @@ export function IdentityCenter() {
     void listAccountSessions().then((value) => setSessions(value.items)).catch((cause) => setError(formatError(cause)));
   }, [authState, view]);
 
-  async function run(key: string, action: () => Promise<unknown>, message: string) {
+  useEffect(() => {
+    function closeMenus(event: MouseEvent | KeyboardEvent) {
+      if (event instanceof KeyboardEvent && event.key !== "Escape") return;
+      if (event instanceof MouseEvent && profileMenuRef.current?.contains(event.target as Node)) return;
+      setRoleMenuOpen(false);
+      if (event instanceof KeyboardEvent && event.key === "Escape") {
+        setIdentityManagerOpen(false);
+        setApplyRole("");
+      }
+    }
+    document.addEventListener("mousedown", closeMenus);
+    document.addEventListener("keydown", closeMenus);
+    return () => {
+      document.removeEventListener("mousedown", closeMenus);
+      document.removeEventListener("keydown", closeMenus);
+    };
+  }, []);
+
+  async function run(key: string, action: () => Promise<unknown>, message: string, reload = true): Promise<boolean> {
     setBusy(key); setError(""); setFeedback("");
-    try { await action(); await load(); setFeedback(message); }
-    catch (cause) { setError(formatError(cause)); }
+    try { await action(); if (reload) await load(); setFeedback(message); return true; }
+    catch (cause) { setError(formatError(cause)); return false; }
     finally { setBusy(""); }
+  }
+
+  function selectView(nextView: CenterView) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextView === "today") params.delete("tab");
+    else params.set("tab", nextView);
+    router.push(`/identity${params.size ? `?${params.toString()}` : ""}`, { scroll: false });
+  }
+
+  async function confirmPendingAction() {
+    if (!confirmation) return;
+    const success = await run(
+      confirmation.actionKey,
+      confirmation.action,
+      confirmation.message,
+      confirmation.reload ?? true,
+    );
+    if (success) {
+      const onSuccess = confirmation.onSuccess;
+      setConfirmation(null);
+      onSuccess?.();
+    }
   }
 
   async function switchRole(role: BusinessRole, label: string) {
     await run(`switch-${role}`, () => switchIdentityContext(role), `已切换为${label}。`);
     setRoleMenuOpen(false); setIdentityManagerOpen(false);
-    if (!professionalRoles.has(role)) setView("today");
+    if (!professionalRoles.has(role)) selectView("today");
   }
 
   async function submitApplication(event: FormEvent<HTMLFormElement>) {
@@ -157,20 +221,20 @@ export function IdentityCenter() {
   return <ProductFrame className="identityCenterFrame" mainClassName="identityCenterPage" demoLabel="文化账户 Gate C1">
     <section className="identityHero" data-testid="user-center-hero">
       <div><small>HAHA CULTURAL ACCOUNT</small><h1>{snapshot.account.display_name}的文化账户</h1><p>一个账户连接内容、学习、创作与未来的交易服务；数据由服务端按用户和工作空间隔离保存。</p></div>
-      <div className="identityProfileMenu">
-        <button className="identityProfileTrigger" type="button" aria-expanded={roleMenuOpen} aria-controls="identity-role-menu" onClick={() => setRoleMenuOpen((open) => !open)}>
+      <div className="identityProfileMenu" ref={profileMenuRef}>
+        <button className="identityProfileTrigger" type="button" aria-haspopup="menu" aria-expanded={roleMenuOpen} aria-controls="identity-role-menu" onClick={() => setRoleMenuOpen((open) => !open)}>
           <span className="identityAvatar" aria-hidden="true">{snapshot.account.display_name.slice(0, 1).toUpperCase()}</span>
           <span><small>当前身份</small><strong>{roleLabels[activeRole]}</strong><em>{snapshot.account.region || "尚未设置地区"}</em></span><b aria-hidden="true">⌄</b>
         </button>
-        {roleMenuOpen ? <div className="identityRoleMenu" id="identity-role-menu"><small>切换工作上下文</small>
-          {activeRoles.map((item) => <button type="button" className={item.role === activeRole ? "current" : ""} disabled={item.role === activeRole || Boolean(busy)} key={item.id} onClick={() => void switchRole(item.role, item.label)}><span>{item.label}</span><em>{item.role === activeRole ? "当前" : "切换"}</em></button>)}
-          <button className="manage" type="button" onClick={() => { setRoleMenuOpen(false); setIdentityManagerOpen(true); }}>管理身份与申请</button>
+        {roleMenuOpen ? <div className="identityRoleMenu" id="identity-role-menu" role="menu"><small>切换工作上下文</small>
+          {activeRoles.map((item) => <button type="button" role="menuitem" className={item.role === activeRole ? "current" : ""} disabled={item.role === activeRole || Boolean(busy)} key={item.id} onClick={() => void switchRole(item.role, item.label)}><span>{item.label}</span><em>{item.role === activeRole ? "当前" : "切换"}</em></button>)}
+          <button className="manage" type="button" role="menuitem" onClick={() => { setRoleMenuOpen(false); setIdentityManagerOpen(true); }}>管理身份与申请</button>
         </div> : null}
         <small className="identityVisibility">{snapshot.account.profile_visibility === "private" ? "仅自己可见" : snapshot.account.profile_visibility === "members" ? "成员可见" : "公开"}</small>
       </div>
     </section>
 
-    <nav className="identityViewNav" aria-label="用户中心视图">{navigation.map(([key, label]) => <button type="button" key={key} className={view === key ? "active" : ""} aria-pressed={view === key} onClick={() => setView(key)}>{label}</button>)}</nav>
+    <nav className="identityViewNav" aria-label="用户中心视图">{navigation.map(([key, label]) => <button type="button" key={key} className={view === key ? "active" : ""} aria-current={view === key ? "page" : undefined} onClick={() => selectView(key)}>{label}</button>)}</nav>
     {error ? <div className="identityAlert" role="alert">{error}</div> : null}
 
     {view === "today" ? <section className="identityMainPanel" data-testid="user-center-today">
@@ -178,9 +242,9 @@ export function IdentityCenter() {
       <div className="productStatGrid"><div><b>{snapshot.summary.bookmarks}</b><span>收藏</span></div><div><b>{snapshot.summary.want_to_learn}</b><span>想学</span></div><div><b>{snapshot.summary.following}</b><span>关注</span></div><div><b>{snapshot.summary.history}</b><span>观看记录</span></div></div>
       <div className="identityWorkspaceGrid">
         <article><span className="productStatusPill is-good">继续观看</span><h3>{snapshot.today.continue_watching?.title ?? "还没有观看记录"}</h3><Link className="productButtonSecondary" href={snapshot.today.continue_watching?.target_href || "/"}>{snapshot.today.continue_watching ? "继续" : "发现内容"}</Link></article>
-        <article><span className="productStatusPill is-good">下一项想学</span><h3>{snapshot.today.next_learning?.title ?? "想学清单还是空的"}</h3><Link className="productButtonSecondary" href={snapshot.today.next_learning?.target_href || "/search"}>{snapshot.today.next_learning ? "打开" : "搜索非遗"}</Link></article>
-        <article><span className="productStatusPill is-warning">待处理</span><h3>{snapshot.today.open_tasks} 项任务 · {snapshot.today.unread_notifications} 条未读</h3><button className="productButtonSecondary" type="button" onClick={() => setView("tasks")}>查看消息与任务</button></article>
-        <article><span className={`productStatusPill ${workbench.maturity === "operational" ? "is-good" : "is-warning"}`}>关键状态</span><h3>{roleLabels[activeRole]} · {maturityLabels[workbench.maturity]}</h3><p>{workbench.boundary_note}</p>{hasProfessionalWorkbench ? <button className="productButtonSecondary" type="button" onClick={() => setView("workbench")}>进入专业工作台</button> : <button className="productButtonSecondary" type="button" onClick={() => setRoleMenuOpen(true)}>切换身份</button>}</article>
+        <article><span className="productStatusPill is-good">学习成长</span><h3>{snapshot.today.next_learning?.title ?? "从可信来源素养开始"}</h3><p>{snapshot.growth.completed_units} 个节点 · 连续 {snapshot.growth.current_streak} 天 · {snapshot.growth.achievements} 项成就</p><Link className="productButtonSecondary" href="/learning">进入学习中心</Link></article>
+        <article><span className="productStatusPill is-warning">待处理</span><h3>{snapshot.today.open_tasks} 项任务 · {snapshot.today.unread_notifications} 条未读</h3><button className="productButtonSecondary" type="button" onClick={() => selectView("tasks")}>查看消息与任务</button></article>
+        <article><span className={`productStatusPill ${workbench.maturity === "operational" ? "is-good" : "is-warning"}`}>关键状态</span><h3>{roleLabels[activeRole]} · {maturityLabels[workbench.maturity]}</h3><p>{workbench.boundary_note}</p>{hasProfessionalWorkbench ? <button className="productButtonSecondary" type="button" onClick={() => selectView("workbench")}>进入专业工作台</button> : <button className="productButtonSecondary" type="button" onClick={() => setRoleMenuOpen(true)}>切换身份</button>}</article>
       </div>
       {!hasProfessionalWorkbench ? <div className="identityCompactCapabilities" data-testid="current-role-boundary"><div><small>CURRENT ROLE CAPABILITIES</small><h3>{workbench.label}能力状态</h3><p>{workbench.description}</p></div><ul>{workbench.capabilities.map((capability) => <li className={`is-${capability.status}`} key={capability.key}><span><strong>{capability.label}</strong>{capability.reason ? <small>{capability.reason}</small> : null}</span><b>{capabilityLabels[capability.status]}</b></li>)}</ul></div> : null}
     </section> : null}
@@ -192,11 +256,11 @@ export function IdentityCenter() {
       <div className="identitySectionHeading"><div><small>FOLLOWING</small><h2>关注的人与机构</h2><p>关注关系属于当前账户，不随身份切换丢失。</p></div></div>
       {snapshot.follows.length ? <ul className="identityTaskList" data-testid="user-center-follows">{snapshot.follows.map((item) => <li key={item.id}><div><span>正在关注</span><h3>{item.display_name}</h3></div><div className="identityRowActions"><Link className="productButtonQuiet" href={item.target_href || "/inheritors"}>查看</Link><button className="productButtonSecondary" type="button" disabled={Boolean(busy)} onClick={() => void run(`unfollow-${item.id}`, () => setUserCenterFollow(item.target_id, item.display_name, item.target_href, false), "已取消关注。")}>取消关注</button></div></li>)}</ul> : <StateNotice kind="empty" title="还没有关注对象" description="在传承人或创作者页面关注后，会保存到这里。" actionLabel="发现传承人" actionHref="/inheritors" />}
 
-      <div className="identitySectionHeading"><div><small>CULTURAL FOOTPRINT</small><h2>文化足迹与成长状态</h2><p>以下数字只由服务端真实资产、关注、观看和身份任务聚合。</p></div></div>
-      <div className="identityFootprintGrid" data-testid="culture-footprint"><div><b>{snapshot.footprint.active_days}</b><span>留下足迹的日期</span></div><div><b>{snapshot.footprint.saved_assets}</b><span>文化资产</span></div><div><b>{snapshot.footprint.watched_items}</b><span>观看内容</span></div><div><b>{snapshot.footprint.completed_views}</b><span>完整观看</span></div><div><b>{snapshot.growth.active_roles}</b><span>已开通身份</span></div><div><b>{snapshot.growth.completed_tasks}</b><span>已完成任务</span></div></div>
-      <div className="identityGrowthNote"><strong>{snapshot.growth.has_cultural_footprint ? "文化足迹已经建立" : "从第一条文化足迹开始"}</strong><p>{snapshot.footprint.latest_activity_at ? `最近活动：${new Date(snapshot.footprint.latest_activity_at).toLocaleDateString("zh-CN")}。` : "收藏、关注或观看内容后，这里会形成真实记录。"}学习路径、测验和成就属于 Gate C3，本页不会伪造。</p></div>
+      <div className="identitySectionHeading"><div><small>CULTURAL FOOTPRINT</small><h2>文化足迹与成长状态</h2><p>以下数字只由服务端真实资产、关注、观看、身份任务与学习事件聚合。</p></div></div>
+      <div className="identityFootprintGrid" data-testid="culture-footprint"><div><b>{snapshot.footprint.active_days}</b><span>留下足迹的日期</span></div><div><b>{snapshot.footprint.saved_assets}</b><span>文化资产</span></div><div><b>{snapshot.footprint.watched_items}</b><span>观看内容</span></div><div><b>{snapshot.footprint.completed_views}</b><span>完整观看</span></div><div><b>{snapshot.growth.active_roles}</b><span>已开通身份</span></div><div><b>{snapshot.growth.completed_tasks}</b><span>已完成身份任务</span></div><div><b>{snapshot.growth.completed_units}</b><span>已完成学习节点</span></div><div><b>{snapshot.growth.knowledge_cards}</b><span>知识卡片</span></div><div><b>{snapshot.growth.passed_quizzes}</b><span>通过测验</span></div><div><b>{snapshot.growth.current_streak}</b><span>连续学习天数</span></div><div><b>{snapshot.growth.achievements}</b><span>学习成就</span></div><div><b>{snapshot.growth.achievement_points}</b><span>成长积分</span></div></div>
+      <div className="identityGrowthNote"><strong>{snapshot.growth.has_cultural_footprint ? "文化足迹已经建立" : "从第一条文化足迹开始"}</strong><p>{snapshot.footprint.latest_activity_at ? `最近活动：${new Date(snapshot.footprint.latest_activity_at).toLocaleDateString("zh-CN")}。` : "收藏、关注或观看内容后，这里会形成真实记录。"}学习成长汇总来自 Gate C3 的服务端权威记录。</p><Link className="productButtonSecondary" href="/learning">查看学习成长中心</Link></div>
 
-      <div className="identitySectionHeading"><div><h2>观看历史</h2><p>关闭历史记录后不会继续写入。</p></div>{snapshot.history.length ? <button className="productButtonSecondary" type="button" onClick={() => void run("clear-history", clearUserCenterHistory, "观看历史已清空。")}>清空历史</button> : null}</div>
+      <div className="identitySectionHeading"><div><h2>观看历史</h2><p>关闭历史记录后不会继续写入。</p></div>{snapshot.history.length ? <button className="productButtonQuiet identityDangerAction" type="button" onClick={() => setConfirmation({ title: "清空全部观看历史？", description: `将永久删除当前账户的 ${snapshot.history.length} 条观看记录，此操作无法撤销。`, confirmLabel: "清空观看历史", actionKey: "clear-history", action: clearUserCenterHistory, message: "观看历史已清空。" })}>清空历史</button> : null}</div>
       {snapshot.history.length ? <ul className="identityTaskList">{snapshot.history.map((item) => <li key={item.id}><div><span>{item.completed ? "已看完" : "观看记录"}</span><h3>{item.title}</h3><p>{item.progress_seconds} / {item.duration_seconds || "未知"} 秒</p></div><Link className="productButtonQuiet" href={item.target_href || "/"}>继续</Link></li>)}</ul> : <p>暂无观看历史。</p>}
     </section> : null}
 
@@ -210,7 +274,7 @@ export function IdentityCenter() {
 
     {view === "tasks" ? <section className="identityMainPanel" data-testid="user-center-inbox">
       <div className="identitySectionHeading"><div><small>INBOX & TASKS</small><h2>消息与任务</h2><p>系统消息与身份任务均为服务端持久状态。</p></div></div>
-      {snapshot.notifications.length ? <ul className="identityTaskList">{snapshot.notifications.map((item) => <li className={item.read_at ? "completed" : "open"} key={item.id}><div><span>{item.read_at ? "已读" : "未读"} · {item.kind}</span><h3>{item.title}</h3><p>{item.body}</p></div><div className="identityRowActions">{!item.read_at ? <button className="productButtonSecondary" type="button" onClick={() => void run(`read-${item.id}`, () => markUserCenterNotificationRead(item.id), "消息已读。")}>标记已读</button> : null}<button className="productButtonQuiet" type="button" onClick={() => void run(`delete-${item.id}`, () => deleteUserCenterNotification(item.id), "消息已删除。")}>删除</button></div></li>)}</ul> : <StateNotice kind="empty" title="没有系统消息" description="新的身份和系统事件会出现在这里。" />}
+      {snapshot.notifications.length ? <ul className="identityTaskList">{snapshot.notifications.map((item) => <li className={item.read_at ? "completed" : "open"} key={item.id}><div><span>{item.read_at ? "已读" : "未读"} · {item.kind}</span><h3>{item.title}</h3><p>{item.body}</p></div><div className="identityRowActions">{!item.read_at ? <button className="productButtonSecondary" type="button" onClick={() => void run(`read-${item.id}`, () => markUserCenterNotificationRead(item.id), "消息已读。")}>标记已读</button> : null}<button className="productButtonQuiet identityDangerAction" type="button" onClick={() => setConfirmation({ title: "删除这条消息？", description: `“${item.title}”删除后无法恢复。`, confirmLabel: "删除消息", actionKey: `delete-${item.id}`, action: () => deleteUserCenterNotification(item.id), message: "消息已删除。" })}>删除</button></div></li>)}</ul> : <StateNotice kind="empty" title="没有系统消息" description="新的身份和系统事件会出现在这里。" />}
       {snapshot.tasks.length ? <><div className="identitySectionHeading"><div><h2>身份任务</h2><p>任务完成状态由服务端保存。</p></div></div><ul className="identityTaskList">{snapshot.tasks.map((task) => <li className={task.status} key={task.id}><div><span>{roleLabels[task.role]} · {task.kind}</span><h3>{task.title}</h3><p>{task.description}</p></div>{task.status === "open" ? <button className="productButtonSecondary" type="button" onClick={() => void run(`task-${task.id}`, () => completeIdentityTask(task.id), "任务已完成。")}>标记完成</button> : <b>已完成</b>}</li>)}</ul></> : null}
     </section> : null}
 
@@ -218,13 +282,14 @@ export function IdentityCenter() {
       <div className="identitySectionHeading"><div><small>ACCOUNT & PRIVACY</small><h2>账户资料与隐私</h2><p>画像、推荐、通知和历史均可独立关闭。</p></div></div>
       <form className="identitySettingsForm" onSubmit={(event) => { event.preventDefault(); void run("profile", () => updateUserCenterProfile(account), "账户资料已保存。"); }}><label>显示名称<input value={account.display_name} maxLength={50} required onChange={(event) => setAccount({ ...account, display_name: event.target.value })} /></label><label>所在地区<input value={account.region} maxLength={100} onChange={(event) => setAccount({ ...account, region: event.target.value })} /></label><label>个人简介<textarea value={account.bio} maxLength={300} onChange={(event) => setAccount({ ...account, bio: event.target.value })} /></label><label>资料可见范围<select value={account.profile_visibility} onChange={(event) => setAccount({ ...account, profile_visibility: event.target.value as typeof account.profile_visibility })}><option value="private">仅自己</option><option value="members">平台成员</option><option value="public">公开</option></select></label><button className="productButton" type="submit">保存账户资料</button></form>
       <form className="identitySettingsForm" onSubmit={(event) => { event.preventDefault(); void run("preferences", () => updateUserCenterPreferences(preferences), "体验偏好已保存。"); }}>{([["history_enabled", "保存观看历史"], ["recommendation_enabled", "允许内容推荐"], ["personalization_enabled", "允许跨板块个性化"], ["notification_enabled", "接收站内通知"]] as [keyof typeof preferences, string][]).map(([key, label]) => <label className="identityToggle" key={key}><input type="checkbox" checked={preferences[key]} onChange={(event) => setPreferences({ ...preferences, [key]: event.target.checked })} /><span>{label}</span></label>)}<button className="productButtonSecondary" type="submit">保存体验偏好</button></form>
-      <div className="identitySectionHeading"><div><small>SECURE SESSIONS</small><h2>登录设备与会话</h2><p>撤销后，对应访问令牌会立即失效。会话列表不包含任何令牌或密码。</p></div>{sessions.some((item) => item.status === "active") ? <button className="productButtonSecondary" type="button" onClick={() => void run("revoke-all", async () => { await revokeAllAccountSessions(); await logoutAccount(); }, "所有登录会话已撤销。")}>退出全部设备</button> : null}</div>
-      {sessions.length ? <ul className="identityTaskList" data-testid="account-session-list">{sessions.map((session) => <li className={session.status === "active" ? "open" : "completed"} key={session.id}><div><span>{session.is_current ? "当前会话" : "其他会话"} · {session.status === "active" ? "有效" : session.status === "expired" ? "已过期" : "已撤销"}</span><h3>{session.id.slice(0, 20)}…</h3><p>最近使用：{new Date(session.last_used_at).toLocaleString("zh-CN")} · 到期：{new Date(session.expires_at).toLocaleString("zh-CN")}</p></div>{session.status === "active" ? <button className="productButtonSecondary" type="button" onClick={() => void run(`revoke-${session.id}`, async () => { await revokeAccountSession(session.id); if (session.is_current) await logoutAccount(); else setSessions((items) => items.map((item) => item.id === session.id ? { ...item, status: "revoked" } : item)); }, session.is_current ? "当前会话已退出。" : "该会话已撤销。")}>撤销</button> : null}</li>)}</ul> : <p>当前没有可显示的服务端会话。</p>}
+      <div className="identitySectionHeading"><div><small>SECURE SESSIONS</small><h2>登录设备与会话</h2><p>撤销后，对应访问令牌会立即失效。会话列表不包含任何令牌或密码。</p></div>{sessions.some((item) => item.status === "active") ? <button className="productButtonDanger" type="button" onClick={() => setConfirmation({ title: "退出全部设备？", description: "所有有效会话都会立即失效，包括当前设备；完成后需要重新登录。", confirmLabel: "退出全部设备", actionKey: "revoke-all", action: async () => { await revokeAllAccountSessions(); await logoutAccount(); }, message: "所有登录会话已撤销。", reload: false, onSuccess: () => router.push("/login") })}>退出全部设备</button> : null}</div>
+      {sessions.length ? <ul className="identityTaskList" data-testid="account-session-list">{sessions.map((session) => <li className={session.status === "active" ? "open" : "completed"} key={session.id}><div><span>{session.is_current ? "当前会话" : "其他会话"} · {session.status === "active" ? "有效" : session.status === "expired" ? "已过期" : "已撤销"}</span><h3>{session.id.slice(0, 20)}…</h3><p>最近使用：{new Date(session.last_used_at).toLocaleString("zh-CN")} · 到期：{new Date(session.expires_at).toLocaleString("zh-CN")}</p></div>{session.status === "active" ? <button className={session.is_current ? "productButtonDanger" : "productButtonSecondary"} type="button" onClick={() => setConfirmation({ title: session.is_current ? "退出当前会话？" : "撤销这条会话？", description: session.is_current ? "当前设备会立即退出，并返回登录页。" : "此会话会立即失效；对应设备需要重新登录。", confirmLabel: session.is_current ? "退出当前会话" : "撤销会话", actionKey: `revoke-${session.id}`, action: async () => { await revokeAccountSession(session.id); if (session.is_current) await logoutAccount(); else setSessions((items) => items.map((item) => item.id === session.id ? { ...item, status: "revoked" } : item)); }, message: session.is_current ? "当前会话已退出。" : "该会话已撤销。", reload: !session.is_current, onSuccess: session.is_current ? () => router.push("/login") : undefined })}>{session.is_current ? "退出此设备" : "撤销会话"}</button> : null}</li>)}</ul> : <p>当前没有可显示的服务端会话。</p>}
     </section> : null}
 
-    {identityManagerOpen ? <div className="identityDialogBackdrop"><section className="identityDialog identityManagerDialog" role="dialog" aria-modal="true" aria-labelledby="identity-manager-title"><button className="identityDialogClose" type="button" aria-label="关闭" onClick={() => setIdentityManagerOpen(false)}>×</button><small>ROLE MANAGEMENT</small><h2 id="identity-manager-title">管理身份与申请</h2><p>身份切换只改变工作上下文，服务端授权不会因此扩大。</p><div className="identityRoleGrid">{activeRoles.map((item) => <article className={item.role === activeRole ? "current" : ""} key={item.id}><span className="identityRoleMark">{item.label.slice(0, 1)}</span><div><h3>{item.label}</h3><p>{roleDescriptions[item.role]}</p></div>{item.role === activeRole ? <b>当前身份</b> : <button type="button" disabled={Boolean(busy)} onClick={() => void switchRole(item.role, item.label)}>切换</button>}</article>)}</div>{snapshot.available_actions.self_activate.length ? <><div className="identitySectionHeading"><div><h2>开通基础身份</h2><p>学习者和创作者可由本人开通，但不会获得管理权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.self_activate.map((role) => <article key={role}><h3>开通{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButton" type="button" onClick={() => void run(`activate-${role}`, () => activateBusinessRole(role), `${roleLabels[role]}已开通。`)}>开通身份</button></article>)}</div></> : null}{snapshot.available_actions.apply.length ? <><div className="identitySectionHeading"><div><h2>申请受控身份</h2><p>贡献者和卖家须进入审核，提交申请不会自动获得权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.apply.map((role) => <article key={role}><h3>申请{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButtonSecondary" type="button" onClick={() => { setIdentityManagerOpen(false); setApplyRole(role); }}>申请审核</button></article>)}</div></> : null}</section></div> : null}
+    {identityManagerOpen ? <div className="identityDialogBackdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setIdentityManagerOpen(false); }}><section className="identityDialog identityManagerDialog" role="dialog" aria-modal="true" aria-labelledby="identity-manager-title"><button className="identityDialogClose" type="button" aria-label="关闭" autoFocus onClick={() => setIdentityManagerOpen(false)}>×</button><small>ROLE MANAGEMENT</small><h2 id="identity-manager-title">管理身份与申请</h2><p>身份切换只改变工作上下文，服务端授权不会因此扩大。</p><div className="identityRoleGrid">{activeRoles.map((item) => <article className={item.role === activeRole ? "current" : ""} key={item.id}><span className="identityRoleMark">{item.label.slice(0, 1)}</span><div><h3>{item.label}</h3><p>{roleDescriptions[item.role]}</p></div>{item.role === activeRole ? <b>当前身份</b> : <button type="button" disabled={Boolean(busy)} onClick={() => void switchRole(item.role, item.label)}>切换</button>}</article>)}</div>{snapshot.available_actions.self_activate.length ? <><div className="identitySectionHeading"><div><h2>开通基础身份</h2><p>学习者和创作者可由本人开通，但不会获得管理权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.self_activate.map((role) => <article key={role}><h3>开通{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButton" type="button" onClick={() => void run(`activate-${role}`, () => activateBusinessRole(role), `${roleLabels[role]}已开通。`)}>开通身份</button></article>)}</div></> : null}{snapshot.available_actions.apply.length ? <><div className="identitySectionHeading"><div><h2>申请受控身份</h2><p>贡献者和卖家须进入审核，提交申请不会自动获得权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.apply.map((role) => <article key={role}><h3>申请{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButtonSecondary" type="button" onClick={() => { setIdentityManagerOpen(false); setApplyRole(role); }}>申请审核</button></article>)}</div></> : null}<div className="identityDialogActions"><button className="productButtonSecondary" type="button" onClick={() => setIdentityManagerOpen(false)}>取消</button></div></section></div> : null}
 
-    {applyRole ? <div className="identityDialogBackdrop"><form className="identityDialog" role="dialog" aria-modal="true" onSubmit={submitApplication}><button className="identityDialogClose" type="button" aria-label="关闭" onClick={() => setApplyRole("")}>×</button><h2>申请{roleLabels[applyRole]}身份</h2><p>提交后进入审核，不会自动获得权限。</p><label>申请说明<textarea value={reason} minLength={8} maxLength={1000} required onChange={(event) => setReason(event.target.value)} /></label><button className="productButton" type="submit">提交审核</button></form></div> : null}
+    {applyRole ? <div className="identityDialogBackdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setApplyRole(""); }}><form className="identityDialog" role="dialog" aria-modal="true" onSubmit={submitApplication}><button className="identityDialogClose" type="button" aria-label="关闭" autoFocus onClick={() => setApplyRole("")}>×</button><h2>申请{roleLabels[applyRole]}身份</h2><p>提交后进入审核，不会自动获得权限。</p><label>申请说明<textarea value={reason} minLength={8} maxLength={1000} required onChange={(event) => setReason(event.target.value)} /></label><div className="identityDialogActions"><button className="productButtonSecondary" type="button" onClick={() => setApplyRole("")}>取消</button><button className="productButton" type="submit">提交审核</button></div></form></div> : null}
+    <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.title ?? ""} description={confirmation?.description ?? ""} confirmLabel={confirmation?.confirmLabel ?? "确认"} busy={Boolean(confirmation && busy === confirmation.actionKey)} onCancel={() => setConfirmation(null)} onConfirm={() => void confirmPendingAction()} />
     {feedback ? <div className="productToast" role="status">{feedback}</div> : null}
   </ProductFrame>;
 }

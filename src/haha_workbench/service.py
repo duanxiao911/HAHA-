@@ -30,10 +30,10 @@ ROLE_COPY: dict[BusinessRole, tuple[str, str, WorkbenchMaturity, str]] = {
         "没有真实商品、订单或支付服务，因此不展示虚构交易数据。",
     ),
     BusinessRole.LEARNER: (
-        "整理想学内容并建立学习路径",
-        "想学清单来自服务端文化资产，可进入检索继续准备学习材料。",
+        "沿真实学习路径积累可追溯的文化成长",
+        "学习路径、进度、知识卡、测验、每日任务和成就均由服务端持久化。",
         WorkbenchMaturity.PARTIAL,
-        "AI 非遗老师、测验和成长授予将在真实模型与知识接口接入后开放。",
+        "确定性学习闭环已接入；AI 非遗老师仍等待真实模型与可信知识检索。",
     ),
     BusinessRole.CREATOR: (
         "从创作项目继续完成脚本与投稿",
@@ -143,11 +143,19 @@ CAPABILITIES: dict[BusinessRole, tuple[dict[str, str], ...]] = {
     ),
     BusinessRole.LEARNER: (
         _capability(
+            "learning_center",
+            "学习成长中心",
+            "进入真实学习路径、测验、每日任务与成就。",
+            CapabilityStatus.AVAILABLE,
+            href="/learning",
+            action_label="继续学习",
+        ),
+        _capability(
             "learning_list",
             "想学清单",
             "查看服务端保存的学习候选内容。",
             CapabilityStatus.AVAILABLE,
-            href="/identity",
+            href="/learning",
             action_label="查看想学",
         ),
         _capability(
@@ -276,13 +284,12 @@ class WorkbenchService:
         self.user_center = UserCenterService(repository)
 
     def snapshot(self, user_id: str, workspace_id: str) -> dict[str, object]:
-        active_grants = [
-            item
-            for item in self.repository.list_role_grants(user_id, workspace_id)
-            if item.status == "active"
-        ]
-        if active_grants:
-            self.repository.ensure_user_center_settings(user_id, workspace_id)
+        # Bootstrap owns first-account side effects such as the welcome
+        # notification. Never create settings directly here: doing so can
+        # race the parallel user-center request and suppress that notification.
+        # Once settings exist, keep the read fail-closed so an invalid active
+        # role is not silently repaired by a workbench projection.
+        if self.repository.has_user_center_settings(user_id, workspace_id):
             center = self.user_center.snapshot(user_id, workspace_id)
         else:
             center = self.user_center.bootstrap(user_id, workspace_id)
@@ -330,10 +337,12 @@ class WorkbenchService:
                 ("following", "关注", int(summary["following"])),
             ]
         elif role is BusinessRole.LEARNER:
+            growth = center["growth"]
+            assert isinstance(growth, dict)
             values = [
-                ("want_to_learn", "想学", int(summary["want_to_learn"])),
-                ("open_tasks", "学习待办", self._open_task_count(center, role)),
-                ("unread", "未读消息", int(summary["unread_notifications"])),
+                ("completed_units", "完成节点", int(growth["completed_units"])),
+                ("achievements", "成长成就", int(growth["achievements"])),
+                ("current_streak", "连续学习", int(growth["current_streak"])),
             ]
         elif role is BusinessRole.CREATOR:
             values = [

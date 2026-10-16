@@ -22,6 +22,7 @@ const primaryNavigation = [
   { href: "/map", label: "文化地图" },
   { href: "/heritage-projects", label: "项目库" },
   { href: "/inheritors", label: "传承人" },
+  { href: "/learning", label: "文化学习" },
   { href: "/topics", label: "专题" },
   { href: "/events", label: "活动" },
 ] as const;

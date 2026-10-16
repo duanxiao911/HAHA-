@@ -1,0 +1,74 @@
+.learningHeroActions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.learningJumpNav {
+  display: flex;
+  overflow-x: auto;
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 253, 249, .92);
+}
+
+.learningJumpNav a {
+  display: inline-flex;
+  min-height: 40px;
+  flex: 1 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0 15px;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.learningJumpNav a:hover,
+.learningJumpNav a:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+#daily-learning,
+#learning-paths,
+#learning-workspace,
+#learning-achievements {
+  scroll-margin-top: 92px;
+}
+
+.learningSaveState,
+.learningAnswerProgress {
+  display: inline-flex;
+  margin-top: 10px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.learningSaveState.is-unsaved { background: #fff0d8; color: #7e5417; }
+.learningSaveState.is-saved { background: #e9f4ec; color: #176139; }
+.learningAnswerProgress { background: #f1ece5; color: #655e57; }
+
+.learningFormActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.learningFormActions > :first-child { margin-right: auto; }
+
+@media (max-width: 620px) {
+  .learningHeroActions { width: 100%; justify-content: stretch; }
+  .learningHeroActions a { flex: 1 1 100%; }
+  .learningFormActions { display: grid; grid-template-columns: 1fr 1fr; }
+  .learningFormActions > :first-child { margin-right: 0; }
+}

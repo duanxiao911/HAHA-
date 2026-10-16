@@ -278,7 +278,12 @@ export type UserCenterSnapshot = IdentitySnapshot & {
   notifications: { id: string; kind: string; title: string; body: string; target_href: string; read_at: string; created_at: string }[];
   summary: { bookmarks: number; want_to_learn: number; watch_later: number; following: number; history: number; unread_notifications: number; open_tasks: number };
   footprint: { saved_assets: number; following: number; watched_items: number; completed_views: number; active_days: number; first_activity_at: string; latest_activity_at: string };
-  growth: { active_roles: number; completed_tasks: number; open_tasks: number; has_cultural_footprint: boolean };
+  growth: {
+    active_roles: number; completed_tasks: number; open_tasks: number; has_cultural_footprint: boolean;
+    learning_paths: number; completed_paths: number; completed_units: number; knowledge_cards: number;
+    quiz_attempts: number; passed_quizzes: number; achievements: number; achievement_points: number;
+    current_streak: number; longest_streak: number; last_learning_date: string;
+  };
   today: { continue_watching: UserCenterSnapshot["history"][number] | null; next_learning: UserCenterLibraryItem | null; open_tasks: number; unread_notifications: number };
 };
 
@@ -308,6 +313,38 @@ export type WorkbenchSnapshot = {
   }[];
   tasks: IdentityTask[];
   boundary_note: string;
+};
+
+export type LearningQuestion = {
+  id: string; position: number; prompt: string; choices: string[]; source_id: string; version: number;
+};
+
+export type LearningUnitSnapshot = {
+  id: string; path_id: string; position: number; kind: "lesson" | "quiz"; title: string;
+  summary: string; source_id: string; version: number; required: boolean; estimated_minutes: number;
+  progress: { status: "not_started" | "in_progress" | "completed"; progress_percent: number; version: number; updated_at: string };
+  quiz?: { id: string; title: string; version: number; pass_score: number; questions: LearningQuestion[] };
+};
+
+export type LearningSnapshot = {
+  profile: { timezone: string; current_streak: number; longest_streak: number; last_learning_date: string; version: number };
+  paths: {
+    id: string; title: string; summary: string; status: string; version: number; provenance: string;
+    verification_status: string; source_note: string; completion_percent: number;
+    enrollment: null | { id: string; status: "active" | "completed"; version: number; source_content_id: string };
+    units: LearningUnitSnapshot[];
+  }[];
+  sources: { id: string; title: string; publisher: string; source_type: string; url: string; version: number; verification_status: string; provenance: string; checked_at: string }[];
+  learning_candidates: UserCenterLibraryItem[];
+  cards: { id: string; path_id: string; unit_id: string; topic: string; body: string; source_id: string; source_version: number; trust_status: string; version: number; updated_at: string }[];
+  quiz_attempts: { id: string; quiz_id: string; quiz_version: number; score: number; passed: boolean; created_at: string }[];
+  daily_tasks: { id: string; task_date: string; kind: string; title: string; target_count: number; current_count: number; status: "open" | "completed"; version: number }[];
+  achievements: { id: string; code: string; title: string; description: string; points: number; definition_version: number; granted_at: string }[];
+  recent_events: { id: string; event_type: string; entity_type: string; entity_id: string; entity_version: number; created_at: string }[];
+  summary: { learning_paths: number; completed_paths: number; completed_units: number; knowledge_cards: number; quiz_attempts: number; passed_quizzes: number; achievements: number; achievement_points: number; current_streak: number; longest_streak: number; last_learning_date: string };
+  ai_tutor: { status: "blocked"; reason: string };
+  catalog_notice: string;
+  last_quiz_result?: { attempt_id: string; score: number; passed: boolean; correct: number; total: number };
 };
 
 export async function createProject(title: string): Promise<{ id: string }> {
@@ -410,6 +447,37 @@ export async function getUserCenter(): Promise<UserCenterSnapshot> {
 }
 export async function getIdentityWorkbench(): Promise<WorkbenchSnapshot> {
   return request("/api/identity/workbench", { headers: headers() });
+}
+export async function getLearningCenter(): Promise<LearningSnapshot> {
+  return request("/api/learning", { headers: headers() });
+}
+export async function enrollLearningPath(pathId: string, sourceContentId = ""): Promise<LearningSnapshot> {
+  return request(`/api/learning/paths/${encodeURIComponent(pathId)}/enroll`, {
+    method: "POST", headers: headers(crypto.randomUUID()),
+    body: JSON.stringify({ source_content_id: sourceContentId }),
+  });
+}
+export async function completeLearningUnit(unitId: string, expectedVersion: number): Promise<LearningSnapshot> {
+  return request(`/api/learning/units/${encodeURIComponent(unitId)}/complete`, {
+    method: "POST", headers: headers(crypto.randomUUID()),
+    body: JSON.stringify({ expected_version: expectedVersion }),
+  });
+}
+export async function saveLearningKnowledgeCard(
+  unitId: string, topic: string, body: string, expectedVersion: number,
+): Promise<LearningSnapshot> {
+  return request(`/api/learning/cards/${encodeURIComponent(unitId)}`, {
+    method: "PUT", headers: headers(crypto.randomUUID()),
+    body: JSON.stringify({ topic, body, expected_version: expectedVersion }),
+  });
+}
+export async function submitLearningQuiz(
+  quizId: string, answers: Record<string, number>, expectedProgressVersion: number,
+): Promise<LearningSnapshot> {
+  return request(`/api/learning/quizzes/${encodeURIComponent(quizId)}/attempts`, {
+    method: "POST", headers: headers(crypto.randomUUID()),
+    body: JSON.stringify({ answers, expected_progress_version: expectedProgressVersion }),
+  });
 }
 export async function updateUserCenterProfile(payload: UserCenterSnapshot["account"]): Promise<UserCenterSnapshot> {
   return request("/api/user-center/profile", { method: "PATCH", headers: headers(), body: JSON.stringify(payload) });

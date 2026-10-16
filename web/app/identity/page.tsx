@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
+import { StateNotice } from "@/components/community/StateNotice";
 import { IdentityCenter } from "./IdentityCenter";
 
 export const metadata: Metadata = {
@@ -8,5 +10,9 @@ export const metadata: Metadata = {
 };
 
 export default function IdentityCenterPage() {
-  return <IdentityCenter />;
+  return (
+    <Suspense fallback={<StateNotice kind="loading" title="正在打开用户中心" description="准备账户视图与导航状态。" />}>
+      <IdentityCenter />
+    </Suspense>
+  );
 }

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 
+import { ConfirmDialog } from "@/components/community/ConfirmDialog";
 import { ProductFrame } from "@/components/community/ProductFrame";
 import { StateNotice } from "@/components/community/StateNotice";
 import { type NotificationKind, useCommunity } from "@/lib/community";
@@ -28,6 +29,7 @@ export default function NotificationsPage() {
   const [filter, setFilter] = useState<(typeof filters)[number]["value"]>("all");
   const [busyId, setBusyId] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
   const notifications = useMemo(() => snapshot.notifications
     .filter((item) => filter === "all" || item.kind === filter)
@@ -96,10 +98,10 @@ export default function NotificationsPage() {
                   >标为已读</button>
                 ) : null}
                 <button
-                  className="productButtonQuiet"
+                  className="productButtonQuiet productDangerText"
                   type="button"
                   disabled={busyId === notification.id}
-                  onClick={() => void act(notification.id, () => actions.deleteNotification(notification.id), "已删除这条本地消息。")}
+                  onClick={() => setDeleteTarget({ id: notification.id, title: notification.title })}
                 >删除</button>
               </div>
             </li>
@@ -108,6 +110,7 @@ export default function NotificationsPage() {
       ) : (
         <StateNotice kind="empty" title="这个分类还没有消息" description="投稿审核、评论回复和活动提醒会出现在这里。" actionLabel="去浏览内容" actionHref="/" />
       )}
+      <ConfirmDialog open={Boolean(deleteTarget)} title="删除这条消息？" description={deleteTarget ? `“${deleteTarget.title}”删除后无法恢复。` : ""} confirmLabel="删除消息" busy={Boolean(deleteTarget && busyId === deleteTarget.id)} onCancel={() => setDeleteTarget(null)} onConfirm={() => { if (!deleteTarget) return; void act(deleteTarget.id, () => actions.deleteNotification(deleteTarget.id), "消息已删除。").then(() => setDeleteTarget(null)); }} />
       {feedback ? <div className="productToast" role="status">{feedback}</div> : null}
     </ProductFrame>
   );

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from contextlib import closing
@@ -22,6 +23,25 @@ from haha_identity.domain import (
     RoleGrant,
     UserProfile,
 )
+from haha_learning.domain import (
+    AchievementDefinition,
+    AchievementGrant,
+    DailyTask,
+    KnowledgeCard,
+    KnowledgeSource,
+    LearningActivityCommit,
+    LearningConflictError,
+    LearningEvent,
+    LearningPath,
+    LearningProfile,
+    LearningProgress,
+    LearningUnit,
+    PathEnrollment,
+    Quiz,
+    QuizAttempt,
+    QuizQuestion,
+)
+from haha_learning.seed import catalog_records
 from haha_user_center.domain import (
     LibraryItem,
     UserCenterAuditEvent,
@@ -279,6 +299,142 @@ class SQLiteCreatorRepository:
                 );
                 CREATE INDEX IF NOT EXISTS ix_user_center_audit_owner_created
                     ON user_center_audit_events(user_id, workspace_id, created_at);
+                CREATE TABLE IF NOT EXISTS learning_profiles (
+                    user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    timezone TEXT NOT NULL, current_streak INTEGER NOT NULL DEFAULT 0,
+                    longest_streak INTEGER NOT NULL DEFAULT 0,
+                    last_learning_date TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, workspace_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE TABLE IF NOT EXISTS knowledge_sources (
+                    id TEXT NOT NULL, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
+                    publisher TEXT NOT NULL, source_type TEXT NOT NULL, url TEXT NOT NULL,
+                    version INTEGER NOT NULL, verification_status TEXT NOT NULL,
+                    provenance TEXT NOT NULL, checked_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(id, workspace_id)
+                );
+                CREATE TABLE IF NOT EXISTS learning_paths (
+                    id TEXT NOT NULL, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
+                    summary TEXT NOT NULL, status TEXT NOT NULL, version INTEGER NOT NULL,
+                    provenance TEXT NOT NULL, verification_status TEXT NOT NULL,
+                    source_note TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(id, workspace_id)
+                );
+                CREATE TABLE IF NOT EXISTS learning_units (
+                    id TEXT NOT NULL, path_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    position INTEGER NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL,
+                    summary TEXT NOT NULL, source_id TEXT NOT NULL, version INTEGER NOT NULL,
+                    required INTEGER NOT NULL DEFAULT 1, estimated_minutes INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(id, workspace_id), UNIQUE(path_id, workspace_id, position),
+                    FOREIGN KEY(path_id, workspace_id) REFERENCES learning_paths(id, workspace_id),
+                    FOREIGN KEY(source_id, workspace_id) REFERENCES knowledge_sources(id, workspace_id)
+                );
+                CREATE TABLE IF NOT EXISTS learning_path_enrollments (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    path_id TEXT NOT NULL, source_content_id TEXT NOT NULL,
+                    status TEXT NOT NULL, version INTEGER NOT NULL,
+                    enrolled_at TEXT NOT NULL, completed_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, path_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
+                    FOREIGN KEY(path_id, workspace_id) REFERENCES learning_paths(id, workspace_id)
+                );
+                CREATE TABLE IF NOT EXISTS learning_progress (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    path_id TEXT NOT NULL, unit_id TEXT NOT NULL, status TEXT NOT NULL,
+                    progress_percent INTEGER NOT NULL, version INTEGER NOT NULL,
+                    started_at TEXT NOT NULL, completed_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, unit_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
+                    FOREIGN KEY(unit_id, workspace_id) REFERENCES learning_units(id, workspace_id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_learning_progress_owner_updated
+                    ON learning_progress(user_id, workspace_id, updated_at);
+                CREATE TABLE IF NOT EXISTS knowledge_cards (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    path_id TEXT NOT NULL, unit_id TEXT NOT NULL, topic TEXT NOT NULL,
+                    body TEXT NOT NULL, source_id TEXT NOT NULL, source_version INTEGER NOT NULL,
+                    trust_status TEXT NOT NULL, version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, unit_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
+                    FOREIGN KEY(unit_id, workspace_id) REFERENCES learning_units(id, workspace_id),
+                    FOREIGN KEY(source_id, workspace_id) REFERENCES knowledge_sources(id, workspace_id)
+                );
+                CREATE TABLE IF NOT EXISTS quizzes (
+                    id TEXT NOT NULL, workspace_id TEXT NOT NULL, path_id TEXT NOT NULL,
+                    unit_id TEXT NOT NULL, title TEXT NOT NULL, version INTEGER NOT NULL,
+                    pass_score INTEGER NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(id, workspace_id), UNIQUE(unit_id, workspace_id),
+                    FOREIGN KEY(unit_id, workspace_id) REFERENCES learning_units(id, workspace_id)
+                );
+                CREATE TABLE IF NOT EXISTS quiz_questions (
+                    id TEXT NOT NULL, quiz_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    position INTEGER NOT NULL, prompt TEXT NOT NULL, choices_json TEXT NOT NULL,
+                    correct_choice INTEGER NOT NULL, explanation TEXT NOT NULL,
+                    source_id TEXT NOT NULL, version INTEGER NOT NULL,
+                    PRIMARY KEY(id, workspace_id), UNIQUE(quiz_id, workspace_id, position),
+                    FOREIGN KEY(quiz_id, workspace_id) REFERENCES quizzes(id, workspace_id),
+                    FOREIGN KEY(source_id, workspace_id) REFERENCES knowledge_sources(id, workspace_id)
+                );
+                CREATE TABLE IF NOT EXISTS quiz_attempts (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    quiz_id TEXT NOT NULL, quiz_version INTEGER NOT NULL,
+                    answers_json TEXT NOT NULL, question_snapshot_json TEXT NOT NULL,
+                    score INTEGER NOT NULL, passed INTEGER NOT NULL, created_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
+                    FOREIGN KEY(quiz_id, workspace_id) REFERENCES quizzes(id, workspace_id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_quiz_attempt_owner_created
+                    ON quiz_attempts(user_id, workspace_id, created_at);
+                CREATE TABLE IF NOT EXISTS learning_events (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
+                    entity_version INTEGER NOT NULL, idempotency_key TEXT NOT NULL,
+                    activity_date TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, idempotency_key),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_learning_events_owner_date
+                    ON learning_events(user_id, workspace_id, activity_date, event_type);
+                CREATE TABLE IF NOT EXISTS daily_tasks (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    task_date TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL,
+                    event_type TEXT NOT NULL, target_count INTEGER NOT NULL,
+                    current_count INTEGER NOT NULL, status TEXT NOT NULL,
+                    version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, task_date, kind),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE TABLE IF NOT EXISTS achievement_definitions (
+                    id TEXT NOT NULL, workspace_id TEXT NOT NULL, code TEXT NOT NULL,
+                    title TEXT NOT NULL, description TEXT NOT NULL, event_type TEXT NOT NULL,
+                    threshold INTEGER NOT NULL, points INTEGER NOT NULL, version INTEGER NOT NULL,
+                    status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(id, workspace_id), UNIQUE(workspace_id, code, version)
+                );
+                CREATE TABLE IF NOT EXISTS achievement_grants (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    definition_id TEXT NOT NULL, definition_version INTEGER NOT NULL,
+                    triggering_event_id TEXT NOT NULL, granted_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, definition_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
+                    FOREIGN KEY(definition_id, workspace_id)
+                        REFERENCES achievement_definitions(id, workspace_id),
+                    FOREIGN KEY(triggering_event_id) REFERENCES learning_events(id)
+                );
                 CREATE TABLE IF NOT EXISTS projects (
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -828,6 +984,571 @@ class SQLiteCreatorRepository:
                 "INSERT INTO user_center_audit_events VALUES (?, ?, ?, ?, ?, ?)",
                 tuple(asdict(event).values()),
             )
+
+    @staticmethod
+    def _learning_id(prefix: str, *values: str) -> str:
+        digest = hashlib.sha256(":".join(values).encode()).hexdigest()[:32]
+        return f"{prefix}_{digest}"
+
+    def ensure_learning_catalog(self, workspace_id: str) -> None:
+        records = catalog_records(workspace_id)
+        with closing(self._connect()) as connection, connection:
+            for item in records["sources"]:
+                connection.execute(
+                    "INSERT OR IGNORE INTO knowledge_sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    tuple(asdict(item).values()),
+                )
+            for item in records["paths"]:
+                connection.execute(
+                    "INSERT OR IGNORE INTO learning_paths VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    tuple(asdict(item).values()),
+                )
+            for item in records["units"]:
+                values = asdict(item)
+                values["required"] = int(item.required)
+                connection.execute(
+                    "INSERT OR IGNORE INTO learning_units VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    tuple(values.values()),
+                )
+            for item in records["quizzes"]:
+                connection.execute(
+                    "INSERT OR IGNORE INTO quizzes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    tuple(asdict(item).values()),
+                )
+            for item in records["questions"]:
+                connection.execute(
+                    "INSERT OR IGNORE INTO quiz_questions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    tuple(asdict(item).values()),
+                )
+            for item in records["achievements"]:
+                connection.execute(
+                    "INSERT OR IGNORE INTO achievement_definitions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    tuple(asdict(item).values()),
+                )
+
+    def ensure_learning_profile(self, user_id: str, workspace_id: str) -> LearningProfile:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO learning_profiles
+                   VALUES (?, ?, 'Asia/Shanghai', 0, 0, '', 1, ?, ?)""",
+                (user_id, workspace_id, now, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM learning_profiles WHERE user_id = ? AND workspace_id = ?",
+                (user_id, workspace_id),
+            ).fetchone()
+        assert row is not None
+        return LearningProfile(**dict(row))
+
+    def get_learning_profile(self, user_id: str, workspace_id: str) -> LearningProfile | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM learning_profiles WHERE user_id = ? AND workspace_id = ?",
+                (user_id, workspace_id),
+            ).fetchone()
+        return LearningProfile(**dict(row)) if row else None
+
+    def list_learning_paths(self, workspace_id: str) -> list[LearningPath]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM learning_paths WHERE workspace_id = ? ORDER BY created_at, id",
+                (workspace_id,),
+            ).fetchall()
+        return [LearningPath(**dict(row)) for row in rows]
+
+    def get_learning_path(self, path_id: str, workspace_id: str) -> LearningPath | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM learning_paths WHERE id = ? AND workspace_id = ?",
+                (path_id, workspace_id),
+            ).fetchone()
+        return LearningPath(**dict(row)) if row else None
+
+    def list_learning_units(self, path_id: str, workspace_id: str) -> list[LearningUnit]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM learning_units WHERE path_id = ? AND workspace_id = ?
+                   ORDER BY position""",
+                (path_id, workspace_id),
+            ).fetchall()
+        return [LearningUnit(**{**dict(row), "required": bool(row["required"])}) for row in rows]
+
+    def get_learning_unit(self, unit_id: str, workspace_id: str) -> LearningUnit | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM learning_units WHERE id = ? AND workspace_id = ?",
+                (unit_id, workspace_id),
+            ).fetchone()
+        return LearningUnit(**{**dict(row), "required": bool(row["required"])}) if row else None
+
+    def list_knowledge_sources(self, workspace_id: str) -> list[KnowledgeSource]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM knowledge_sources WHERE workspace_id = ? ORDER BY title",
+                (workspace_id,),
+            ).fetchall()
+        return [KnowledgeSource(**dict(row)) for row in rows]
+
+    def get_knowledge_source(self, source_id: str, workspace_id: str) -> KnowledgeSource | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM knowledge_sources WHERE id = ? AND workspace_id = ?",
+                (source_id, workspace_id),
+            ).fetchone()
+        return KnowledgeSource(**dict(row)) if row else None
+
+    def list_path_enrollments(self, user_id: str, workspace_id: str) -> list[PathEnrollment]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM learning_path_enrollments
+                   WHERE user_id = ? AND workspace_id = ? ORDER BY updated_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [PathEnrollment(**dict(row)) for row in rows]
+
+    def get_path_enrollment(self, user_id: str, workspace_id: str, path_id: str) -> PathEnrollment | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM learning_path_enrollments
+                   WHERE user_id = ? AND workspace_id = ? AND path_id = ?""",
+                (user_id, workspace_id, path_id),
+            ).fetchone()
+        return PathEnrollment(**dict(row)) if row else None
+
+    def list_learning_progress(self, user_id: str, workspace_id: str) -> list[LearningProgress]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM learning_progress WHERE user_id = ? AND workspace_id = ?
+                   ORDER BY updated_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [LearningProgress(**dict(row)) for row in rows]
+
+    def get_learning_progress(self, user_id: str, workspace_id: str, unit_id: str) -> LearningProgress | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM learning_progress
+                   WHERE user_id = ? AND workspace_id = ? AND unit_id = ?""",
+                (user_id, workspace_id, unit_id),
+            ).fetchone()
+        return LearningProgress(**dict(row)) if row else None
+
+    def list_knowledge_cards(self, user_id: str, workspace_id: str) -> list[KnowledgeCard]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM knowledge_cards WHERE user_id = ? AND workspace_id = ?
+                   ORDER BY updated_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [KnowledgeCard(**dict(row)) for row in rows]
+
+    def get_knowledge_card(self, user_id: str, workspace_id: str, unit_id: str) -> KnowledgeCard | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM knowledge_cards
+                   WHERE user_id = ? AND workspace_id = ? AND unit_id = ?""",
+                (user_id, workspace_id, unit_id),
+            ).fetchone()
+        return KnowledgeCard(**dict(row)) if row else None
+
+    def get_quiz(self, quiz_id: str, workspace_id: str) -> Quiz | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM quizzes WHERE id = ? AND workspace_id = ?",
+                (quiz_id, workspace_id),
+            ).fetchone()
+        return Quiz(**dict(row)) if row else None
+
+    def get_quiz_for_unit(self, unit_id: str, workspace_id: str) -> Quiz | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM quizzes WHERE unit_id = ? AND workspace_id = ?",
+                (unit_id, workspace_id),
+            ).fetchone()
+        return Quiz(**dict(row)) if row else None
+
+    def list_quiz_questions(self, quiz_id: str, workspace_id: str) -> list[QuizQuestion]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM quiz_questions WHERE quiz_id = ? AND workspace_id = ?
+                   ORDER BY position""",
+                (quiz_id, workspace_id),
+            ).fetchall()
+        return [QuizQuestion(**dict(row)) for row in rows]
+
+    def list_quiz_attempts(self, user_id: str, workspace_id: str) -> list[QuizAttempt]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM quiz_attempts WHERE user_id = ? AND workspace_id = ?
+                   ORDER BY created_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [QuizAttempt(**{**dict(row), "passed": bool(row["passed"])}) for row in rows]
+
+    def list_learning_events(self, user_id: str, workspace_id: str) -> list[LearningEvent]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM learning_events WHERE user_id = ? AND workspace_id = ?
+                   ORDER BY created_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [LearningEvent(**dict(row)) for row in rows]
+
+    def find_learning_event(self, user_id: str, workspace_id: str, idempotency_key: str) -> LearningEvent | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM learning_events
+                   WHERE user_id = ? AND workspace_id = ? AND idempotency_key = ?""",
+                (user_id, workspace_id, idempotency_key),
+            ).fetchone()
+        return LearningEvent(**dict(row)) if row else None
+
+    @classmethod
+    def _ensure_daily_tasks_connection(
+        cls, connection: sqlite3.Connection, user_id: str, workspace_id: str, task_date: str
+    ) -> None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        templates = (
+            ("complete_unit", "完成一个学习节点", "unit.completed"),
+            ("save_card", "保存一张知识卡", "knowledge_card.saved"),
+            ("pass_quiz", "通过一次测验", "quiz.passed"),
+        )
+        for kind, title, event_type in templates:
+            connection.execute(
+                """INSERT OR IGNORE INTO daily_tasks
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 'open', 1, ?, ?)""",
+                (
+                    cls._learning_id("daily", user_id, workspace_id, task_date, kind),
+                    user_id,
+                    workspace_id,
+                    task_date,
+                    kind,
+                    title,
+                    event_type,
+                    now,
+                    now,
+                ),
+            )
+
+    def ensure_daily_tasks(self, user_id: str, workspace_id: str, task_date: str) -> None:
+        with closing(self._connect()) as connection, connection:
+            self._ensure_daily_tasks_connection(connection, user_id, workspace_id, task_date)
+
+    def list_daily_tasks(self, user_id: str, workspace_id: str, task_date: str) -> list[DailyTask]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM daily_tasks
+                   WHERE user_id = ? AND workspace_id = ? AND task_date = ? ORDER BY kind""",
+                (user_id, workspace_id, task_date),
+            ).fetchall()
+        return [DailyTask(**dict(row)) for row in rows]
+
+    def list_achievement_definitions(self, workspace_id: str) -> list[AchievementDefinition]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM achievement_definitions
+                   WHERE workspace_id = ? AND status = 'active' ORDER BY code""",
+                (workspace_id,),
+            ).fetchall()
+        return [AchievementDefinition(**dict(row)) for row in rows]
+
+    def list_achievement_grants(self, user_id: str, workspace_id: str) -> list[AchievementGrant]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM achievement_grants
+                   WHERE user_id = ? AND workspace_id = ? ORDER BY granted_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [AchievementGrant(**dict(row)) for row in rows]
+
+    def commit_learning_activity(self, activity: LearningActivityCommit) -> bool:
+        event = activity.event
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                duplicate = connection.execute(
+                    """SELECT id FROM learning_events
+                       WHERE user_id = ? AND workspace_id = ? AND idempotency_key = ?""",
+                    (event.user_id, event.workspace_id, event.idempotency_key),
+                ).fetchone()
+                if duplicate:
+                    connection.rollback()
+                    return False
+                connection.execute(
+                    "INSERT INTO learning_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    tuple(asdict(event).values()),
+                )
+                if activity.enrollment:
+                    connection.execute(
+                        "INSERT OR IGNORE INTO learning_path_enrollments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        tuple(asdict(activity.enrollment).values()),
+                    )
+                if activity.progress:
+                    progress = activity.progress
+                    expected = activity.expected_progress_version
+                    if expected == 0:
+                        try:
+                            connection.execute(
+                                "INSERT INTO learning_progress VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                tuple(asdict(progress).values()),
+                            )
+                        except sqlite3.IntegrityError as exc:
+                            raise LearningConflictError(
+                                "学习进度版本已变化，请刷新后重试"
+                            ) from exc
+                    else:
+                        result = connection.execute(
+                            """UPDATE learning_progress SET status = ?, progress_percent = ?,
+                               version = ?, started_at = ?, completed_at = ?, updated_at = ?
+                               WHERE user_id = ? AND workspace_id = ? AND unit_id = ? AND version = ?""",
+                            (
+                                progress.status,
+                                progress.progress_percent,
+                                progress.version,
+                                progress.started_at,
+                                progress.completed_at,
+                                progress.updated_at,
+                                progress.user_id,
+                                progress.workspace_id,
+                                progress.unit_id,
+                                expected,
+                            ),
+                        )
+                        if result.rowcount != 1:
+                            raise LearningConflictError(
+                                "学习进度版本已变化，请刷新后重试"
+                            )
+                if activity.card:
+                    card = activity.card
+                    expected = activity.expected_card_version
+                    if expected == 0:
+                        try:
+                            connection.execute(
+                                "INSERT INTO knowledge_cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                tuple(asdict(card).values()),
+                            )
+                        except sqlite3.IntegrityError as exc:
+                            raise LearningConflictError(
+                                "知识卡版本已变化，请刷新后重试"
+                            ) from exc
+                    else:
+                        result = connection.execute(
+                            """UPDATE knowledge_cards SET topic = ?, body = ?, source_id = ?,
+                               source_version = ?, trust_status = ?, version = ?, updated_at = ?
+                               WHERE user_id = ? AND workspace_id = ? AND unit_id = ? AND version = ?""",
+                            (
+                                card.topic,
+                                card.body,
+                                card.source_id,
+                                card.source_version,
+                                card.trust_status,
+                                card.version,
+                                card.updated_at,
+                                card.user_id,
+                                card.workspace_id,
+                                card.unit_id,
+                                expected,
+                            ),
+                        )
+                        if result.rowcount != 1:
+                            raise LearningConflictError(
+                                "知识卡版本已变化，请刷新后重试"
+                            )
+                if activity.attempt:
+                    values = asdict(activity.attempt)
+                    values["passed"] = int(activity.attempt.passed)
+                    connection.execute(
+                        "INSERT INTO quiz_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        tuple(values.values()),
+                    )
+                if event.event_type in {
+                    "unit.completed",
+                    "knowledge_card.saved",
+                    "quiz.passed",
+                }:
+                    profile = connection.execute(
+                        """SELECT * FROM learning_profiles
+                           WHERE user_id = ? AND workspace_id = ?""",
+                        (event.user_id, event.workspace_id),
+                    ).fetchone()
+                    assert profile is not None
+                    current_streak = profile["current_streak"]
+                    if profile["last_learning_date"] != event.activity_date:
+                        previous = (
+                            datetime.fromisoformat(event.activity_date).date()
+                            - timedelta(days=1)
+                        ).isoformat()
+                        current_streak = (
+                            current_streak + 1
+                            if profile["last_learning_date"] == previous
+                            else 1
+                        )
+                    longest_streak = max(profile["longest_streak"], current_streak)
+                    connection.execute(
+                        """UPDATE learning_profiles SET current_streak = ?, longest_streak = ?,
+                           last_learning_date = ?, version = version + 1, updated_at = ?
+                           WHERE user_id = ? AND workspace_id = ?""",
+                        (
+                            current_streak,
+                            longest_streak,
+                            event.activity_date,
+                            event.created_at,
+                            event.user_id,
+                            event.workspace_id,
+                        ),
+                    )
+                    self._ensure_daily_tasks_connection(
+                        connection, event.user_id, event.workspace_id, event.activity_date
+                    )
+                    count = connection.execute(
+                        """SELECT COUNT(*) FROM learning_events
+                           WHERE user_id = ? AND workspace_id = ?
+                           AND activity_date = ? AND event_type = ?""",
+                        (
+                            event.user_id,
+                            event.workspace_id,
+                            event.activity_date,
+                            event.event_type,
+                        ),
+                    ).fetchone()[0]
+                    connection.execute(
+                        """UPDATE daily_tasks SET current_count = MIN(target_count, ?),
+                           status = CASE WHEN ? >= target_count THEN 'completed' ELSE 'open' END,
+                           version = version + 1, updated_at = ?
+                           WHERE user_id = ? AND workspace_id = ? AND task_date = ?
+                           AND event_type = ?""",
+                        (
+                            count,
+                            count,
+                            event.created_at,
+                            event.user_id,
+                            event.workspace_id,
+                            event.activity_date,
+                            event.event_type,
+                        ),
+                    )
+                    definitions = connection.execute(
+                        """SELECT * FROM achievement_definitions
+                           WHERE workspace_id = ? AND event_type = ? AND status = 'active'""",
+                        (event.workspace_id, event.event_type),
+                    ).fetchall()
+                    total = connection.execute(
+                        """SELECT COUNT(*) FROM learning_events
+                           WHERE user_id = ? AND workspace_id = ? AND event_type = ?""",
+                        (event.user_id, event.workspace_id, event.event_type),
+                    ).fetchone()[0]
+                    for definition in definitions:
+                        if total >= definition["threshold"]:
+                            connection.execute(
+                                """INSERT OR IGNORE INTO achievement_grants
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                (
+                                    self._learning_id(
+                                        "grant",
+                                        event.user_id,
+                                        event.workspace_id,
+                                        definition["id"],
+                                    ),
+                                    event.user_id,
+                                    event.workspace_id,
+                                    definition["id"],
+                                    definition["version"],
+                                    event.id,
+                                    event.created_at,
+                                ),
+                            )
+                if activity.refresh_path_id:
+                    required = connection.execute(
+                        """SELECT COUNT(*) FROM learning_units
+                           WHERE path_id = ? AND workspace_id = ? AND required = 1""",
+                        (activity.refresh_path_id, event.workspace_id),
+                    ).fetchone()[0]
+                    completed = connection.execute(
+                        """SELECT COUNT(*) FROM learning_progress p
+                           JOIN learning_units u ON u.id = p.unit_id AND u.workspace_id = p.workspace_id
+                           WHERE p.user_id = ? AND p.workspace_id = ? AND p.path_id = ?
+                           AND u.required = 1 AND p.status = 'completed'""",
+                        (event.user_id, event.workspace_id, activity.refresh_path_id),
+                    ).fetchone()[0]
+                    if required and completed >= required:
+                        connection.execute(
+                            """UPDATE learning_path_enrollments SET status = 'completed',
+                               version = version + 1, completed_at = ?, updated_at = ?
+                               WHERE user_id = ? AND workspace_id = ? AND path_id = ?
+                               AND status <> 'completed'""",
+                            (
+                                event.created_at,
+                                event.created_at,
+                                event.user_id,
+                                event.workspace_id,
+                                activity.refresh_path_id,
+                            ),
+                        )
+                connection.commit()
+                return True
+            except Exception:
+                connection.rollback()
+                raise
+
+    def get_learning_growth_summary(self, user_id: str, workspace_id: str) -> dict[str, object]:
+        profile = self.get_learning_profile(user_id, workspace_id)
+        if not profile:
+            return {
+                "learning_paths": 0,
+                "completed_paths": 0,
+                "completed_units": 0,
+                "knowledge_cards": 0,
+                "quiz_attempts": 0,
+                "passed_quizzes": 0,
+                "achievements": 0,
+                "achievement_points": 0,
+                "current_streak": 0,
+                "longest_streak": 0,
+                "last_learning_date": "",
+            }
+        with closing(self._connect()) as connection:
+            enrollment = connection.execute(
+                """SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed
+                   FROM learning_path_enrollments WHERE user_id = ? AND workspace_id = ?""",
+                (user_id, workspace_id),
+            ).fetchone()
+            completed_units = connection.execute(
+                """SELECT COUNT(*) FROM learning_progress
+                   WHERE user_id = ? AND workspace_id = ? AND status = 'completed'""",
+                (user_id, workspace_id),
+            ).fetchone()[0]
+            cards = connection.execute(
+                "SELECT COUNT(*) FROM knowledge_cards WHERE user_id = ? AND workspace_id = ?",
+                (user_id, workspace_id),
+            ).fetchone()[0]
+            attempts = connection.execute(
+                """SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) AS passed
+                   FROM quiz_attempts WHERE user_id = ? AND workspace_id = ?""",
+                (user_id, workspace_id),
+            ).fetchone()
+            achievements = connection.execute(
+                """SELECT COUNT(*) AS total, COALESCE(SUM(d.points), 0) AS points
+                   FROM achievement_grants g JOIN achievement_definitions d
+                   ON d.id = g.definition_id AND d.workspace_id = g.workspace_id
+                   WHERE g.user_id = ? AND g.workspace_id = ?""",
+                (user_id, workspace_id),
+            ).fetchone()
+        return {
+            "learning_paths": enrollment["total"],
+            "completed_paths": enrollment["completed"] or 0,
+            "completed_units": completed_units,
+            "knowledge_cards": cards,
+            "quiz_attempts": attempts["total"],
+            "passed_quizzes": attempts["passed"] or 0,
+            "achievements": achievements["total"],
+            "achievement_points": achievements["points"],
+            "current_streak": profile.current_streak,
+            "longest_streak": profile.longest_streak,
+            "last_learning_date": profile.last_learning_date,
+        }
 
     def save_project(self, project: Project) -> None:
         with closing(self._connect()) as connection, connection:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -12,6 +13,7 @@ from sqlalchemy import (
     JSON,
     Column,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     MetaData,
     String,
@@ -38,6 +40,25 @@ from haha_identity.domain import (
     RoleGrant,
     UserProfile,
 )
+from haha_learning.domain import (
+    AchievementDefinition,
+    AchievementGrant,
+    DailyTask,
+    KnowledgeCard,
+    KnowledgeSource,
+    LearningActivityCommit,
+    LearningConflictError,
+    LearningEvent,
+    LearningPath,
+    LearningProfile,
+    LearningProgress,
+    LearningUnit,
+    PathEnrollment,
+    Quiz,
+    QuizAttempt,
+    QuizQuestion,
+)
+from haha_learning.seed import catalog_records
 from haha_user_center.domain import (
     LibraryItem,
     UserCenterAuditEvent,
@@ -272,6 +293,249 @@ user_center_audit_events = Table(
     Column("created_at", String(40), nullable=False),
 )
 
+learning_profiles = Table(
+    "learning_profiles",
+    metadata,
+    Column("user_id", String(200), ForeignKey("users.id"), primary_key=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), primary_key=True),
+    Column("timezone", String(64), nullable=False),
+    Column("current_streak", Integer, nullable=False, server_default="0"),
+    Column("longest_streak", Integer, nullable=False, server_default="0"),
+    Column("last_learning_date", String(10), nullable=False, server_default=""),
+    Column("version", Integer, nullable=False, server_default="1"),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+)
+
+knowledge_sources = Table(
+    "knowledge_sources",
+    metadata,
+    Column("id", String(100), primary_key=True),
+    Column("workspace_id", String(100), primary_key=True),
+    Column("title", String(300), nullable=False),
+    Column("publisher", String(300), nullable=False),
+    Column("source_type", String(40), nullable=False),
+    Column("url", String(1000), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("verification_status", String(20), nullable=False),
+    Column("provenance", String(40), nullable=False),
+    Column("checked_at", String(40), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+)
+
+learning_paths = Table(
+    "learning_paths",
+    metadata,
+    Column("id", String(100), primary_key=True),
+    Column("workspace_id", String(100), primary_key=True),
+    Column("title", String(300), nullable=False),
+    Column("summary", String(2000), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("provenance", String(40), nullable=False),
+    Column("verification_status", String(20), nullable=False),
+    Column("source_note", String(1000), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+)
+
+learning_units = Table(
+    "learning_units",
+    metadata,
+    Column("id", String(100), primary_key=True),
+    Column("path_id", String(100), nullable=False),
+    Column("workspace_id", String(100), primary_key=True),
+    Column("position", Integer, nullable=False),
+    Column("kind", String(32), nullable=False),
+    Column("title", String(300), nullable=False),
+    Column("summary", String(2000), nullable=False),
+    Column("source_id", String(100), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("required", Integer, nullable=False, server_default="1"),
+    Column("estimated_minutes", Integer, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    ForeignKeyConstraint(["path_id", "workspace_id"], ["learning_paths.id", "learning_paths.workspace_id"]),
+    ForeignKeyConstraint(["source_id", "workspace_id"], ["knowledge_sources.id", "knowledge_sources.workspace_id"]),
+    UniqueConstraint("path_id", "workspace_id", "position", name="uq_learning_unit_position"),
+)
+
+learning_path_enrollments = Table(
+    "learning_path_enrollments",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("path_id", String(100), nullable=False),
+    Column("source_content_id", String(200), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("enrolled_at", String(40), nullable=False),
+    Column("completed_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    ForeignKeyConstraint(["path_id", "workspace_id"], ["learning_paths.id", "learning_paths.workspace_id"]),
+    UniqueConstraint("user_id", "workspace_id", "path_id", name="uq_learning_enrollment_owner_path"),
+)
+
+learning_progress = Table(
+    "learning_progress",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("path_id", String(100), nullable=False),
+    Column("unit_id", String(100), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("progress_percent", Integer, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("started_at", String(40), nullable=False),
+    Column("completed_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    ForeignKeyConstraint(["unit_id", "workspace_id"], ["learning_units.id", "learning_units.workspace_id"]),
+    UniqueConstraint("user_id", "workspace_id", "unit_id", name="uq_learning_progress_owner_unit"),
+)
+
+knowledge_cards = Table(
+    "knowledge_cards",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("path_id", String(100), nullable=False),
+    Column("unit_id", String(100), nullable=False),
+    Column("topic", String(200), nullable=False),
+    Column("body", String(4000), nullable=False),
+    Column("source_id", String(100), nullable=False),
+    Column("source_version", Integer, nullable=False),
+    Column("trust_status", String(20), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    ForeignKeyConstraint(["unit_id", "workspace_id"], ["learning_units.id", "learning_units.workspace_id"]),
+    ForeignKeyConstraint(["source_id", "workspace_id"], ["knowledge_sources.id", "knowledge_sources.workspace_id"]),
+    UniqueConstraint("user_id", "workspace_id", "unit_id", name="uq_knowledge_card_owner_unit"),
+)
+
+quizzes = Table(
+    "quizzes",
+    metadata,
+    Column("id", String(100), primary_key=True),
+    Column("workspace_id", String(100), primary_key=True),
+    Column("path_id", String(100), nullable=False),
+    Column("unit_id", String(100), nullable=False),
+    Column("title", String(300), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("pass_score", Integer, nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    ForeignKeyConstraint(["unit_id", "workspace_id"], ["learning_units.id", "learning_units.workspace_id"]),
+    UniqueConstraint("unit_id", "workspace_id", name="uq_quiz_unit"),
+)
+
+quiz_questions = Table(
+    "quiz_questions",
+    metadata,
+    Column("id", String(100), primary_key=True),
+    Column("quiz_id", String(100), nullable=False),
+    Column("workspace_id", String(100), primary_key=True),
+    Column("position", Integer, nullable=False),
+    Column("prompt", String(1000), nullable=False),
+    Column("choices_json", JSON, nullable=False),
+    Column("correct_choice", Integer, nullable=False),
+    Column("explanation", String(1000), nullable=False),
+    Column("source_id", String(100), nullable=False),
+    Column("version", Integer, nullable=False),
+    ForeignKeyConstraint(["quiz_id", "workspace_id"], ["quizzes.id", "quizzes.workspace_id"]),
+    ForeignKeyConstraint(["source_id", "workspace_id"], ["knowledge_sources.id", "knowledge_sources.workspace_id"]),
+    UniqueConstraint("quiz_id", "workspace_id", "position", name="uq_quiz_question_position"),
+)
+
+quiz_attempts = Table(
+    "quiz_attempts",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("quiz_id", String(100), nullable=False),
+    Column("quiz_version", Integer, nullable=False),
+    Column("answers_json", JSON, nullable=False),
+    Column("question_snapshot_json", JSON, nullable=False),
+    Column("score", Integer, nullable=False),
+    Column("passed", Integer, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    ForeignKeyConstraint(["quiz_id", "workspace_id"], ["quizzes.id", "quizzes.workspace_id"]),
+)
+
+learning_events = Table(
+    "learning_events",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("event_type", String(64), nullable=False, index=True),
+    Column("entity_type", String(64), nullable=False),
+    Column("entity_id", String(100), nullable=False),
+    Column("entity_version", Integer, nullable=False),
+    Column("idempotency_key", String(200), nullable=False),
+    Column("activity_date", String(10), nullable=False, index=True),
+    Column("payload_json", JSON, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    UniqueConstraint("user_id", "workspace_id", "idempotency_key", name="uq_learning_event_idempotency"),
+)
+
+daily_tasks = Table(
+    "daily_tasks",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("task_date", String(10), nullable=False, index=True),
+    Column("kind", String(40), nullable=False),
+    Column("title", String(200), nullable=False),
+    Column("event_type", String(64), nullable=False),
+    Column("target_count", Integer, nullable=False),
+    Column("current_count", Integer, nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("user_id", "workspace_id", "task_date", "kind", name="uq_daily_task_owner_date_kind"),
+)
+
+achievement_definitions = Table(
+    "achievement_definitions",
+    metadata,
+    Column("id", String(100), primary_key=True),
+    Column("workspace_id", String(100), primary_key=True),
+    Column("code", String(64), nullable=False),
+    Column("title", String(200), nullable=False),
+    Column("description", String(1000), nullable=False),
+    Column("event_type", String(64), nullable=False),
+    Column("threshold", Integer, nullable=False),
+    Column("points", Integer, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("workspace_id", "code", "version", name="uq_achievement_definition_version"),
+)
+
+achievement_grants = Table(
+    "achievement_grants",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("definition_id", String(100), nullable=False),
+    Column("definition_version", Integer, nullable=False),
+    Column("triggering_event_id", String(64), ForeignKey("learning_events.id"), nullable=False),
+    Column("granted_at", String(40), nullable=False),
+    ForeignKeyConstraint(["definition_id", "workspace_id"], ["achievement_definitions.id", "achievement_definitions.workspace_id"]),
+    UniqueConstraint("user_id", "workspace_id", "definition_id", name="uq_achievement_grant_owner_definition"),
+)
+
 projects = Table(
     "projects",
     metadata,
@@ -386,6 +650,38 @@ class SQLAlchemyCreatorRepository:
         ]
         if connection.scalar(select(func.count()).select_from(table).where(*criteria)) == 0:
             connection.execute(table.insert().values(**values))
+
+    @staticmethod
+    def _insert_ignore_created(
+        connection: Any,
+        table: Table,
+        values: dict[str, Any],
+        conflict_columns: list[str],
+    ) -> bool:
+        """Return whether an insert won its uniqueness race."""
+        index_elements = [getattr(table.c, column) for column in conflict_columns]
+        if connection.dialect.name == "postgresql":
+            result = connection.execute(
+                postgresql_insert(table)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=index_elements)
+                .returning(*table.primary_key.columns)
+            )
+            return result.first() is not None
+        if connection.dialect.name == "sqlite":
+            result = connection.execute(
+                sqlite_insert(table)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=index_elements)
+            )
+            return result.rowcount == 1
+        criteria = [
+            getattr(table.c, column) == values[column] for column in conflict_columns
+        ]
+        if connection.scalar(select(func.count()).select_from(table).where(*criteria)):
+            return False
+        connection.execute(table.insert().values(**values))
+        return True
 
     @staticmethod
     def _upsert(
@@ -1111,6 +1407,606 @@ class SQLAlchemyCreatorRepository:
         values = {**asdict(event), "detail_json": json.loads(event.detail_json)}
         with self.engine.begin() as connection:
             connection.execute(user_center_audit_events.insert().values(**values))
+
+    @staticmethod
+    def _learning_id(prefix: str, *values: str) -> str:
+        digest = hashlib.sha256(":".join(values).encode()).hexdigest()[:32]
+        return f"{prefix}_{digest}"
+
+    def ensure_learning_catalog(self, workspace_id: str) -> None:
+        records = catalog_records(workspace_id)
+        table_map = (
+            ("sources", knowledge_sources, ["id", "workspace_id"]),
+            ("paths", learning_paths, ["id", "workspace_id"]),
+            ("units", learning_units, ["id", "workspace_id"]),
+            ("quizzes", quizzes, ["id", "workspace_id"]),
+            ("questions", quiz_questions, ["id", "workspace_id"]),
+            ("achievements", achievement_definitions, ["id", "workspace_id"]),
+        )
+        with self.engine.begin() as connection:
+            for key, table, conflicts in table_map:
+                for item in records[key]:
+                    values = asdict(item)
+                    if isinstance(item, LearningUnit):
+                        values["required"] = int(item.required)
+                    if isinstance(item, QuizQuestion):
+                        values["choices_json"] = json.loads(item.choices_json)
+                    self._insert_ignore(connection, table, values, conflicts)
+
+    def ensure_learning_profile(self, user_id: str, workspace_id: str) -> LearningProfile:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with self.engine.begin() as connection:
+            self._insert_ignore(
+                connection,
+                learning_profiles,
+                {
+                    "user_id": user_id,
+                    "workspace_id": workspace_id,
+                    "timezone": "Asia/Shanghai",
+                    "current_streak": 0,
+                    "longest_streak": 0,
+                    "last_learning_date": "",
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                ["user_id", "workspace_id"],
+            )
+            row = connection.execute(
+                select(learning_profiles).where(
+                    learning_profiles.c.user_id == user_id,
+                    learning_profiles.c.workspace_id == workspace_id,
+                )
+            ).mappings().one()
+        return LearningProfile(**row)
+
+    def get_learning_profile(self, user_id: str, workspace_id: str) -> LearningProfile | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(learning_profiles).where(
+                    learning_profiles.c.user_id == user_id,
+                    learning_profiles.c.workspace_id == workspace_id,
+                )
+            ).mappings().first()
+        return LearningProfile(**row) if row else None
+
+    def list_learning_paths(self, workspace_id: str) -> list[LearningPath]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(learning_paths)
+                .where(learning_paths.c.workspace_id == workspace_id)
+                .order_by(learning_paths.c.created_at, learning_paths.c.id)
+            ).mappings().all()
+        return [LearningPath(**row) for row in rows]
+
+    def get_learning_path(self, path_id: str, workspace_id: str) -> LearningPath | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(learning_paths).where(
+                    learning_paths.c.id == path_id,
+                    learning_paths.c.workspace_id == workspace_id,
+                )
+            ).mappings().first()
+        return LearningPath(**row) if row else None
+
+    def list_learning_units(self, path_id: str, workspace_id: str) -> list[LearningUnit]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(learning_units)
+                .where(
+                    learning_units.c.path_id == path_id,
+                    learning_units.c.workspace_id == workspace_id,
+                )
+                .order_by(learning_units.c.position)
+            ).mappings().all()
+        return [LearningUnit(**{**row, "required": bool(row["required"])}) for row in rows]
+
+    def get_learning_unit(self, unit_id: str, workspace_id: str) -> LearningUnit | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(learning_units).where(
+                    learning_units.c.id == unit_id,
+                    learning_units.c.workspace_id == workspace_id,
+                )
+            ).mappings().first()
+        return LearningUnit(**{**row, "required": bool(row["required"])}) if row else None
+
+    def list_knowledge_sources(self, workspace_id: str) -> list[KnowledgeSource]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(knowledge_sources)
+                .where(knowledge_sources.c.workspace_id == workspace_id)
+                .order_by(knowledge_sources.c.title)
+            ).mappings().all()
+        return [KnowledgeSource(**row) for row in rows]
+
+    def get_knowledge_source(self, source_id: str, workspace_id: str) -> KnowledgeSource | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(knowledge_sources).where(
+                    knowledge_sources.c.id == source_id,
+                    knowledge_sources.c.workspace_id == workspace_id,
+                )
+            ).mappings().first()
+        return KnowledgeSource(**row) if row else None
+
+    def list_path_enrollments(self, user_id: str, workspace_id: str) -> list[PathEnrollment]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(learning_path_enrollments)
+                .where(
+                    learning_path_enrollments.c.user_id == user_id,
+                    learning_path_enrollments.c.workspace_id == workspace_id,
+                )
+                .order_by(learning_path_enrollments.c.updated_at.desc())
+            ).mappings().all()
+        return [PathEnrollment(**row) for row in rows]
+
+    def get_path_enrollment(self, user_id: str, workspace_id: str, path_id: str) -> PathEnrollment | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(learning_path_enrollments).where(
+                    learning_path_enrollments.c.user_id == user_id,
+                    learning_path_enrollments.c.workspace_id == workspace_id,
+                    learning_path_enrollments.c.path_id == path_id,
+                )
+            ).mappings().first()
+        return PathEnrollment(**row) if row else None
+
+    def list_learning_progress(self, user_id: str, workspace_id: str) -> list[LearningProgress]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(learning_progress)
+                .where(
+                    learning_progress.c.user_id == user_id,
+                    learning_progress.c.workspace_id == workspace_id,
+                )
+                .order_by(learning_progress.c.updated_at.desc())
+            ).mappings().all()
+        return [LearningProgress(**row) for row in rows]
+
+    def get_learning_progress(self, user_id: str, workspace_id: str, unit_id: str) -> LearningProgress | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(learning_progress).where(
+                    learning_progress.c.user_id == user_id,
+                    learning_progress.c.workspace_id == workspace_id,
+                    learning_progress.c.unit_id == unit_id,
+                )
+            ).mappings().first()
+        return LearningProgress(**row) if row else None
+
+    def list_knowledge_cards(self, user_id: str, workspace_id: str) -> list[KnowledgeCard]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(knowledge_cards)
+                .where(
+                    knowledge_cards.c.user_id == user_id,
+                    knowledge_cards.c.workspace_id == workspace_id,
+                )
+                .order_by(knowledge_cards.c.updated_at.desc())
+            ).mappings().all()
+        return [KnowledgeCard(**row) for row in rows]
+
+    def get_knowledge_card(self, user_id: str, workspace_id: str, unit_id: str) -> KnowledgeCard | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(knowledge_cards).where(
+                    knowledge_cards.c.user_id == user_id,
+                    knowledge_cards.c.workspace_id == workspace_id,
+                    knowledge_cards.c.unit_id == unit_id,
+                )
+            ).mappings().first()
+        return KnowledgeCard(**row) if row else None
+
+    def get_quiz(self, quiz_id: str, workspace_id: str) -> Quiz | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(quizzes).where(
+                    quizzes.c.id == quiz_id,
+                    quizzes.c.workspace_id == workspace_id,
+                )
+            ).mappings().first()
+        return Quiz(**row) if row else None
+
+    def get_quiz_for_unit(self, unit_id: str, workspace_id: str) -> Quiz | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(quizzes).where(
+                    quizzes.c.unit_id == unit_id,
+                    quizzes.c.workspace_id == workspace_id,
+                )
+            ).mappings().first()
+        return Quiz(**row) if row else None
+
+    def list_quiz_questions(self, quiz_id: str, workspace_id: str) -> list[QuizQuestion]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(quiz_questions)
+                .where(
+                    quiz_questions.c.quiz_id == quiz_id,
+                    quiz_questions.c.workspace_id == workspace_id,
+                )
+                .order_by(quiz_questions.c.position)
+            ).mappings().all()
+        return [
+            QuizQuestion(
+                **{
+                    **row,
+                    "choices_json": json.dumps(
+                        row["choices_json"], ensure_ascii=False
+                    ),
+                }
+            )
+            for row in rows
+        ]
+
+    def list_quiz_attempts(self, user_id: str, workspace_id: str) -> list[QuizAttempt]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(quiz_attempts)
+                .where(
+                    quiz_attempts.c.user_id == user_id,
+                    quiz_attempts.c.workspace_id == workspace_id,
+                )
+                .order_by(quiz_attempts.c.created_at.desc())
+            ).mappings().all()
+        return [
+            QuizAttempt(
+                **{
+                    **row,
+                    "answers_json": json.dumps(row["answers_json"], ensure_ascii=False, sort_keys=True),
+                    "question_snapshot_json": json.dumps(row["question_snapshot_json"], ensure_ascii=False, sort_keys=True),
+                    "passed": bool(row["passed"]),
+                }
+            )
+            for row in rows
+        ]
+
+    def list_learning_events(self, user_id: str, workspace_id: str) -> list[LearningEvent]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(learning_events)
+                .where(
+                    learning_events.c.user_id == user_id,
+                    learning_events.c.workspace_id == workspace_id,
+                )
+                .order_by(learning_events.c.created_at.desc())
+            ).mappings().all()
+        return [
+            LearningEvent(
+                **{
+                    **row,
+                    "payload_json": json.dumps(row["payload_json"], ensure_ascii=False, sort_keys=True),
+                }
+            )
+            for row in rows
+        ]
+
+    def find_learning_event(self, user_id: str, workspace_id: str, idempotency_key: str) -> LearningEvent | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(learning_events).where(
+                    learning_events.c.user_id == user_id,
+                    learning_events.c.workspace_id == workspace_id,
+                    learning_events.c.idempotency_key == idempotency_key,
+                )
+            ).mappings().first()
+        return LearningEvent(**{**row, "payload_json": json.dumps(row["payload_json"], ensure_ascii=False, sort_keys=True)}) if row else None
+
+    @classmethod
+    def _ensure_daily_tasks_connection(
+        cls, connection: Any, user_id: str, workspace_id: str, task_date: str
+    ) -> None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        templates = (
+            ("complete_unit", "完成一个学习节点", "unit.completed"),
+            ("save_card", "保存一张知识卡", "knowledge_card.saved"),
+            ("pass_quiz", "通过一次测验", "quiz.passed"),
+        )
+        for kind, title, event_type in templates:
+            cls._insert_ignore(
+                connection,
+                daily_tasks,
+                {
+                    "id": cls._learning_id("daily", user_id, workspace_id, task_date, kind),
+                    "user_id": user_id,
+                    "workspace_id": workspace_id,
+                    "task_date": task_date,
+                    "kind": kind,
+                    "title": title,
+                    "event_type": event_type,
+                    "target_count": 1,
+                    "current_count": 0,
+                    "status": "open",
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                ["user_id", "workspace_id", "task_date", "kind"],
+            )
+
+    def ensure_daily_tasks(self, user_id: str, workspace_id: str, task_date: str) -> None:
+        with self.engine.begin() as connection:
+            self._ensure_daily_tasks_connection(connection, user_id, workspace_id, task_date)
+
+    def list_daily_tasks(self, user_id: str, workspace_id: str, task_date: str) -> list[DailyTask]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(daily_tasks)
+                .where(
+                    daily_tasks.c.user_id == user_id,
+                    daily_tasks.c.workspace_id == workspace_id,
+                    daily_tasks.c.task_date == task_date,
+                )
+                .order_by(daily_tasks.c.kind)
+            ).mappings().all()
+        return [DailyTask(**row) for row in rows]
+
+    def list_achievement_definitions(self, workspace_id: str) -> list[AchievementDefinition]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(achievement_definitions)
+                .where(
+                    achievement_definitions.c.workspace_id == workspace_id,
+                    achievement_definitions.c.status == "active",
+                )
+                .order_by(achievement_definitions.c.code)
+            ).mappings().all()
+        return [AchievementDefinition(**row) for row in rows]
+
+    def list_achievement_grants(self, user_id: str, workspace_id: str) -> list[AchievementGrant]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(achievement_grants)
+                .where(
+                    achievement_grants.c.user_id == user_id,
+                    achievement_grants.c.workspace_id == workspace_id,
+                )
+                .order_by(achievement_grants.c.granted_at.desc())
+            ).mappings().all()
+        return [AchievementGrant(**row) for row in rows]
+
+    def commit_learning_activity(self, activity: LearningActivityCommit) -> bool:
+        event = activity.event
+        event_values = {**asdict(event), "payload_json": json.loads(event.payload_json)}
+        with self.engine.begin() as connection:
+            if not self._insert_ignore_created(
+                connection,
+                learning_events,
+                event_values,
+                ["user_id", "workspace_id", "idempotency_key"],
+            ):
+                return False
+            if activity.enrollment:
+                self._insert_ignore(
+                    connection,
+                    learning_path_enrollments,
+                    asdict(activity.enrollment),
+                    ["user_id", "workspace_id", "path_id"],
+                )
+            if activity.progress:
+                progress = activity.progress
+                expected = activity.expected_progress_version
+                if expected == 0:
+                    created = self._insert_ignore_created(
+                        connection,
+                        learning_progress,
+                        asdict(progress),
+                        ["user_id", "workspace_id", "unit_id"],
+                    )
+                    if not created:
+                        raise LearningConflictError("学习进度版本已变化，请刷新后重试")
+                else:
+                    result = connection.execute(
+                        learning_progress.update()
+                        .where(
+                            learning_progress.c.user_id == progress.user_id,
+                            learning_progress.c.workspace_id == progress.workspace_id,
+                            learning_progress.c.unit_id == progress.unit_id,
+                            learning_progress.c.version == expected,
+                        )
+                        .values(**asdict(progress))
+                    )
+                    if result.rowcount != 1:
+                        raise LearningConflictError("学习进度版本已变化，请刷新后重试")
+            if activity.card:
+                card = activity.card
+                expected = activity.expected_card_version
+                if expected == 0:
+                    created = self._insert_ignore_created(
+                        connection,
+                        knowledge_cards,
+                        asdict(card),
+                        ["user_id", "workspace_id", "unit_id"],
+                    )
+                    if not created:
+                        raise LearningConflictError("知识卡版本已变化，请刷新后重试")
+                else:
+                    result = connection.execute(
+                        knowledge_cards.update()
+                        .where(
+                            knowledge_cards.c.user_id == card.user_id,
+                            knowledge_cards.c.workspace_id == card.workspace_id,
+                            knowledge_cards.c.unit_id == card.unit_id,
+                            knowledge_cards.c.version == expected,
+                        )
+                        .values(**asdict(card))
+                    )
+                    if result.rowcount != 1:
+                        raise LearningConflictError("知识卡版本已变化，请刷新后重试")
+            if activity.attempt:
+                values = asdict(activity.attempt)
+                values["answers_json"] = json.loads(activity.attempt.answers_json)
+                values["question_snapshot_json"] = json.loads(activity.attempt.question_snapshot_json)
+                values["passed"] = int(activity.attempt.passed)
+                connection.execute(quiz_attempts.insert().values(**values))
+            if event.event_type in {"unit.completed", "knowledge_card.saved", "quiz.passed"}:
+                profile = connection.execute(
+                    select(learning_profiles)
+                    .where(
+                        learning_profiles.c.user_id == event.user_id,
+                        learning_profiles.c.workspace_id == event.workspace_id,
+                    )
+                    .with_for_update()
+                ).mappings().one()
+                current_streak = profile["current_streak"]
+                if profile["last_learning_date"] != event.activity_date:
+                    previous = (
+                        datetime.fromisoformat(event.activity_date).date() - timedelta(days=1)
+                    ).isoformat()
+                    current_streak = current_streak + 1 if profile["last_learning_date"] == previous else 1
+                connection.execute(
+                    learning_profiles.update()
+                    .where(
+                        learning_profiles.c.user_id == event.user_id,
+                        learning_profiles.c.workspace_id == event.workspace_id,
+                    )
+                    .values(
+                        current_streak=current_streak,
+                        longest_streak=max(profile["longest_streak"], current_streak),
+                        last_learning_date=event.activity_date,
+                        version=profile["version"] + 1,
+                        updated_at=event.created_at,
+                    )
+                )
+                self._ensure_daily_tasks_connection(
+                    connection, event.user_id, event.workspace_id, event.activity_date
+                )
+                count = connection.scalar(
+                    select(func.count()).select_from(learning_events).where(
+                        learning_events.c.user_id == event.user_id,
+                        learning_events.c.workspace_id == event.workspace_id,
+                        learning_events.c.activity_date == event.activity_date,
+                        learning_events.c.event_type == event.event_type,
+                    )
+                )
+                task = connection.execute(
+                    select(daily_tasks).where(
+                        daily_tasks.c.user_id == event.user_id,
+                        daily_tasks.c.workspace_id == event.workspace_id,
+                        daily_tasks.c.task_date == event.activity_date,
+                        daily_tasks.c.event_type == event.event_type,
+                    )
+                ).mappings().one()
+                connection.execute(
+                    daily_tasks.update()
+                    .where(daily_tasks.c.id == task["id"])
+                    .values(
+                        current_count=min(task["target_count"], count),
+                        status="completed" if count >= task["target_count"] else "open",
+                        version=task["version"] + 1,
+                        updated_at=event.created_at,
+                    )
+                )
+                definitions = connection.execute(
+                    select(achievement_definitions).where(
+                        achievement_definitions.c.workspace_id == event.workspace_id,
+                        achievement_definitions.c.event_type == event.event_type,
+                        achievement_definitions.c.status == "active",
+                    )
+                ).mappings().all()
+                total = connection.scalar(
+                    select(func.count()).select_from(learning_events).where(
+                        learning_events.c.user_id == event.user_id,
+                        learning_events.c.workspace_id == event.workspace_id,
+                        learning_events.c.event_type == event.event_type,
+                    )
+                )
+                for definition in definitions:
+                    if total >= definition["threshold"]:
+                        self._insert_ignore(
+                            connection,
+                            achievement_grants,
+                            {
+                                "id": self._learning_id("grant", event.user_id, event.workspace_id, definition["id"]),
+                                "user_id": event.user_id,
+                                "workspace_id": event.workspace_id,
+                                "definition_id": definition["id"],
+                                "definition_version": definition["version"],
+                                "triggering_event_id": event.id,
+                                "granted_at": event.created_at,
+                            },
+                            ["user_id", "workspace_id", "definition_id"],
+                        )
+            if activity.refresh_path_id:
+                required = connection.scalar(
+                    select(func.count()).select_from(learning_units).where(
+                        learning_units.c.path_id == activity.refresh_path_id,
+                        learning_units.c.workspace_id == event.workspace_id,
+                        learning_units.c.required == 1,
+                    )
+                )
+                completed = connection.scalar(
+                    select(func.count())
+                    .select_from(
+                        learning_progress.join(
+                            learning_units,
+                            (learning_units.c.id == learning_progress.c.unit_id)
+                            & (learning_units.c.workspace_id == learning_progress.c.workspace_id),
+                        )
+                    )
+                    .where(
+                        learning_progress.c.user_id == event.user_id,
+                        learning_progress.c.workspace_id == event.workspace_id,
+                        learning_progress.c.path_id == activity.refresh_path_id,
+                        learning_progress.c.status == "completed",
+                        learning_units.c.required == 1,
+                    )
+                )
+                if required and completed >= required:
+                    enrollment = connection.execute(
+                        select(learning_path_enrollments).where(
+                            learning_path_enrollments.c.user_id == event.user_id,
+                            learning_path_enrollments.c.workspace_id == event.workspace_id,
+                            learning_path_enrollments.c.path_id == activity.refresh_path_id,
+                        )
+                    ).mappings().one()
+                    if enrollment["status"] != "completed":
+                        connection.execute(
+                            learning_path_enrollments.update()
+                            .where(learning_path_enrollments.c.id == enrollment["id"])
+                            .values(
+                                status="completed",
+                                version=enrollment["version"] + 1,
+                                completed_at=event.created_at,
+                                updated_at=event.created_at,
+                            )
+                        )
+        return True
+
+    def get_learning_growth_summary(self, user_id: str, workspace_id: str) -> dict[str, object]:
+        profile = self.get_learning_profile(user_id, workspace_id)
+        if not profile:
+            return {
+                "learning_paths": 0, "completed_paths": 0, "completed_units": 0,
+                "knowledge_cards": 0, "quiz_attempts": 0, "passed_quizzes": 0,
+                "achievements": 0, "achievement_points": 0, "current_streak": 0,
+                "longest_streak": 0, "last_learning_date": "",
+            }
+        enrollments = self.list_path_enrollments(user_id, workspace_id)
+        progress = self.list_learning_progress(user_id, workspace_id)
+        cards = self.list_knowledge_cards(user_id, workspace_id)
+        attempts = self.list_quiz_attempts(user_id, workspace_id)
+        grants = self.list_achievement_grants(user_id, workspace_id)
+        definitions = {item.id: item for item in self.list_achievement_definitions(workspace_id)}
+        return {
+            "learning_paths": len(enrollments),
+            "completed_paths": sum(item.status == "completed" for item in enrollments),
+            "completed_units": sum(item.status == "completed" for item in progress),
+            "knowledge_cards": len(cards),
+            "quiz_attempts": len(attempts),
+            "passed_quizzes": sum(item.passed for item in attempts),
+            "achievements": len(grants),
+            "achievement_points": sum(
+                definitions[item.definition_id].points
+                for item in grants
+                if item.definition_id in definitions
+            ),
+            "current_streak": profile.current_streak,
+            "longest_streak": profile.longest_streak,
+            "last_learning_date": profile.last_learning_date,
+        }
 
     def get_project(self, project_id: str) -> Project | None:
         with self.engine.connect() as connection:

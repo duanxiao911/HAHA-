@@ -100,6 +100,9 @@ class UserCenterService:
             (item for item in library if item.kind == LibraryKind.WANT_TO_LEARN.value),
             None,
         )
+        learning_growth = self.repository.get_learning_growth_summary(
+            user_id, workspace_id
+        )
         return {
             **identity,
             "account": {
@@ -141,6 +144,7 @@ class UserCenterService:
                 "completed_tasks": completed_tasks,
                 "open_tasks": open_tasks,
                 "has_cultural_footprint": bool(activity_times),
+                **learning_growth,
             },
             "today": {
                 "continue_watching": asdict(history[0]) if history else None,

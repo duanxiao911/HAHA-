@@ -93,6 +93,7 @@
 .identityTaskList span { color: var(--product-brand); font-size: 10px; font-weight: 800; }
 .identityTaskList li>b { color: var(--product-green); font-size: 11px; }
 .identityRowActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.identityDangerAction { color: #9a3f36; }
 .identityAlert { margin-bottom: 16px; padding: 12px 14px; border: 1px solid #e2afa9; border-radius: 10px; background: #fbe9e6; color: #8b332d; font-size: 12px; }
 .identityDialogBackdrop { position: fixed; z-index: 200; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(33,28,23,.45); }
 .identityDialog { position: relative; display: grid; gap: 13px; width: min(100%,520px); padding: 28px; border-radius: 18px; background: var(--product-surface); box-shadow: 0 24px 90px rgba(0,0,0,.24); }
@@ -101,6 +102,7 @@
 .identityDialog label { display: grid; gap: 7px; font-size: 12px; font-weight: 750; }
 .identityDialog textarea { min-height: 130px; padding: 12px; border: 1px solid var(--product-line); border-radius: 10px; resize: vertical; }
 .identityDialogClose { position: absolute; top: 12px; right: 12px; width: 38px; height: 38px; border: 0; border-radius: 10px; background: var(--product-muted); font-size: 20px; cursor: pointer; }
+.identityDialogActions { display: flex; justify-content: flex-end; gap: 9px; }
 .identityManagerDialog { width: min(100%,760px); max-height: min(86vh,900px); overflow-y: auto; }
 .identitySettingsForm { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--product-line); }
 .identitySettingsForm label { display: grid; gap: 7px; color: var(--product-ink-soft); font-size: 12px; font-weight: 750; }

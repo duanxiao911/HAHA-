@@ -64,6 +64,12 @@ from haha_identity.service import (
     IdentityPermissionError,
     IdentityService,
 )
+from haha_learning.domain import (
+    LearningConflictError,
+    LearningNotFoundError,
+    LearningPermissionError,
+)
+from haha_learning.service import LearningService
 from haha_user_center.service import UserCenterNotFoundError, UserCenterService
 from haha_workbench.service import WorkbenchPermissionError, WorkbenchService
 
@@ -209,6 +215,29 @@ class CommunityImportRequest(BaseModel):
     local_state: dict[str, object]
 
 
+class LearningEnrollRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_content_id: str = Field(default="", max_length=200)
+
+
+class LearningProgressComplete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=0)
+
+
+class KnowledgeCardUpsert(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    topic: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=4000)
+    expected_version: int = Field(ge=0)
+
+
+class QuizAttemptCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    answers: dict[str, int] = Field(min_length=1, max_length=100)
+    expected_progress_version: int = Field(ge=0)
+
+
 def create_app(
     repository: CreatorRepository | None = None,
     community_repository: CommunityRepository | None = None,
@@ -223,6 +252,7 @@ def create_app(
     )
     community_service = CommunityService(active_community_repository, user_center_service)
     workbench_service = WorkbenchService(active_repository)  # type: ignore[arg-type]
+    learning_service = LearningService(active_repository)  # type: ignore[arg-type]
     auth_service = AuthService(active_repository)  # type: ignore[arg-type]
     application = FastAPI(title="HAHA Creator API", version="0.2.0")
     allowed_origins = tuple(
@@ -271,6 +301,24 @@ def create_app(
         _request: Request, exc: CommunityValidationError
     ) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @application.exception_handler(LearningPermissionError)
+    async def learning_permission_handler(
+        _request: Request, exc: LearningPermissionError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    @application.exception_handler(LearningNotFoundError)
+    async def learning_not_found_handler(
+        _request: Request, exc: LearningNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @application.exception_handler(LearningConflictError)
+    async def learning_conflict_handler(
+        _request: Request, exc: LearningConflictError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     def resolve_membership(
         identity: Principal = Depends(authenticate),
@@ -977,6 +1025,90 @@ def create_app(
         except UserCenterNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"deleted": True}
+
+    @application.get("/api/learning")
+    def get_learning_center(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        """Return the learner-owned, server-authoritative growth snapshot."""
+        return learning_service.bootstrap(principal.user_id, principal.workspace_id)
+
+    @application.post("/api/learning/paths/{path_id}/enroll")
+    def enroll_learning_path(
+        path_id: str,
+        payload: LearningEnrollRequest,
+        principal: Principal = Depends(resolve_membership),
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+    ) -> dict[str, object]:
+        try:
+            return learning_service.enroll_path(
+                principal.user_id,
+                principal.workspace_id,
+                path_id,
+                source_content_id=payload.source_content_id,
+                idempotency_key=idempotency_key,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/learning/units/{unit_id}/complete")
+    def complete_learning_unit(
+        unit_id: str,
+        payload: LearningProgressComplete,
+        principal: Principal = Depends(resolve_membership),
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+    ) -> dict[str, object]:
+        return learning_service.complete_unit(
+            principal.user_id,
+            principal.workspace_id,
+            unit_id,
+            expected_version=payload.expected_version,
+            idempotency_key=idempotency_key,
+        )
+
+    @application.put("/api/learning/cards/{unit_id}")
+    def save_learning_knowledge_card(
+        unit_id: str,
+        payload: KnowledgeCardUpsert,
+        principal: Principal = Depends(resolve_membership),
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+    ) -> dict[str, object]:
+        try:
+            return learning_service.save_knowledge_card(
+                principal.user_id,
+                principal.workspace_id,
+                unit_id,
+                idempotency_key=idempotency_key,
+                **payload.model_dump(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/learning/quizzes/{quiz_id}/attempts")
+    def submit_learning_quiz(
+        quiz_id: str,
+        payload: QuizAttemptCreate,
+        principal: Principal = Depends(resolve_membership),
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+    ) -> dict[str, object]:
+        try:
+            return learning_service.submit_quiz(
+                principal.user_id,
+                principal.workspace_id,
+                quiz_id,
+                idempotency_key=idempotency_key,
+                **payload.model_dump(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @application.get("/api/community/bootstrap")
     def get_community_bootstrap(

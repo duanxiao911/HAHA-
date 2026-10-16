@@ -11,6 +11,7 @@ HAHA 飞颐是采用 Next.js、FastAPI、PostgreSQL、Redis 与 Dramatiq 构建�
 - 非遗内容社区：首页频道、热门内容、地域探索与文化地图入口
 - 社区发现闭环：内容详情、可信来源、搜索、收藏、想学、历史、关注、评论与消息
 - 身份与文化成长中心：同账户多身份、服务端授权切换、身份申请、身份专属工作台、持久化任务与权限审计
+- 学习成长中心：服务端学习档案、路径进度、来源化知识卡、服务端测验、每日任务、连续学习与幂等成就
 - 内容关系网络：非遗项目、演示人物、地区、专题、活动与内容互相跳转
 - AI 创作工作台：以对话方式生成图文或视频内容方案
 - 模型路由：支持本地演示、自动选择与 DeepSeek 文本模型
@@ -134,7 +135,7 @@ Phase D 已在不新增普通后端技术栈的前提下，完成社区侧的本
 
 User Center Gate C1 已收口多身份上下文、账户资料、隐私偏好、收藏、想学、稍后看、关注、
 观看历史、文化足迹聚合和站内消息。身份切换已移到顶部账户菜单，专业工作台只对相应身份显示；
-学习路径、测验和成就继续归 Gate C3，不在 C1 中伪造。FastAPI + PostgreSQL 主链已完成
+学习路径、测验和成就由独立 Gate C3 在同一账户体系中实现，不在 C1 验收证据中回填。FastAPI + PostgreSQL 主链已完成
 390/768/1440 三档真实浏览器验收，并覆盖首次并发建号。开发环境仍为显式 opt-in 的本机身份，
 不等于正式上线；收口证据见 `docs/reports/2026-10-15_user-center-gate-c1-closeout/`。
 
@@ -168,6 +169,13 @@ Multi-role Workbench G4 在 G3 安全会话之上增加服务端权威的当前�
 能力会明确显示为 `blocked`，不生成虚构订单、收入或学习成果。架构契约见
 [`docs/architecture/multi-role-workbench-g4.md`](docs/architecture/multi-role-workbench-g4.md)，真实环境验收与
 剩余风险见 `docs/reports/2026-10-14_multi-role-workbench-g4/`。G4 不代表 Production Candidate。
+
+Learning Center Gate C3 已复用 learner grant 与统一账户，补齐路径、课程节点、版本化进度、
+来源化知识卡、服务端判分的不可变答题记录、事件驱动每日任务、连续学习和幂等可审计成就，并同步
+到用户中心成长汇总。当前课程只用于内部机制验证并标记 `demo_only`；没有真实模型与可信知识检索
+接口时，“AI 非遗老师”明确保持 `BLOCKED`。架构契约与本地验收边界见
+[`docs/architecture/learning-center-gate-c3.md`](docs/architecture/learning-center-gate-c3.md)。C3 是中间
+Gate，未执行公开发布或独立 Production Readiness Gate。
 
 ## 项目结构
 
