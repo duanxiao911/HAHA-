@@ -410,6 +410,13 @@ class SQLAlchemyCommerceRepository:
                 commerce_cart_items.c.workspace_id == workspace_id,
             ).order_by(commerce_cart_items.c.created_at)).all()
             if not cart:
+                replay = connection.execute(select(commerce_orders).where(
+                    commerce_orders.c.buyer_user_id == user_id,
+                    commerce_orders.c.workspace_id == workspace_id,
+                    commerce_orders.c.checkout_key == idempotency_key,
+                )).first()
+                if replay:
+                    return self._row(Order, replay), False
                 raise CommerceConflictError("购物车为空，不能结算")
             products: list[Any] = []
             inventories: list[Any] = []
@@ -433,7 +440,18 @@ class SQLAlchemyCommerceRepository:
             now = _now()
             total = sum(product.price_cents * line.quantity for product, line in zip(products, cart, strict=True))
             order = Order(f"order_{uuid4().hex}", user_id, workspace_id, products[0].store_id, products[0].seller_user_id, "awaiting_sandbox_payment", total, "CNY", idempotency_key, 1, now, now)
-            connection.execute(commerce_orders.insert().values(**asdict(order)))
+            try:
+                with connection.begin_nested():
+                    connection.execute(commerce_orders.insert().values(**asdict(order)))
+            except IntegrityError as exc:
+                existing = connection.execute(select(commerce_orders).where(
+                    commerce_orders.c.buyer_user_id == user_id,
+                    commerce_orders.c.workspace_id == workspace_id,
+                    commerce_orders.c.checkout_key == idempotency_key,
+                )).first()
+                if existing:
+                    return self._row(Order, existing), False
+                raise CommerceConflictError("结算请求发生并发冲突，请刷新后重试") from exc
             for product, line, inventory in zip(products, cart, inventories, strict=True):
                 result = connection.execute(update(commerce_inventory).where(
                     commerce_inventory.c.product_id == product.id,
@@ -504,15 +522,18 @@ class SQLAlchemyCommerceRepository:
             if result.rowcount != 1:
                 raise CommerceConflictError("订单版本已变化，请刷新后重试")
             for item in connection.execute(select(commerce_order_items).where(commerce_order_items.c.order_id == order.id)):
-                connection.execute(update(commerce_inventory).where(
+                inventory_result = connection.execute(update(commerce_inventory).where(
                     commerce_inventory.c.product_id == item.product_id,
                     commerce_inventory.c.workspace_id == workspace_id,
+                    commerce_inventory.c.sold_qty >= item.quantity,
                 ).values(
                     available_qty=commerce_inventory.c.available_qty + item.quantity,
                     sold_qty=commerce_inventory.c.sold_qty - item.quantity,
                     version=commerce_inventory.c.version + 1,
                     updated_at=now,
                 ))
+                if inventory_result.rowcount != 1:
+                    raise CommerceConflictError("订单库存状态异常，取消操作已回滚")
             self._event(connection, actor=user_id, workspace_id=workspace_id, event_type="order.cancelled", entity_type="order", entity_id=order.id, key=f"order-cancel:{order.id}:v{updated.version}")
             return updated
 
@@ -527,7 +548,10 @@ class SQLAlchemyCommerceRepository:
                 payment = self._row(Payment, existing)
                 if payment.order_id != order_id:
                     raise CommerceConflictError("幂等键已用于其他沙盒支付")
-                order_row = connection.execute(select(commerce_orders).where(commerce_orders.c.id == order_id)).first()
+                order_row = connection.execute(select(commerce_orders).where(
+                    commerce_orders.c.id == order_id,
+                    commerce_orders.c.workspace_id == workspace_id,
+                )).first()
                 return self._row(Order, order_row), payment, False
             row = connection.execute(select(commerce_orders).where(
                 commerce_orders.c.id == order_id,
@@ -539,8 +563,28 @@ class SQLAlchemyCommerceRepository:
             if order.buyer_user_id != user_id:
                 raise CommercePermissionError("不能支付其他账户的订单")
             if order.status != "awaiting_sandbox_payment":
+                replay = connection.execute(select(commerce_payments).where(
+                    commerce_payments.c.buyer_user_id == user_id,
+                    commerce_payments.c.workspace_id == workspace_id,
+                    commerce_payments.c.idempotency_key == idempotency_key,
+                )).first()
+                if replay:
+                    payment = self._row(Payment, replay)
+                    if payment.order_id != order_id:
+                        raise CommerceConflictError("幂等键已用于其他沙盒支付")
+                    return order, payment, False
                 raise CommerceConflictError("订单当前不能执行沙盒支付")
             if order.version != expected_version:
+                replay = connection.execute(select(commerce_payments).where(
+                    commerce_payments.c.buyer_user_id == user_id,
+                    commerce_payments.c.workspace_id == workspace_id,
+                    commerce_payments.c.idempotency_key == idempotency_key,
+                )).first()
+                if replay:
+                    payment = self._row(Payment, replay)
+                    if payment.order_id != order_id:
+                        raise CommerceConflictError("幂等键已用于其他沙盒支付")
+                    return order, payment, False
                 raise CommerceConflictError("订单版本已变化，请刷新后重试")
             now = _now()
             paid_order = replace(order, status="paid", version=order.version + 1, updated_at=now)
@@ -549,6 +593,20 @@ class SQLAlchemyCommerceRepository:
                 commerce_orders.c.version == expected_version,
             ).values(**asdict(paid_order)))
             if result.rowcount != 1:
+                replay = connection.execute(select(commerce_payments).where(
+                    commerce_payments.c.buyer_user_id == user_id,
+                    commerce_payments.c.workspace_id == workspace_id,
+                    commerce_payments.c.idempotency_key == idempotency_key,
+                )).first()
+                if replay:
+                    payment = self._row(Payment, replay)
+                    if payment.order_id != order_id:
+                        raise CommerceConflictError("幂等键已用于其他沙盒支付")
+                    current_order = connection.execute(select(commerce_orders).where(
+                        commerce_orders.c.id == order_id,
+                        commerce_orders.c.workspace_id == workspace_id,
+                    )).first()
+                    return self._row(Order, current_order), payment, False
                 raise CommerceConflictError("订单版本已变化，请刷新后重试")
             payment = Payment(f"pay_{uuid4().hex}", order.id, user_id, workspace_id, "internal_sandbox", "authorized", order.total_cents, order.currency, idempotency_key, now)
             connection.execute(commerce_payments.insert().values(**asdict(payment)))
@@ -576,7 +634,19 @@ class SQLAlchemyCommerceRepository:
                 raise CommerceConflictError("订单版本已变化，请刷新后重试")
             now = _now()
             shipped = replace(order, status="shipped", version=order.version + 1, updated_at=now)
-            connection.execute(update(commerce_orders).where(commerce_orders.c.id == order.id, commerce_orders.c.version == expected_version).values(**asdict(shipped)))
+            result = connection.execute(update(commerce_orders).where(
+                commerce_orders.c.id == order.id,
+                commerce_orders.c.workspace_id == workspace_id,
+                commerce_orders.c.version == expected_version,
+            ).values(**asdict(shipped)))
+            if result.rowcount != 1:
+                raise CommerceConflictError("订单版本已变化，请刷新后重试")
+            existing_fulfillment = connection.execute(select(commerce_fulfillments).where(
+                commerce_fulfillments.c.order_id == order.id,
+                commerce_fulfillments.c.workspace_id == workspace_id,
+            )).first()
+            if existing_fulfillment:
+                raise CommerceConflictError("订单已经存在履约记录")
             fulfillment = Fulfillment(f"ful_{uuid4().hex}", order.id, workspace_id, seller_user_id, "shipped", tracking_note, 1, now, now)
             connection.execute(commerce_fulfillments.insert().values(**asdict(fulfillment)))
             self._event(connection, actor=seller_user_id, workspace_id=workspace_id, event_type="fulfillment.shipped", entity_type="order", entity_id=order.id, key=f"ship:{order.id}:v{shipped.version}")
@@ -596,11 +666,26 @@ class SQLAlchemyCommerceRepository:
             if not fulfillment_row:
                 raise CommerceConflictError("订单缺少履约记录")
             fulfillment = self._row(Fulfillment, fulfillment_row)
+            if fulfillment.status != "shipped":
+                raise CommerceConflictError("履约状态已变化，请刷新后重试")
             now = _now()
             completed = replace(order, status="completed", version=order.version + 1, updated_at=now)
             delivered = replace(fulfillment, status="delivered", version=fulfillment.version + 1, updated_at=now)
-            connection.execute(update(commerce_orders).where(commerce_orders.c.id == order.id, commerce_orders.c.version == expected_version).values(**asdict(completed)))
-            connection.execute(update(commerce_fulfillments).where(commerce_fulfillments.c.id == fulfillment.id, commerce_fulfillments.c.version == fulfillment.version).values(**asdict(delivered)))
+            order_result = connection.execute(update(commerce_orders).where(
+                commerce_orders.c.id == order.id,
+                commerce_orders.c.workspace_id == workspace_id,
+                commerce_orders.c.version == expected_version,
+            ).values(**asdict(completed)))
+            if order_result.rowcount != 1:
+                raise CommerceConflictError("订单版本已变化，请刷新后重试")
+            fulfillment_result = connection.execute(update(commerce_fulfillments).where(
+                commerce_fulfillments.c.id == fulfillment.id,
+                commerce_fulfillments.c.workspace_id == workspace_id,
+                commerce_fulfillments.c.version == fulfillment.version,
+                commerce_fulfillments.c.status == "shipped",
+            ).values(**asdict(delivered)))
+            if fulfillment_result.rowcount != 1:
+                raise CommerceConflictError("履约状态已变化，请刷新后重试")
             self._event(connection, actor=buyer_user_id, workspace_id=workspace_id, event_type="fulfillment.delivered", entity_type="order", entity_id=order.id, key=f"deliver:{order.id}:v{completed.version}")
             return completed, delivered
 
@@ -621,11 +706,22 @@ class SQLAlchemyCommerceRepository:
                 raise CommercePermissionError("不能为其他账户的订单发起售后")
             if order.status not in {"paid", "shipped", "completed"} or order.version != expected_order_version:
                 raise CommerceConflictError("订单当前不能发起售后，或版本已变化")
+            order_result = connection.execute(update(commerce_orders).where(
+                commerce_orders.c.id == order.id,
+                commerce_orders.c.workspace_id == after_sale.workspace_id,
+                commerce_orders.c.version == expected_order_version,
+            ).values(
+                status="after_sales",
+                version=order.version + 1,
+                updated_at=after_sale.updated_at,
+            ))
+            if order_result.rowcount != 1:
+                raise CommerceConflictError("订单版本已变化，请刷新后重试")
             try:
-                connection.execute(commerce_after_sales.insert().values(**asdict(after_sale)))
+                with connection.begin_nested():
+                    connection.execute(commerce_after_sales.insert().values(**asdict(after_sale)))
             except IntegrityError as exc:
                 raise CommerceConflictError("该订单已经存在售后申请") from exc
-            connection.execute(update(commerce_orders).where(commerce_orders.c.id == order.id, commerce_orders.c.version == expected_order_version).values(status="after_sales", version=order.version + 1, updated_at=after_sale.updated_at))
             self._event(connection, actor=after_sale.buyer_user_id, workspace_id=after_sale.workspace_id, event_type="after_sale.requested", entity_type="order", entity_id=order.id, key=f"after-sale:{order.id}")
             return after_sale
 

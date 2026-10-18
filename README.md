@@ -182,17 +182,18 @@ Gate，未执行公开发布或独立 Production Readiness Gate。
 
 Commerce Gate D 已复用 `buyer`、`seller`、`reviewer` 与统一账户，补齐店铺、商品独立审核、
 版本化库存、购物车、单店事务结算、幂等订单、明确标记的内部沙盒支付、履约与售后。系统不采集
-支付凭证，不处理真实资金；商品来源仍标记为卖家自述且非权威认证。架构、迁移和验收边界见
+支付凭证，不处理真实资金；商品来源仍标记为卖家自述且非权威认证。同结算/支付键并发只重放
+一个事务赢家，页面提供目录搜索、可编辑数量/库存和关键状态变更确认。架构、迁移和验收边界见
 [`docs/architecture/commerce-gate-d.md`](docs/architecture/commerce-gate-d.md)。真实支付、退款、分账、
 物流和商业合规仍为 `BLOCKED`，Gate D 不代表 Production Candidate。
 
 Gate A–D 的统一收口口径见
-[`docs/architecture/gates-a-d-closure.md`](docs/architecture/gates-a-d-closure.md)。A、B、C 已在内部非生产
-范围闭环；D、E 保留既有实现，尚未按 C → D → E 的顺序重新签署，不能表述为 A–E 100%。
+[`docs/architecture/gates-a-d-closure.md`](docs/architecture/gates-a-d-closure.md)。A、B、C、D 已在内部
+非生产范围闭环；E 保留既有实现但尚未按 C → D → E 的顺序重新签署，不能表述为 A–E 100%。
 
 Gate F 曾提前补齐共享环境指标鉴权、量化容量阈值、当前 schema 备份/隔离恢复和 CI
 门禁。目标架构、任务矩阵、数据/API 兼容计划、测试计划与发布判定见
-[`docs/engineering/`](docs/engineering/)，但当前已按用户确认暂停，等待 C、D、E 顺序收口。本地或 CI 通过不等于公网 TLS、托管告警、异地加密备份
+[`docs/engineering/`](docs/engineering/)，但当前已按用户确认暂停，等待 E 顺序收口。本地或 CI 通过不等于公网 TLS、托管告警、异地加密备份
 或生产发布已完成；当前仍明确不是 Production Candidate / Production Ready。
 
 ## 项目结构

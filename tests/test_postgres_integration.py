@@ -387,6 +387,88 @@ def test_postgres_commerce_checkout_serializes_inventory(repository) -> None:
     ) == 1
 
 
+def test_postgres_commerce_concurrent_idempotency_replays_winner(repository) -> None:
+    workspace_id = "commerce-idempotency-workspace"
+    seller_id = "commerce-idempotency-seller"
+    reviewer_id = "commerce-idempotency-reviewer"
+    buyer_id = "commerce-idempotency-buyer"
+    identity = IdentityService(repository)
+    for user_id in (seller_id, reviewer_id, buyer_id):
+        repository.ensure_identity(user_id, workspace_id, role="owner")
+        identity.bootstrap(user_id, workspace_id)
+    now = utc_now()
+    for user_id, role in ((seller_id, "seller"), (reviewer_id, "reviewer")):
+        repository.save_role_grant(RoleGrant(
+            id=new_id("grant"), user_id=user_id, workspace_id=workspace_id,
+            role=role, status="active", scope_json="{}", granted_by="pg-test",
+            created_at=now, revoked_at="",
+        ))
+
+    commerce_repository = SQLAlchemyCommerceRepository(POSTGRES_URL)
+    commerce = CommerceService(commerce_repository, repository)
+    commerce.open_store(seller_id, workspace_id, "并发幂等沙盒店铺")
+    product = commerce.create_product(
+        seller_id,
+        workspace_id,
+        title="并发幂等测试作品",
+        summary="只验证事务重放，不代表正式商品。",
+        price_cents=200,
+        source_note="内部测试，来源与授权未核验。",
+        idempotency_key="pg-idempotent-product-0001",
+    )["seller_products"][0]
+    queued = commerce.submit_product(
+        seller_id, workspace_id, product["id"], product["version"]
+    )["seller_products"][0]
+    commerce.moderate_product(
+        reviewer_id,
+        workspace_id,
+        product["id"],
+        "approved",
+        "仅用于 PostgreSQL 并发幂等测试。",
+        queued["version"],
+    )
+    commerce.set_inventory(seller_id, workspace_id, product["id"], 2, 0)
+    commerce.set_cart_item(buyer_id, workspace_id, product["id"], 1, 0)
+
+    checkout_key = "pg-concurrent-checkout-same-key"
+
+    def checkout_same_key() -> str:
+        snapshot = CommerceService(
+            SQLAlchemyCommerceRepository(POSTGRES_URL),
+            SQLAlchemyCreatorRepository(POSTGRES_URL),
+        ).checkout(buyer_id, workspace_id, checkout_key)
+        return next(
+            item["id"]
+            for item in snapshot["buyer_orders"]
+            if item["checkout_key"] == checkout_key
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        order_ids = list(pool.map(lambda _: checkout_same_key(), range(4)))
+    assert len(set(order_ids)) == 1
+    order_id = order_ids[0]
+    orders = commerce_repository.list_orders(workspace_id, buyer_user_id=buyer_id)
+    assert [item.id for item in orders if item.checkout_key == checkout_key] == [order_id]
+
+    payment_key = "pg-concurrent-payment-same-key"
+
+    def pay_same_key() -> str:
+        snapshot = CommerceService(
+            SQLAlchemyCommerceRepository(POSTGRES_URL),
+            SQLAlchemyCreatorRepository(POSTGRES_URL),
+        ).sandbox_pay(buyer_id, workspace_id, order_id, 1, payment_key)
+        return next(item for item in snapshot["buyer_orders"] if item["id"] == order_id)[
+            "payment"
+        ]["id"]
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        payment_ids = list(pool.map(lambda _: pay_same_key(), range(4)))
+    assert len(set(payment_ids)) == 1
+    payment = commerce_repository.get_payment(order_id, workspace_id)
+    assert payment is not None
+    assert payment.id == payment_ids[0]
+
+
 def test_postgres_refresh_rotation_is_atomic(repository) -> None:
     auth = AuthService(repository)
     auth.bootstrap_account(

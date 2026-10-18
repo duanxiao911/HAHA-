@@ -117,10 +117,18 @@ async def run(
         await command("Emulation.setDeviceMetricsOverride", {"width": 1280, "height": 1000, "deviceScaleFactor": 1, "mobile": False})
         await command("Page.navigate", {"url": f"{WEB_URL}/commerce"})
         await wait_for("加入购物车")
+        assertions["catalog_search_discoverable"] = bool(await evaluate("Boolean(document.querySelector('#commerce-search'))"))
+        await evaluate("""(() => {const node=document.querySelector('#commerce-search');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(node,'没有这个商品');node.dispatchEvent(new Event('input',{bubbles:true}));return true;})()""")
+        await wait_for("没有匹配的沙盒商品")
+        assertions["catalog_search_empty_state"] = True
+        await click("清除搜索")
+        await wait_for("加入购物车")
+        await evaluate("""(() => {const node=document.querySelector('[id^="catalog-quantity-"]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(node,'2');node.dispatchEvent(new Event('input',{bubbles:true}));return true;})()""")
         await click("加入购物车")
-        await wait_for("已加入购物车")
+        await wait_for("购物车数量已更新")
         await click("查看购物车")
         await wait_for("只支持单店商品一起结算")
+        assertions["cart_quantity_editable"] = "数量 2" in str(await evaluate("document.body.innerText"))
         assertions["view_url_state"] = "view=cart" in str(await evaluate("location.search"))
         await click("结算")
         await wait_for("创建内部沙盒订单")
@@ -139,6 +147,24 @@ async def run(
         body = await wait_for("沙盒已支付")
         assertions["refresh_restored_order"] = "Gate D 来源待核验测试作品" in body
         await shot("commerce-paid.png")
+
+        await command("Network.setExtraHTTPHeaders", {"headers": seller_headers})
+        await command("Page.navigate", {"url": f"{WEB_URL}/commerce?view=seller"})
+        await wait_for("卖家工作台")
+        await click("标记沙盒发货")
+        body = await wait_for("确认标记为沙盒发货？")
+        assertions["shipping_confirmation"] = "不会创建真实物流单" in body
+        await click("确认发货")
+        await wait_for("确认发货已完成")
+
+        await command("Network.setExtraHTTPHeaders", {"headers": buyer_headers})
+        await command("Page.navigate", {"url": f"{WEB_URL}/commerce?view=orders"})
+        await wait_for("确认收货")
+        await click("确认收货")
+        body = await wait_for("确认已经收到沙盒商品？")
+        assertions["delivery_confirmation"] = "如有问题，请先申请内部售后" in body
+        await click("确认已收货")
+        await wait_for("确认已收货已完成")
 
         await command("Network.setExtraHTTPHeaders", {"headers": seller_headers})
         await command("Page.navigate", {"url": f"{WEB_URL}/commerce?view=seller"})

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
@@ -12,11 +13,13 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from haha_core.sqlalchemy_repository import SQLAlchemyCreatorRepository
-from haha_identity.domain import RoleGrant
-from haha_identity.service import IdentityService
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from haha_core.sqlalchemy_repository import SQLAlchemyCreatorRepository  # noqa: E402
+from haha_identity.domain import RoleGrant  # noqa: E402
+from haha_identity.service import IdentityService  # noqa: E402
+
 ARTIFACTS = ROOT / "artifacts" / "e2e" / "commerce-gate-d-api"
 STATE_FILE = ARTIFACTS / "state.json"
 REPORT_FILE = ARTIFACTS / "report.json"
@@ -85,13 +88,35 @@ def exercise() -> dict[str, object]:
     status, listed = request("PUT", f"/api/commerce/products/{product['id']}/inventory", seller, workspace, {"quantity": 3, "expected_version": 0})
     assertions["inventory_listed"] = status == 200 and listed["seller_products"][0]["status"] == "listed"
 
+    request("PUT", f"/api/commerce/cart/{product['id']}", buyer, workspace, {"quantity": 1, "expected_version": 0})
+    _, cancellable = request("POST", "/api/commerce/checkout", buyer, workspace, key="gate-d-cancel-checkout-0001")
+    cancellable_order = cancellable["buyer_orders"][0]
+    status, cancelled = request(
+        "POST",
+        f"/api/commerce/orders/{cancellable_order['id']}/cancel",
+        buyer,
+        workspace,
+        {"expected_version": cancellable_order["version"]},
+    )
+    cancelled_product = cancelled["catalog"][0]
+    assertions["cancel_restores_inventory"] = (
+        status == 200
+        and cancelled["buyer_orders"][0]["status"] == "cancelled"
+        and cancelled_product["inventory"]["available_qty"] == 3
+        and cancelled_product["inventory"]["sold_qty"] == 0
+    )
+
     assertions["buyer_cart"] = request("PUT", f"/api/commerce/cart/{product['id']}", buyer, workspace, {"quantity": 1, "expected_version": 0})[0] == 200
     checkout_key = "gate-d-checkout-0001"
     status, checked = request("POST", "/api/commerce/checkout", buyer, workspace, key=checkout_key)
-    order = checked["buyer_orders"][0]
+    order = next(
+        item for item in checked["buyer_orders"] if item["checkout_key"] == checkout_key
+    )
     assertions["transactional_checkout"] = status == 200 and order["status"] == "awaiting_sandbox_payment"
     _, repeated = request("POST", "/api/commerce/checkout", buyer, workspace, key=checkout_key)
-    assertions["checkout_idempotent"] = len(repeated["buyer_orders"]) == 1
+    assertions["checkout_idempotent"] = (
+        sum(item["id"] == order["id"] for item in repeated["buyer_orders"]) == 1
+    )
     assertions["order_isolation"] = request("POST", f"/api/commerce/orders/{order['id']}/sandbox-payment", outsider, workspace, {"expected_version": order["version"]}, "gate-d-denied-payment")[0] == 403
 
     payment_key = "gate-d-payment-0001"

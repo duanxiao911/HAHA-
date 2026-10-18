@@ -2,7 +2,7 @@
 
 日期：2026-10-18（Asia/Shanghai）
 
-状态：`GATE_C_CLOSED_D_PENDING`。A、B 保持通过；C 已按用户确认的依赖顺序完成内部验收，下一步才复验 D、E。提前落地的 F 基础设施增量保留，但 F 已暂停，不得称 D、E 已重新签署或已进入生产收口。
+状态：`GATE_D_CLOSED_E_PENDING`。A、B 保持通过；C、D 已按用户确认的依赖顺序完成内部验收，下一步复验 E。提前落地的 F 基础设施增量保留，但 F 已暂停，不得称 E 已重新签署或已进入生产收口。
 
 ## 判定口径
 
@@ -18,7 +18,7 @@
 | A 架构与数据底座 | PASS | PASS | 统一 User/Workspace/Membership、业务身份、模块化单体、PostgreSQL/Alembic 与后端授权已建立。 |
 | B 身份中心闭环 | PASS | PASS | 多身份、申请、独立审核、授权、切换、任务、审计和刷新恢复均有 API、数据库与浏览器证据。 |
 | C 视频与 AI 学习 | PASS | PASS（内部非生产范围） | 真实媒体链、服务端学习成长，以及 DeepSeek + 版本化内部复核知识库的受控 AI 老师均有 PostgreSQL、真实 API、重启、模型评测和 Chrome 证据。来源不冒充官方认证。 |
-| D 买卖家交易 | IMPLEMENTED，待顺序复验 | NOT CLOSED | 既有 INTERNAL SANDBOX 代码与证据保留；C 已解阻，下一步复验 D。真实资金与商业合规仍不属于沙盒能力。 |
+| D 买卖家交易 | PASS | PASS（内部沙盒范围） | 统一身份、独立审核、并发幂等、库存、订单、明确标记的沙盒支付、履约、售后和通知均有 PostgreSQL、真实 API、重启与 Chrome 证据；无真实资金流。 |
 
 ## 2026-10-18 Gate C 媒体收口项
 
@@ -41,7 +41,7 @@
 - **生产级媒体处理：OPEN（不再是功能链路缺失）**。当前本地/单节点真实上传、持久化和播放已通过；对象存储、恶意文件扫描、FFprobe 深度检查、转码、封面、CDN、配额与异地备份仍属于后续生产门禁。
 - **AI 内容治理：OPEN（不再是 Gate C 功能阻断）**。当前来源可信状态是内部复核，不是官方认证；部分链接是主管机构入口页而非条目级永久链接。正式教学发布前仍需来源编辑审核、条目级引用、内容版本发布和模型质量持续评测。
 - **真实支付与退款：BLOCKED**。需要经营地区、商业主体、支付服务商、退款/结算责任、隐私和消费者保护方案。
-- **Production Readiness：PAUSED**。已有提前实施的容量、数据库恢复、指标与 CI 增量保留；C、D、E 顺序收口前不继续推进或签署 F。
+- **Production Readiness：PAUSED**。已有提前实施的容量、数据库恢复、指标与 CI 增量保留；E 顺序收口前不继续推进或签署 F。
 
 ## 本轮执行证据
 
@@ -60,4 +60,4 @@
 - 证据文件：`artifacts/e2e/community-gate-c2-*`、`artifacts/e2e/learning-gate-c3-*` 与 `artifacts/evals/gate-c-learning-tutor-live-eval.json`。
 - 远端 GitHub CI：当前提交尚未推送，因此为 `UNKNOWN`。
 
-因此，对外准确表述应为：**Gate A、B、C 已在内部非生产范围闭环；D、E 保留既有实现但尚未按本轮顺序重新签署；F 已暂停。当前仍不是 Production Candidate 或 Production Ready。**
+因此，对外准确表述应为：**Gate A、B、C、D 已在内部非生产范围闭环；E 保留既有实现但尚未按本轮顺序重新签署；F 已暂停。当前仍不是 Production Candidate 或 Production Ready。**
