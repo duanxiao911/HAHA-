@@ -18,6 +18,14 @@ class LearningConflictError(RuntimeError):
     """A version, state, or idempotency invariant was violated."""
 
 
+class LearningTutorUnavailableError(RuntimeError):
+    """The real tutor provider is unavailable or returned an unsafe result."""
+
+
+class LearningTutorRateLimitError(RuntimeError):
+    """The account exhausted its rolling tutor request allowance."""
+
+
 class ProgressStatus(StrEnum):
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
@@ -242,6 +250,27 @@ class AchievementGrant:
     definition_version: int
     triggering_event_id: str
     granted_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class TutorInteraction:
+    id: str
+    user_id: str
+    workspace_id: str
+    idempotency_key: str
+    request_fingerprint: str
+    question: str
+    status: str
+    answer: str
+    citations_json: str
+    model: str
+    request_id: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
+    error_code: str
+    created_at: str
+    updated_at: str
 
 
 @dataclass(frozen=True, slots=True)

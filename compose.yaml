@@ -66,6 +66,10 @@ services:
       HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
       HAHA_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       HAHA_MEDIA_ROOT: /var/lib/haha/community-media
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+      HAHA_TUTOR_REQUEST_LIMIT_24H: ${HAHA_TUTOR_REQUEST_LIMIT_24H:-20}
     volumes:
       - media-data:/var/lib/haha/community-media
     ports:

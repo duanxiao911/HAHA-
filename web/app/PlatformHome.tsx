@@ -157,7 +157,7 @@ export function PlatformHome() {
       </article>
       <aside className="platformBoundaryPanel">
         <small>BOUNDARIES</small><h2>能力边界</h2>
-        <div><strong>AI 非遗老师 · BLOCKED</strong><p>尚无真实模型与可信知识检索接口，不提供模板回答或静态聊天冒充已接通能力。</p></div>
+        <div><strong>AI 非遗老师 · 受控能力</strong><p>登录学习中心后按运行时状态开放；回答只使用版本化来源，未命中时明确拒答。</p></div>
         <div className="is-sandbox"><strong>非遗电商 · INTERNAL SANDBOX</strong><p>只用于内部交易闭环验证，不接入真实支付，不发生真实资金移动。</p></div>
         {workbench ? <Link href="/identity?tab=workbench">当前身份：{workbench.label} · {workbench.maturity === "operational" ? "可运行" : workbench.maturity === "partial" ? "部分可用" : "受阻"} →</Link> : null}
       </aside>

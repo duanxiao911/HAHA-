@@ -114,10 +114,10 @@ async def run(websocket_url: str) -> dict[str, Any]:
             body = await wait_for("学习成长中心")
             metrics = await evaluate("({viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth,mobileNav:document.querySelectorAll('.productMobileNav a').length})")
             checks = {
-                "loaded": "AI 非遗老师尚未接通" in body,
+                "loaded": "AI 非遗老师" in body and "DeepSeek" in body,
                 "honest_catalog": "非权威认定" in body,
                 "no_overflow": metrics["scrollWidth"] <= metrics["viewport"] + 1,
-                "responsive_navigation": width > 768 or metrics["mobileNav"] == 6,
+                "responsive_navigation": width > 768 or metrics["mobileNav"] == 5,
             }
             if not all(checks.values()):
                 raise RuntimeError({"viewport": width, "checks": checks, "metrics": metrics})
@@ -150,7 +150,14 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["achievements_visible"] = all(
             label in body for label in ("第一步", "有据可查", "检验理解")
         )
-        assertions["ai_boundary_persisted"] = "AI 非遗老师尚未接通" in body and "BLOCKED" in body
+        tutor_filled = await evaluate("""(() => {const field=document.querySelector('#tutor-question'); if(!field)return false; const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; setter.call(field,'中国剪纸有哪些主要特点？'); field.dispatchEvent(new Event('input',{bubbles:true})); return true;})()""")
+        assertions["tutor_question_filled"] = bool(tutor_filled)
+        await click("提问")
+        body = await wait_for("真实模型回答")
+        assertions["real_tutor_answer_visible"] = "[F-096] 中国剪纸" in body and "打开来源入口" in body
+        await command("Page.reload")
+        body = await wait_for("真实模型回答")
+        assertions["tutor_history_restored"] = "[F-096] 中国剪纸" in body
         await click("查看用户中心成长汇总")
         body = await wait_for("文化足迹与成长状态")
         assertions["growth_deep_link"] = "tab=archive" in str(await evaluate("location.search"))

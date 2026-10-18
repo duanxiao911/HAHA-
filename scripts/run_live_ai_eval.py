@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haha_media.model_router import ModelCallError, ModelRouter, TextModelResult
-from haha_media.script_writer import ContentBrief, generate_content_script_with_model
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from haha_media.model_router import ModelCallError, ModelRouter, TextModelResult  # noqa: E402
+from haha_media.script_writer import (  # noqa: E402
+    ContentBrief,
+    generate_content_script_with_model,
+)
+
 DATASET = ROOT / "evals" / "golden_dataset.json"
 REPORT = ROOT / "artifacts" / "evals" / "phase-b-live-ai-eval.json"
 
@@ -119,6 +125,15 @@ def _evaluate_case(case: dict[str, Any], model: str, router: BudgetRouter) -> di
         }
     except ModelCallError as exc:
         evidence = asdict(exc.evidence) if exc.evidence else None
+        peak_cost = (
+            _estimate_peak_cost(
+                model,
+                exc.evidence.input_tokens,
+                exc.evidence.output_tokens,
+            )
+            if exc.evidence
+            else 0.0
+        )
         return {
             "id": case["id"],
             "model": model,
@@ -126,7 +141,7 @@ def _evaluate_case(case: dict[str, Any], model: str, router: BudgetRouter) -> di
             "checks": {},
             "evidence": evidence,
             "error": str(exc),
-            "estimated_peak_cost_usd": 0.0,
+            "estimated_peak_cost_usd": peak_cost,
         }
 
 

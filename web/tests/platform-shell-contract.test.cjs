@@ -44,7 +44,7 @@ test("root is a neutral platform home and community reuses the shared shell", ()
   assert.match(rootPage, /return <PlatformHome \/>/);
   assert.match(rootPage, /export default function HomePage/);
   assert.match(home, /FOUR CORE SPACES/);
-  assert.match(home, /AI 非遗老师 · BLOCKED/);
+  assert.match(home, /AI 非遗老师 · 受控能力/);
   assert.match(home, /非遗电商 · INTERNAL SANDBOX/);
   assert.match(home, /identity-conversion-guide/);
   assert.match(home, /开通或申请是权限变化/);

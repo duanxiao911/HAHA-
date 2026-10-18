@@ -326,6 +326,18 @@ export type LearningUnitSnapshot = {
   quiz?: { id: string; title: string; version: number; pass_score: number; questions: LearningQuestion[] };
 };
 
+export type TutorCitation = {
+  source_id: string; title: string; publisher: string; url: string;
+  version: string; trust_status: "reviewed_internal";
+};
+
+export type TutorInteraction = {
+  id: string; question: string; status: "completed"; answer: string;
+  citations: TutorCitation[]; uncertainty: string; suggested_questions: string[];
+  mode: "grounded_model" | "no_sources"; model: string; request_id: string;
+  input_tokens: number; output_tokens: number; latency_ms: number; created_at: string;
+};
+
 export type LearningSnapshot = {
   profile: { timezone: string; current_streak: number; longest_streak: number; last_learning_date: string; version: number };
   paths: {
@@ -342,9 +354,14 @@ export type LearningSnapshot = {
   achievements: { id: string; code: string; title: string; description: string; points: number; definition_version: number; granted_at: string }[];
   recent_events: { id: string; event_type: string; entity_type: string; entity_id: string; entity_version: number; created_at: string }[];
   summary: { learning_paths: number; completed_paths: number; completed_units: number; knowledge_cards: number; quiz_attempts: number; passed_quizzes: number; achievements: number; achievement_points: number; current_streak: number; longest_streak: number; last_learning_date: string };
-  ai_tutor: { status: "blocked"; reason: string };
+  ai_tutor: {
+    status: "available" | "blocked"; reason: string; model: string;
+    knowledge_version: string; supported_scope: string; request_limit_24h: number;
+  };
+  tutor_history: TutorInteraction[];
   catalog_notice: string;
   last_quiz_result?: { attempt_id: string; score: number; passed: boolean; correct: number; total: number };
+  last_tutor_result?: TutorInteraction;
 };
 
 export type CommerceProduct = {
@@ -509,6 +526,12 @@ export async function submitLearningQuiz(
   return request(`/api/learning/quizzes/${encodeURIComponent(quizId)}/attempts`, {
     method: "POST", headers: headers(crypto.randomUUID()),
     body: JSON.stringify({ answers, expected_progress_version: expectedProgressVersion }),
+  });
+}
+export async function askLearningTutor(question: string): Promise<LearningSnapshot> {
+  return request("/api/learning/tutor/questions", {
+    method: "POST", headers: headers(crypto.randomUUID()),
+    body: JSON.stringify({ question }),
   });
 }
 export async function getCommerceCenter(): Promise<CommerceSnapshot> {

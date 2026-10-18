@@ -69,8 +69,40 @@ def exercise() -> dict[str, object]:
     status, snapshot = request("GET", "/api/learning", user_id, workspace_id)
     assertions["catalog_is_honest"] = (
         status == 200
-        and snapshot["ai_tutor"]["status"] == "blocked"
+        and snapshot["ai_tutor"]["status"] == "available"
         and snapshot["paths"][0]["verification_status"] == "demo_only"
+    )
+    status, tutor_answer = request(
+        "POST", "/api/learning/tutor/questions", user_id, workspace_id,
+        {"question": "中国剪纸有哪些主要特点？"}, "c3-api-tutor-000001",
+    )
+    tutor_result = tutor_answer.get("last_tutor_result", {}) if status == 200 else {}
+    assertions["real_tutor_grounded"] = (
+        status == 200
+        and tutor_result.get("mode") == "grounded_model"
+        and tutor_result.get("request_id")
+        and tutor_result.get("input_tokens", 0) > 0
+        and any(item.get("source_id") == "F-096" for item in tutor_result.get("citations", []))
+    )
+    _, tutor_replay = request(
+        "POST", "/api/learning/tutor/questions", user_id, workspace_id,
+        {"question": "中国剪纸有哪些主要特点？"}, "c3-api-tutor-000001",
+    )
+    assertions["tutor_idempotent_retry"] = (
+        tutor_replay.get("last_tutor_result", {}).get("id") == tutor_result.get("id")
+    )
+    assertions["tutor_idempotency_conflict"] = request(
+        "POST", "/api/learning/tutor/questions", user_id, workspace_id,
+        {"question": "昆曲的表演特点是什么？"}, "c3-api-tutor-000001",
+    )[0] == 409
+    status, no_source = request(
+        "POST", "/api/learning/tutor/questions", user_id, workspace_id,
+        {"question": "一个知识库里不存在的技艺是什么？"}, "c3-api-tutor-nosource",
+    )
+    assertions["tutor_unknown_entity_fail_closed"] = (
+        status == 200
+        and no_source.get("last_tutor_result", {}).get("mode") == "no_sources"
+        and no_source.get("last_tutor_result", {}).get("input_tokens") == 0
     )
     path = snapshot["paths"][0]
     lesson = next(item for item in path["units"] if item["kind"] == "lesson")
@@ -161,7 +193,11 @@ def verify() -> dict[str, object]:
             and center["growth"]["completed_units"] == 2
             and center["growth"]["achievements"] == 3
         ),
-        "ai_teacher_still_blocked": snapshot["ai_tutor"]["status"] == "blocked",
+        "ai_teacher_available": snapshot["ai_tutor"]["status"] == "available",
+        "tutor_history_restored": (
+            len(snapshot["tutor_history"]) == 2
+            and any(item["mode"] == "grounded_model" for item in snapshot["tutor_history"])
+        ),
     }
     if not all(assertions.values()):
         raise RuntimeError({key: value for key, value in assertions.items() if not value})

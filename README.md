@@ -166,15 +166,17 @@ HttpOnly/SameSite Cookie；所有变更请求校验同源 Origin 与 CSRF Token�
 Multi-role Workbench G4 在 G3 安全会话之上增加服务端权威的当前身份投影。浏览者、学习者和
 买家在“今日”看到真实文化资产、观看记录、身份任务与明确能力边界；创作者等专业身份才显示
 对应工作台入口，避免把尚属 Gate C3/D 的能力伪装成已完成工作台。
-客户端不能通过角色参数伪造管理员工作台。尚未接入的 AI 老师、知识稿件、真实支付与统一审核
-能力会明确显示为 `blocked`，不生成虚构收入或权威知识结论。架构契约见
+客户端不能通过角色参数伪造管理员工作台。AI 老师按真实模型与知识库运行时状态显示可用或
+`blocked`；尚未接入的知识稿件、真实支付与统一审核能力继续显示 `blocked`，不生成虚构收入或
+权威知识结论。架构契约见
 [`docs/architecture/multi-role-workbench-g4.md`](docs/architecture/multi-role-workbench-g4.md)，真实环境验收与
 剩余风险见 `docs/reports/2026-10-14_multi-role-workbench-g4/`。G4 不代表 Production Candidate。
 
 Learning Center Gate C3 已复用 learner grant 与统一账户，补齐路径、课程节点、版本化进度、
 来源化知识卡、服务端判分的不可变答题记录、事件驱动每日任务、连续学习和幂等可审计成就，并同步
-到用户中心成长汇总。当前课程只用于内部机制验证并标记 `demo_only`；没有真实模型与可信知识检索
-接口时，“AI 非遗老师”明确保持 `BLOCKED`。架构契约与本地验收边界见
+到用户中心成长汇总。“AI 非遗老师”使用真实 DeepSeek 模型与版本化内部复核知识记录，保留引用、
+调用审计、幂等和请求限额；无精确来源或未配置凭据时服务端拒答并显示 `BLOCKED`，不会以 Mock
+降级。当前课程仍是 `demo_only`，内部复核不等于官方认证。架构契约与本地验收边界见
 [`docs/architecture/learning-center-gate-c3.md`](docs/architecture/learning-center-gate-c3.md)。C3 是中间
 Gate，未执行公开发布或独立 Production Readiness Gate。
 
@@ -185,9 +187,8 @@ Commerce Gate D 已复用 `buyer`、`seller`、`reviewer` 与统一账户，补�
 物流和商业合规仍为 `BLOCKED`，Gate D 不代表 Production Candidate。
 
 Gate A–D 的统一收口口径见
-[`docs/architecture/gates-a-d-closure.md`](docs/architecture/gates-a-d-closure.md)。A、B 已闭环；Gate C 已补齐
-单节点真实媒体上传、持久化、发布与播放，但真实 AI 非遗老师仍为 `BLOCKED`；D、E 保留既有实现，
-尚未按 C → D → E 的顺序重新签署，不能表述为 100%。
+[`docs/architecture/gates-a-d-closure.md`](docs/architecture/gates-a-d-closure.md)。A、B、C 已在内部非生产
+范围闭环；D、E 保留既有实现，尚未按 C → D → E 的顺序重新签署，不能表述为 A–E 100%。
 
 Gate F 曾提前补齐共享环境指标鉴权、量化容量阈值、当前 schema 备份/隔离恢复和 CI
 门禁。目标架构、任务矩阵、数据/API 兼容计划、测试计划与发布判定见

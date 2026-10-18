@@ -7,6 +7,7 @@ from typing import Any
 from haha_commerce.repository import CommerceRepository
 from haha_identity.domain import BusinessRole
 from haha_identity.service import ROLE_LABELS
+from haha_learning.tutor import HeritageTutor
 from haha_user_center.domain import LibraryKind
 from haha_user_center.service import UserCenterService
 from haha_workbench.domain import CapabilityStatus, WorkbenchMaturity
@@ -291,10 +292,12 @@ class WorkbenchService:
         self,
         repository: WorkbenchRepository,
         commerce_repository: CommerceRepository | None = None,
+        learning_tutor: HeritageTutor | None = None,
     ) -> None:
         self.repository = repository
         self.commerce_repository = commerce_repository
         self.user_center = UserCenterService(repository)
+        self.learning_tutor = learning_tutor or HeritageTutor()
 
     def snapshot(self, user_id: str, workspace_id: str) -> dict[str, object]:
         # Bootstrap owns first-account side effects such as the welcome
@@ -324,6 +327,21 @@ class WorkbenchService:
             for item in center["tasks"]
             if isinstance(item, dict) and item.get("role") == role.value
         ]
+        capabilities = [dict(item) for item in CAPABILITIES[role]]
+        if role is BusinessRole.LEARNER and self.learning_tutor.status()["status"] == "available":
+            tutor_capability = next(
+                item for item in capabilities if item["key"] == "ai_tutor"
+            )
+            tutor_capability.update(
+                status=CapabilityStatus.AVAILABLE.value,
+                href="/learning#ai-tutor",
+                action_label="向老师提问",
+                reason="回答仅限版本化知识库命中的来源记录。",
+            )
+            boundary_note = (
+                "AI 非遗老师已接通真实模型和版本化来源检索；内部已核验不等于官方认证，"
+                "正式使用仍需打开具体来源复核。"
+            )
         return {
             "role": role.value,
             "label": ROLE_LABELS[role],
@@ -331,7 +349,7 @@ class WorkbenchService:
             "description": description,
             "maturity": maturity.value,
             "metrics": self._metrics(role, center, workspace_id),
-            "capabilities": [dict(item) for item in CAPABILITIES[role]],
+            "capabilities": capabilities,
             "resources": self._resources(role, center, workspace_id),
             "tasks": tasks,
             "boundary_note": boundary_note,

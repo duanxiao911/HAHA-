@@ -10,7 +10,14 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Literal
 
-TaskType = Literal["creation_judgement", "master_script", "storyboard", "publish_pack", "image"]
+TaskType = Literal[
+    "creation_judgement",
+    "master_script",
+    "storyboard",
+    "publish_pack",
+    "learning_tutor",
+    "image",
+]
 
 TEXT_MODEL_OPTIONS: dict[str, str] = {
     "DeepSeek-V4.1-Flash": "deepseek-flash",
@@ -74,7 +81,9 @@ class RouterStatus:
 class ModelRouter:
     """Route creative tasks without exposing provider details to business code."""
 
-    TEXT_TASKS = frozenset({"creation_judgement", "master_script", "storyboard", "publish_pack"})
+    TEXT_TASKS = frozenset(
+        {"creation_judgement", "master_script", "storyboard", "publish_pack", "learning_tutor"}
+    )
 
     def __init__(self) -> None:
         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()

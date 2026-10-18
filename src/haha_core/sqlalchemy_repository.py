@@ -57,6 +57,7 @@ from haha_learning.domain import (
     Quiz,
     QuizAttempt,
     QuizQuestion,
+    TutorInteraction,
 )
 from haha_learning.seed import catalog_records
 from haha_user_center.domain import (
@@ -483,6 +484,31 @@ learning_events = Table(
     Column("payload_json", JSON, nullable=False),
     Column("created_at", String(40), nullable=False),
     UniqueConstraint("user_id", "workspace_id", "idempotency_key", name="uq_learning_event_idempotency"),
+)
+
+tutor_interactions = Table(
+    "tutor_interactions",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("idempotency_key", String(200), nullable=False),
+    Column("request_fingerprint", String(64), nullable=False),
+    Column("question", String(1000), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("answer", String(4000), nullable=False, server_default=""),
+    Column("citations_json", JSON, nullable=False),
+    Column("model", String(100), nullable=False, server_default=""),
+    Column("request_id", String(200), nullable=False, server_default=""),
+    Column("input_tokens", Integer, nullable=False, server_default="0"),
+    Column("output_tokens", Integer, nullable=False, server_default="0"),
+    Column("latency_ms", Integer, nullable=False, server_default="0"),
+    Column("error_code", String(64), nullable=False, server_default=""),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint(
+        "user_id", "workspace_id", "idempotency_key", name="uq_tutor_interaction_idempotency"
+    ),
 )
 
 daily_tasks = Table(
@@ -1766,6 +1792,99 @@ class SQLAlchemyCreatorRepository:
                 .order_by(achievement_grants.c.granted_at.desc())
             ).mappings().all()
         return [AchievementGrant(**row) for row in rows]
+
+    def list_tutor_interactions(self, user_id: str, workspace_id: str) -> list[TutorInteraction]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(tutor_interactions)
+                .where(
+                    tutor_interactions.c.user_id == user_id,
+                    tutor_interactions.c.workspace_id == workspace_id,
+                )
+                .order_by(tutor_interactions.c.created_at.desc())
+                .limit(20)
+            ).mappings().all()
+        return [
+            TutorInteraction(
+                **{
+                    **row,
+                    "citations_json": json.dumps(
+                        row["citations_json"], ensure_ascii=False, sort_keys=True
+                    ),
+                }
+            )
+            for row in rows
+        ]
+
+    def find_tutor_interaction(
+        self, user_id: str, workspace_id: str, idempotency_key: str
+    ) -> TutorInteraction | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(tutor_interactions).where(
+                    tutor_interactions.c.user_id == user_id,
+                    tutor_interactions.c.workspace_id == workspace_id,
+                    tutor_interactions.c.idempotency_key == idempotency_key,
+                )
+            ).mappings().first()
+        return (
+            TutorInteraction(
+                **{
+                    **row,
+                    "citations_json": json.dumps(
+                        row["citations_json"], ensure_ascii=False, sort_keys=True
+                    ),
+                }
+            )
+            if row
+            else None
+        )
+
+    def create_tutor_interaction(self, interaction: TutorInteraction) -> bool:
+        values = {
+            **asdict(interaction),
+            "citations_json": json.loads(interaction.citations_json),
+        }
+        with self.engine.begin() as connection:
+            return self._insert_ignore_created(
+                connection,
+                tutor_interactions,
+                values,
+                ["user_id", "workspace_id", "idempotency_key"],
+            )
+
+    def update_tutor_interaction(
+        self, interaction: TutorInteraction, expected_status: str
+    ) -> bool:
+        values = {
+            **asdict(interaction),
+            "citations_json": json.loads(interaction.citations_json),
+        }
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                tutor_interactions.update()
+                .where(
+                    tutor_interactions.c.id == interaction.id,
+                    tutor_interactions.c.user_id == interaction.user_id,
+                    tutor_interactions.c.workspace_id == interaction.workspace_id,
+                    tutor_interactions.c.status == expected_status,
+                )
+                .values(**values)
+            )
+        return result.rowcount == 1
+
+    def count_tutor_interactions_since(
+        self, user_id: str, workspace_id: str, created_after: str
+    ) -> int:
+        with self.engine.connect() as connection:
+            total = connection.scalar(
+                select(func.count()).select_from(tutor_interactions).where(
+                    tutor_interactions.c.user_id == user_id,
+                    tutor_interactions.c.workspace_id == workspace_id,
+                    tutor_interactions.c.created_at >= created_after,
+                )
+            )
+        return int(total or 0)
 
     def commit_learning_activity(self, activity: LearningActivityCommit) -> bool:
         event = activity.event

@@ -40,6 +40,7 @@ from haha_learning.domain import (
     Quiz,
     QuizAttempt,
     QuizQuestion,
+    TutorInteraction,
 )
 from haha_learning.seed import catalog_records
 from haha_user_center.domain import (
@@ -407,6 +408,20 @@ class SQLiteCreatorRepository:
                 );
                 CREATE INDEX IF NOT EXISTS ix_learning_events_owner_date
                     ON learning_events(user_id, workspace_id, activity_date, event_type);
+                CREATE TABLE IF NOT EXISTS tutor_interactions (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL, request_fingerprint TEXT NOT NULL,
+                    question TEXT NOT NULL, status TEXT NOT NULL, answer TEXT NOT NULL,
+                    citations_json TEXT NOT NULL, model TEXT NOT NULL, request_id TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+                    latency_ms INTEGER NOT NULL, error_code TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, workspace_id, idempotency_key),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_tutor_interactions_owner_created
+                    ON tutor_interactions(user_id, workspace_id, created_at);
                 CREATE TABLE IF NOT EXISTS daily_tasks (
                     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
                     task_date TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL,
@@ -1261,6 +1276,73 @@ class SQLiteCreatorRepository:
                 (user_id, workspace_id),
             ).fetchall()
         return [AchievementGrant(**dict(row)) for row in rows]
+
+    def list_tutor_interactions(self, user_id: str, workspace_id: str) -> list[TutorInteraction]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM tutor_interactions
+                   WHERE user_id = ? AND workspace_id = ? ORDER BY created_at DESC LIMIT 20""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [TutorInteraction(**dict(row)) for row in rows]
+
+    def find_tutor_interaction(
+        self, user_id: str, workspace_id: str, idempotency_key: str
+    ) -> TutorInteraction | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM tutor_interactions
+                   WHERE user_id = ? AND workspace_id = ? AND idempotency_key = ?""",
+                (user_id, workspace_id, idempotency_key),
+            ).fetchone()
+        return TutorInteraction(**dict(row)) if row else None
+
+    def create_tutor_interaction(self, interaction: TutorInteraction) -> bool:
+        with closing(self._connect()) as connection, connection:
+            result = connection.execute(
+                "INSERT OR IGNORE INTO tutor_interactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                tuple(asdict(interaction).values()),
+            )
+        return result.rowcount == 1
+
+    def update_tutor_interaction(
+        self, interaction: TutorInteraction, expected_status: str
+    ) -> bool:
+        with closing(self._connect()) as connection, connection:
+            result = connection.execute(
+                """UPDATE tutor_interactions SET status = ?, answer = ?, citations_json = ?,
+                          model = ?, request_id = ?, input_tokens = ?, output_tokens = ?,
+                          latency_ms = ?, error_code = ?, updated_at = ?
+                   WHERE id = ? AND user_id = ? AND workspace_id = ? AND status = ?""",
+                (
+                    interaction.status,
+                    interaction.answer,
+                    interaction.citations_json,
+                    interaction.model,
+                    interaction.request_id,
+                    interaction.input_tokens,
+                    interaction.output_tokens,
+                    interaction.latency_ms,
+                    interaction.error_code,
+                    interaction.updated_at,
+                    interaction.id,
+                    interaction.user_id,
+                    interaction.workspace_id,
+                    expected_status,
+                ),
+            )
+        return result.rowcount == 1
+
+    def count_tutor_interactions_since(
+        self, user_id: str, workspace_id: str, created_after: str
+    ) -> int:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS total FROM tutor_interactions
+                   WHERE user_id = ? AND workspace_id = ? AND created_at >= ?""",
+                (user_id, workspace_id, created_after),
+            ).fetchone()
+        return int(row["total"]) if row else 0
 
     def commit_learning_activity(self, activity: LearningActivityCommit) -> bool:
         event = activity.event

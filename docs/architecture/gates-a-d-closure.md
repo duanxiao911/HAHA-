@@ -2,7 +2,7 @@
 
 日期：2026-10-18（Asia/Shanghai）
 
-状态：`SEQUENTIAL_CLOSURE_REOPENED`。A、B 保持通过；C、D、E 按用户确认的依赖顺序重新收口。提前落地的 F 基础设施增量保留，但 F 已暂停，不得再称 A–E 已完成或已进入生产收口。
+状态：`GATE_C_CLOSED_D_PENDING`。A、B 保持通过；C 已按用户确认的依赖顺序完成内部验收，下一步才复验 D、E。提前落地的 F 基础设施增量保留，但 F 已暂停，不得称 D、E 已重新签署或已进入生产收口。
 
 ## 判定口径
 
@@ -17,8 +17,8 @@
 |---|---|---|---|
 | A 架构与数据底座 | PASS | PASS | 统一 User/Workspace/Membership、业务身份、模块化单体、PostgreSQL/Alembic 与后端授权已建立。 |
 | B 身份中心闭环 | PASS | PASS | 多身份、申请、独立审核、授权、切换、任务、审计和刷新恢复均有 API、数据库与浏览器证据。 |
-| C 视频与 AI 学习 | PARTIAL / BLOCKED | PARTIAL / BLOCKED | 真实二进制上传、持久卷、发布后 Range 播放、Chrome 解码，以及服务端学习/成长均已通过；AI 非遗老师缺真实模型凭据，仍 BLOCKED。 |
-| D 买卖家交易 | IMPLEMENTED，待顺序复验 | NOT CLOSED | 既有 INTERNAL SANDBOX 代码与证据保留；在 C 总 Gate 解阻前不越序签署 D 收口。真实资金与商业合规仍不属于沙盒能力。 |
+| C 视频与 AI 学习 | PASS | PASS（内部非生产范围） | 真实媒体链、服务端学习成长，以及 DeepSeek + 版本化内部复核知识库的受控 AI 老师均有 PostgreSQL、真实 API、重启、模型评测和 Chrome 证据。来源不冒充官方认证。 |
+| D 买卖家交易 | IMPLEMENTED，待顺序复验 | NOT CLOSED | 既有 INTERNAL SANDBOX 代码与证据保留；C 已解阻，下一步复验 D。真实资金与商业合规仍不属于沙盒能力。 |
 
 ## 2026-10-18 Gate C 媒体收口项
 
@@ -28,10 +28,18 @@
 4. Docker 媒体卷独立持久化，由一次性 root 初始化服务调整所有权；API 继续以 UID 65532 运行。
 5. Next.js 投稿页执行真实上传/删除，内容详情使用原生 video 控件；静态演示仍只登记本机元数据。
 
-## 不能通过代码收口的项目
+## Gate C AI 学习收口项
+
+1. AI 非遗老师使用真实 DeepSeek 文本模型，不使用 Mock、模板回答或静态聊天冒充接通。
+2. 检索只接受精确命中的、版本化且标记为 `reviewed_internal` 的本地知识记录；无知识命中时不调用模型并明确拒答。
+3. 回答必须使用检索记录 ID 行内引用；模型返回越界来源、提示词哨兵或受信上下文标记时，服务端拒绝结果。
+4. learner 权限由后端复核；请求先以幂等键持久化，成功与失败均保留模型、请求 ID、Token、延迟和时间戳审计信息。
+5. 24 小时账户限额、冲突语义和 PostgreSQL 唯一约束限制重复提交；学习中心覆盖可用、阻断、加载、错误、成功与刷新恢复状态。
+
+## 仍需后续生产门禁处理的项目
 
 - **生产级媒体处理：OPEN（不再是功能链路缺失）**。当前本地/单节点真实上传、持久化和播放已通过；对象存储、恶意文件扫描、FFprobe 深度检查、转码、封面、CDN、配额与异地备份仍属于后续生产门禁。
-- **AI 非遗老师：BLOCKED**。在真实模型和可信、版本化知识检索接口可用前，不得以模板、静态聊天或 Mock 冒充接通。
+- **AI 内容治理：OPEN（不再是 Gate C 功能阻断）**。当前来源可信状态是内部复核，不是官方认证；部分链接是主管机构入口页而非条目级永久链接。正式教学发布前仍需来源编辑审核、条目级引用、内容版本发布和模型质量持续评测。
 - **真实支付与退款：BLOCKED**。需要经营地区、商业主体、支付服务商、退款/结算责任、隐私和消费者保护方案。
 - **Production Readiness：PAUSED**。已有提前实施的容量、数据库恢复、指标与 CI 增量保留；C、D、E 顺序收口前不继续推进或签署 F。
 
@@ -39,15 +47,17 @@
 
 - Ruff：`src tests scripts` 通过。
 - Python 社区回归：`8 passed`；包含上传权限、签名拒绝、幂等、发布可见性与 Range 读取。
-- Python 完整回归：`129 passed, 1 warning`（注入测试专用 PostgreSQL、Redis 与 JWT 配置）；首次遗漏测试 JWT 密钥时为 `128 passed / 1 failed`，失败证据保留。
-- PostgreSQL/Alembic：`20261018_0014 (head)`；旧数据保留，新表与媒体约束存在。
+- Python 完整回归：`138 passed, 1 warning`（注入测试专用 PostgreSQL、Redis 与 JWT 配置）。
+- PostgreSQL 学习适配器：`16 passed`；包含 AI 对话持久化与应用重建恢复。
+- PostgreSQL/Alembic：`20261018_0015 (head)`；旧数据保留，新增 AI 对话审计表、约束与索引存在。
 - 真实 API：26 项社区/媒体断言通过；真实 H.264 文件上传、发布和逐字节读取通过。
 - Next.js：ESLint、6 项社区契约、4 项平台壳契约和生产构建通过。
 - 真实 Chrome：390/768/1024/1440 无横向溢出；真实上传、已发布 H.264 解码播放、刷新、权限和 API 失败状态通过，浏览器异常为 0。
-- 服务重启：API 重启后媒体仍返回 `200 video/mp4`，1683 字节与上传样本一致。
-- 迁移回滚：在独立空 PostgreSQL 临时库执行媒体迁移 `upgrade → downgrade → upgrade` 通过；新增约束后会再次复验到 `0014`。
-- AI 边界：运行时探测 `text_ready=false`；确定性黄金集 `10/10` 通过不能替代真实模型教学验收。
-- 证据文件：`artifacts/e2e/community-gate-c2-api/` 与 `artifacts/e2e/community-gate-c2-browser/`。
+- 服务重启：API 重启后媒体与学习事实仍存在；学习恢复 9 项断言全部通过，包含 AI 对话历史。
+- 迁移回滚：在独立 PostgreSQL 临时库执行完整迁移、`downgrade 0014`、再次 `upgrade head` 通过。
+- 真实 AI 评测：3/3 通过，覆盖有来源回答、提示注入/越界引用边界和未知项目零调用拒答；估算峰值成本 `0.0006633 USD`。
+- 真实学习 API：14 项完整闭环断言通过；真实 Chrome 在 390/768/1440 三档完成学习、AI 提问、刷新恢复与用户中心同步，浏览器异常为 0。
+- 证据文件：`artifacts/e2e/community-gate-c2-*`、`artifacts/e2e/learning-gate-c3-*` 与 `artifacts/evals/gate-c-learning-tutor-live-eval.json`。
 - 远端 GitHub CI：当前提交尚未推送，因此为 `UNKNOWN`。
 
-因此，对外准确表述应为：**Gate A、B 已闭环；Gate C 的真实媒体和非 AI 学习子范围已闭环，但原始 Gate C 总目标仍受真实 AI 教师阻断；D、E 保留既有实现但尚未按本轮顺序重新签署；F 已暂停。**
+因此，对外准确表述应为：**Gate A、B、C 已在内部非生产范围闭环；D、E 保留既有实现但尚未按本轮顺序重新签署；F 已暂停。当前仍不是 Production Candidate 或 Production Ready。**

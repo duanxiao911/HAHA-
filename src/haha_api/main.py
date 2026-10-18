@@ -80,8 +80,11 @@ from haha_learning.domain import (
     LearningConflictError,
     LearningNotFoundError,
     LearningPermissionError,
+    LearningTutorRateLimitError,
+    LearningTutorUnavailableError,
 )
 from haha_learning.service import LearningService
+from haha_learning.tutor import HeritageTutor
 from haha_user_center.service import UserCenterNotFoundError, UserCenterService
 from haha_workbench.service import WorkbenchPermissionError, WorkbenchService
 
@@ -250,6 +253,11 @@ class QuizAttemptCreate(BaseModel):
     expected_progress_version: int = Field(ge=0)
 
 
+class TutorQuestionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question: str = Field(min_length=2, max_length=1000)
+
+
 class CommerceStoreCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=200)
@@ -303,6 +311,7 @@ def create_app(
     community_repository: CommunityRepository | None = None,
     commerce_repository: CommerceRepository | None = None,
     media_storage: FileSystemMediaStorage | None = None,
+    learning_tutor: HeritageTutor | None = None,
 ) -> FastAPI:
     validate_security_configuration()
     active_repository = repository or build_repository()
@@ -315,13 +324,16 @@ def create_app(
     community_service = CommunityService(
         active_community_repository, user_center_service, media_storage
     )
-    learning_service = LearningService(active_repository)  # type: ignore[arg-type]
+    active_learning_tutor = learning_tutor or HeritageTutor()
+    learning_service = LearningService(
+        active_repository, active_learning_tutor
+    )  # type: ignore[arg-type]
     active_commerce_repository = commerce_repository or build_commerce_repository(
         active_repository
     )
     commerce_service = CommerceService(active_commerce_repository, active_repository)
     workbench_service = WorkbenchService(
-        active_repository, active_commerce_repository
+        active_repository, active_commerce_repository, active_learning_tutor
     )  # type: ignore[arg-type]
     auth_service = AuthService(active_repository)  # type: ignore[arg-type]
     application = FastAPI(title="HAHA Creator API", version="0.2.0")
@@ -393,6 +405,18 @@ def create_app(
         _request: Request, exc: LearningConflictError
     ) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @application.exception_handler(LearningTutorUnavailableError)
+    async def learning_tutor_unavailable_handler(
+        _request: Request, exc: LearningTutorUnavailableError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @application.exception_handler(LearningTutorRateLimitError)
+    async def learning_tutor_rate_limit_handler(
+        _request: Request, exc: LearningTutorRateLimitError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=429, content={"detail": str(exc)})
 
     @application.exception_handler(CommercePermissionError)
     async def commerce_permission_handler(
@@ -1202,6 +1226,24 @@ def create_app(
                 quiz_id,
                 idempotency_key=idempotency_key,
                 **payload.model_dump(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/learning/tutor/questions")
+    def ask_learning_tutor(
+        payload: TutorQuestionCreate,
+        principal: Principal = Depends(resolve_membership),
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+    ) -> dict[str, object]:
+        try:
+            return learning_service.ask_tutor(
+                principal.user_id,
+                principal.workspace_id,
+                question=payload.question,
+                idempotency_key=idempotency_key,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

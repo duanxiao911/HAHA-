@@ -8,6 +8,7 @@ import { ProductFrame } from "@/components/community/ProductFrame";
 import { StateNotice } from "@/components/community/StateNotice";
 import {
   ApiRequestError,
+  askLearningTutor,
   completeLearningUnit,
   enrollLearningPath,
   getLearningCenter,
@@ -34,6 +35,7 @@ export function LearningCenter() {
   const [cardBody, setCardBody] = useState("");
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [candidateId, setCandidateId] = useState("");
+  const [tutorQuestion, setTutorQuestion] = useState("");
   const [pendingUnit, setPendingUnit] = useState<{ id: string; title: string; version: number } | null>(null);
 
   const applySnapshot = useCallback((next: LearningSnapshot) => {
@@ -118,6 +120,19 @@ export function LearningCenter() {
     );
   }
 
+  function submitTutorQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const question = tutorQuestion.trim();
+    if (question.length < 2 || snapshot?.ai_tutor.status !== "available") return;
+    void run(
+      "tutor",
+      () => askLearningTutor(question),
+      "AI 非遗老师已返回带来源的回答。",
+    ).then((success) => { if (success) setTutorQuestion(""); });
+  }
+
+  const latestTutor = snapshot.last_tutor_result ?? snapshot.tutor_history[0];
+
   return <ProductFrame mainClassName={styles.main}>
     <section className={styles.hero} data-testid="learning-hero">
       <div>
@@ -140,15 +155,39 @@ export function LearningCenter() {
 
     <nav className="learningJumpNav" aria-label="学习中心页内导航">
       <a href="#daily-learning">每日任务</a>
+      <a href="#ai-tutor">AI 非遗老师</a>
       <a href="#learning-paths">学习路径</a>
       {activePath?.enrollment ? <a href="#learning-workspace">知识与测验</a> : null}
       <a href="#learning-achievements">成长成就</a>
     </nav>
 
-    <section className={styles.boundary} data-testid="ai-tutor-boundary">
+    {snapshot.ai_tutor.status === "blocked" ? <section className={styles.boundary} data-testid="ai-tutor-boundary" id="ai-tutor">
       <span>BLOCKED</span>
       <div><h2>AI 非遗老师尚未接通</h2><p>{snapshot.ai_tutor.reason}</p></div>
-    </section>
+    </section> : <section className={styles.tutorPanel} data-testid="ai-tutor" id="ai-tutor">
+      <div className={styles.tutorIntro}>
+        <div><small>GROUNDED AI TUTOR</small><h2>AI 非遗老师</h2><p>{snapshot.ai_tutor.supported_scope}</p></div>
+        <span>DeepSeek · {snapshot.ai_tutor.knowledge_version} · {snapshot.ai_tutor.request_limit_24h} 次/24h</span>
+      </div>
+      <form className={styles.tutorForm} onSubmit={submitTutorQuestion}>
+        <label htmlFor="tutor-question">想了解什么？</label>
+        <div className={styles.tutorInputRow}>
+          <textarea id="tutor-question" value={tutorQuestion} minLength={2} maxLength={1000} required placeholder="请写出完整项目名称，例如：中国剪纸有哪些主要特点？" onChange={(event) => setTutorQuestion(event.target.value)} />
+          <button className="productButton" type="submit" disabled={busy === "tutor" || tutorQuestion.trim().length < 2}>{busy === "tutor" ? "查找来源并回答中…" : "提问"}</button>
+        </div>
+        <div className={styles.tutorSuggestions} aria-label="示例问题">
+          {["中国剪纸有哪些主要特点？", "昆曲的表演特点是什么？"].map((item) => <button type="button" key={item} onClick={() => setTutorQuestion(item)}>{item}</button>)}
+        </div>
+      </form>
+      {latestTutor ? <article className={styles.tutorAnswer} aria-live="polite">
+        <small>{latestTutor.mode === "no_sources" ? "未命中可信来源 · 未调用模型" : `真实模型回答 · ${latestTutor.model}`}</small>
+        <h3>{latestTutor.question}</h3>
+        <p>{latestTutor.answer}</p>
+        {latestTutor.uncertainty ? <div className={styles.uncertainty}>边界说明：{latestTutor.uncertainty}</div> : null}
+        {latestTutor.citations.length ? <ul className={styles.citationList}>{latestTutor.citations.map((source) => <li key={source.source_id}><div><b>[{source.source_id}] {source.title}</b><span>{source.publisher} · {source.version} · 内部已核验</span></div><a href={source.url} target="_blank" rel="noreferrer">打开来源入口</a></li>)}</ul> : null}
+        <p className={styles.tutorDisclaimer}>回答只引用当前版本化目录；“内部已核验”不等于官方认证，正式使用前请打开具体官方资料复核。</p>
+      </article> : <StateNotice kind="empty" compact title="还没有提问记录" description="老师只回答能精确命中来源记录的问题；未命中时会明确拒答，不会用模型常识补写。" />}
+    </section>}
     <p className={styles.catalogNotice}>{snapshot.catalog_notice}</p>
 
     <div className={styles.dashboardGrid}>

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -22,6 +23,8 @@ from haha_identity.domain import RoleGrant
 from haha_identity.service import IdentityService
 from haha_learning.seed import LESSON_UNIT_ID, PATH_ID, QUIZ_ID, QUIZ_UNIT_ID
 from haha_learning.service import LearningService
+from haha_learning.tutor import HeritageTutor
+from haha_media.model_router import CallEvidence, TextModelResult
 from haha_user_center.service import UserCenterService
 from haha_workbench.service import WorkbenchService
 
@@ -577,3 +580,60 @@ def test_postgres_failed_job_operations_are_scoped_and_atomic(repository) -> Non
     resolved = repository.get_failed_job(job.id, "pg-workspace")
     assert resolved is not None
     assert resolved.resolved_at
+
+
+class _PostgresTutorRouter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def status(self):
+        return SimpleNamespace(text_ready=True, text_model="deepseek-flash")
+
+    def generate_json(self, task: str, **kwargs) -> TextModelResult:
+        self.calls += 1
+        return TextModelResult(
+            data={
+                "answer": "中国剪纸以剪刻和纹样设计为核心 [F-096]。",
+                "used_source_ids": ["F-096"],
+                "uncertainty": "仅依据当前版本化目录。",
+                "suggested_questions": [],
+            },
+            evidence=CallEvidence(
+                provider="deepseek",
+                model="deepseek-flash",
+                request_id="pg-tutor-request",
+                latency_ms=100,
+                input_tokens=300,
+                output_tokens=60,
+            ),
+        )
+
+
+def test_postgres_learning_tutor_is_durable_and_idempotent(repository) -> None:
+    repository.ensure_identity("pg-tutor-user", "pg-workspace", role="owner")
+    identity = IdentityService(repository)
+    identity.bootstrap("pg-tutor-user", "pg-workspace")
+    identity.activate_role("pg-tutor-user", "pg-workspace", "learner")
+    router = _PostgresTutorRouter()
+    tutor = HeritageTutor(router)
+    service = LearningService(repository, tutor)
+
+    answered = service.ask_tutor(
+        "pg-tutor-user",
+        "pg-workspace",
+        question="中国剪纸有哪些特点？",
+        idempotency_key="pg-tutor-question-001",
+    )
+    assert answered["last_tutor_result"]["request_id"] == "pg-tutor-request"
+
+    reloaded = LearningService(SQLAlchemyCreatorRepository(POSTGRES_URL), tutor)
+    restored = reloaded.bootstrap("pg-tutor-user", "pg-workspace")
+    assert restored["tutor_history"][0]["citations"][0]["source_id"] == "F-096"
+    replayed = reloaded.ask_tutor(
+        "pg-tutor-user",
+        "pg-workspace",
+        question="中国剪纸有哪些特点？",
+        idempotency_key="pg-tutor-question-001",
+    )
+    assert replayed["last_tutor_result"]["id"] == answered["last_tutor_result"]["id"]
+    assert router.calls == 1
