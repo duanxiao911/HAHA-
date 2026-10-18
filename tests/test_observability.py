@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 
+import pytest
 from fastapi.testclient import TestClient
 
 from haha_api.main import create_app
@@ -54,3 +55,49 @@ def test_http_middleware_correlates_request_and_exposes_metrics() -> None:
     assert "haha_http_requests_total" in metrics_response.text
     assert 'route="/health"' in metrics_response.text
     assert "haha_http_request_duration_seconds_sum" in metrics_response.text
+    assert metrics_response.headers["cache-control"] == "no-store"
+    assert metrics_response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_shared_environment_requires_a_dedicated_metrics_secret(monkeypatch) -> None:
+    monkeypatch.setenv("HAHA_ENVIRONMENT", "staging")
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", "jwt-secret-with-at-least-thirty-two-characters")
+    monkeypatch.delenv("HAHA_METRICS_TOKEN", raising=False)
+
+    with pytest.raises(RuntimeError, match="HAHA_METRICS_TOKEN"):
+        create_app(SQLiteCreatorRepository(":memory:"))
+
+
+def test_shared_environment_protects_metrics_with_independent_bearer_token(
+    monkeypatch,
+) -> None:
+    metrics_token = "metrics-secret-with-at-least-thirty-two-characters"
+    monkeypatch.setenv("HAHA_ENVIRONMENT", "staging")
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", "jwt-secret-with-at-least-thirty-two-characters")
+    monkeypatch.setenv("HAHA_METRICS_TOKEN", metrics_token)
+    client = TestClient(create_app(SQLiteCreatorRepository(":memory:")))
+
+    missing = client.get("/metrics")
+    incorrect = client.get("/metrics", headers={"Authorization": "Bearer wrong"})
+    authorized = client.get(
+        "/metrics", headers={"Authorization": f"Bearer {metrics_token}"}
+    )
+
+    assert missing.status_code == 401
+    assert missing.headers["www-authenticate"] == "Bearer"
+    assert incorrect.status_code == 401
+    assert authorized.status_code == 200
+    assert "haha_http_requests_total" in authorized.text
+
+
+def test_shared_environment_rejects_reused_jwt_and_metrics_secret(monkeypatch) -> None:
+    shared = "shared-secret-with-at-least-thirty-two-characters"
+    monkeypatch.setenv("HAHA_ENVIRONMENT", "production")
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", shared)
+    monkeypatch.setenv("HAHA_METRICS_TOKEN", shared)
+
+    with pytest.raises(RuntimeError, match="不得与"):
+        create_app(SQLiteCreatorRepository(":memory:"))

@@ -54,7 +54,11 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install backend dependencies
-        run: python -m pip install -e ".[dev]"
+        run: |
+          python -m pip install --upgrade pip==26.2.1
+          python -m pip install -e ".[dev]" pip-audit==2.10.1
+      - name: Audit backend dependencies
+        run: python -m pip_audit --local --progress-spinner off
       - name: Static checks
         run: python -m ruff check src tests scripts
       - name: Validate external release package
@@ -70,6 +74,7 @@ jobs:
           HAHA_WEB_BIND: 127.0.0.1:13000
           POSTGRES_PASSWORD: ci-release-password-value
           HAHA_JWT_SECRET: ci-release-jwt-secret-at-least-32-characters
+          HAHA_METRICS_TOKEN: ci-release-metrics-secret-at-least-32-characters
           HAHA_RELEASE_ID: ci-release-package
           HAHA_RELEASE_OWNER: ci-release-team
           HAHA_ROLLBACK_OWNER: ci-platform-oncall
@@ -109,12 +114,18 @@ jobs:
       - name: Install frontend dependencies
         working-directory: web
         run: pnpm install --frozen-lockfile
+      - name: Audit production frontend dependencies
+        working-directory: web
+        run: pnpm audit --prod --audit-level high
       - name: Lint frontend
         working-directory: web
         run: pnpm lint
       - name: Test community data contract
         working-directory: web
         run: pnpm test:community
+      - name: Test platform shell contract
+        working-directory: web
+        run: pnpm test:platform-shell
       - name: Build frontend
         working-directory: web
         env:
@@ -244,6 +255,20 @@ jobs:
             api python scripts/e2e_commerce_gate_d.py --phase verify
       - name: Run Commerce Gate D real-browser acceptance
         run: python scripts/e2e_commerce_gate_d_browser.py
+      - name: Run Platform Gate E real-browser acceptance
+        run: python scripts/e2e_platform_gate_e_browser.py
+      - name: Run Gate F read-only capacity threshold
+        run: >-
+          python scripts/production_load_gate.py
+          --requests 100 --concurrency 10
+          --max-error-ratio 0 --max-p95-ms 750 --max-p99-ms 1500
+          --output artifacts/e2e/gate-f-load.json
+      - name: Run Gate F current-schema backup and isolated restore drill
+        run: >-
+          python scripts/postgres_restore_drill.py
+          --backup-path .tmp/gate-f-ci.dump
+          --report artifacts/e2e/gate-f-restore.json
+          --delete-backup-after-verify
       - name: Capture service logs on failure
         if: failure()
         shell: bash

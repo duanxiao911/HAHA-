@@ -63,8 +63,12 @@ $env:HAHA_PUBLIC_API_URL = "https://api.staging.example.com"
 $env:HAHA_PUBLIC_WEB_ORIGIN = "https://staging.example.com"
 $env:HAHA_RELEASE_ID = "the-approved-release-id"
 $env:HAHA_RELEASE_ACCESS_TOKEN = "short-lived-token"
+$env:HAHA_METRICS_TOKEN = "separate-32-plus-character-monitoring-token"
 python scripts/release_smoke.py
 ```
+
+The metrics token must be delivered to the private metrics collector and must not equal the JWT
+signing secret. The smoke gate verifies that anonymous metrics access is rejected.
 
 ## Acceptance record
 

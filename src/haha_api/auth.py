@@ -59,6 +59,28 @@ def validate_security_configuration() -> None:
         )
     if mode == "jwt" and len(os.getenv("HAHA_JWT_SECRET", "")) < 32:
         raise RuntimeError("HAHA_JWT_SECRET 至少需要 32 个字符")
+    if environment in {"staging", "production"}:
+        metrics_token = os.getenv("HAHA_METRICS_TOKEN", "")
+        if len(metrics_token) < 32:
+            raise RuntimeError("staging/production 的 HAHA_METRICS_TOKEN 至少需要 32 个字符")
+        if metrics_token == os.getenv("HAHA_JWT_SECRET", ""):
+            raise RuntimeError("HAHA_METRICS_TOKEN 不得与 HAHA_JWT_SECRET 共用")
+
+
+def authorize_metrics(
+    authorization: str = Header(default="", alias="Authorization"),
+) -> None:
+    """Protect operational metrics outside the explicitly local development runtime."""
+    if _environment() == "development":
+        return
+    expected = os.getenv("HAHA_METRICS_TOKEN", "")
+    supplied = authorization.removeprefix("Bearer ").strip()
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="缺少或无效的指标访问令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 def _decode_segment(value: str) -> bytes:

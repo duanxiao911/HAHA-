@@ -29,6 +29,7 @@ from haha_api.auth import (
     Principal,
     Role,
     authenticate,
+    authorize_metrics,
     require_project_access,
     require_write_access,
     validate_security_configuration,
@@ -524,8 +525,12 @@ def create_app(
         return {"status": "ready", "checks": checks}
 
     @application.get("/metrics", include_in_schema=False)
-    def prometheus_metrics() -> Response:
-        return Response(metrics.render(), media_type="text/plain; version=0.0.4")
+    def prometheus_metrics(_authorized: None = Depends(authorize_metrics)) -> Response:
+        return Response(
+            metrics.render(),
+            media_type="text/plain; version=0.0.4",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     @application.post("/api/projects", status_code=status.HTTP_201_CREATED)
     def create_project(

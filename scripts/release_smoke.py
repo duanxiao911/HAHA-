@@ -40,6 +40,7 @@ def main() -> None:
     web_origin = os.environ["HAHA_PUBLIC_WEB_ORIGIN"].rstrip("/")
     release_id = os.environ["HAHA_RELEASE_ID"]
     token = os.environ["HAHA_RELEASE_ACCESS_TOKEN"]
+    metrics_token = os.environ["HAHA_METRICS_TOKEN"]
     request_id = f"release-smoke-{uuid4().hex}"
 
     health_status, _, health = call("GET", f"{api_url}/health")
@@ -70,6 +71,12 @@ def main() -> None:
             "Access-Control-Request-Headers": "authorization,last-event-id",
         },
     )
+    anonymous_metrics_status, _, _ = call("GET", f"{api_url}/metrics")
+    metrics_status, _, metrics_body = call(
+        "GET",
+        f"{api_url}/metrics",
+        headers={"Authorization": f"Bearer {metrics_token}"},
+    )
 
     allowed_headers = cors_headers.get("access-control-allow-headers", "").lower()
     checks = {
@@ -83,6 +90,9 @@ def main() -> None:
         and cors_headers.get("access-control-allow-origin") == web_origin,
         "cors_sse_reconnect": "authorization" in allowed_headers
         and "last-event-id" in allowed_headers,
+        "anonymous_metrics_rejected": anonymous_metrics_status == 401,
+        "authorized_metrics": metrics_status == 200
+        and "haha_http_requests_total" in str(metrics_body),
     }
     result = {
         "status": "passed" if all(checks.values()) else "failed",

@@ -12,7 +12,7 @@
     "test:platform-shell": "node tests/platform-shell-contract.test.cjs"
   },
   "dependencies": {
-    "next": "16.3.6",
+    "next": "16.3.8",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },
@@ -21,7 +21,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "eslint": "^9.0.0",
-    "eslint-config-next": "16.3.6",
+    "eslint-config-next": "16.3.8",
     "typescript": "^5.9.0"
   }
 }

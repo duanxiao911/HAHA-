@@ -188,6 +188,11 @@ Gate A–D 的统一收口口径见
 [`docs/architecture/gates-a-d-closure.md`](docs/architecture/gates-a-d-closure.md)：已冻结的内部范围已经闭环，
 但正式媒体链路与真实 AI 非遗老师仍分别为 `OPEN` / `BLOCKED`，不能把前四 Gate 无条件表述为 100%。
 
+Gate F 生产工程已开始补齐共享环境指标鉴权、量化容量阈值、当前 schema 备份/隔离恢复和 CI
+门禁。目标架构、任务矩阵、数据/API 兼容计划、测试计划与发布判定见
+[`docs/engineering/`](docs/engineering/)。本地或 CI 通过不等于公网 TLS、托管告警、异地加密备份
+或生产发布已完成；当前仍明确不是 Production Candidate / Production Ready。
+
 ## 项目结构
 
 ```text

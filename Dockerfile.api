@@ -5,7 +5,10 @@ ARG PIP_INDEX_URL=https://pypi.org/simple
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src \
+    VIRTUAL_ENV=/opt/haha-venv \
     HAHA_CORE_DB=/var/lib/haha/haha_core.db
+
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 WORKDIR /app
 
@@ -18,7 +21,10 @@ COPY alembic.ini ./alembic.ini
 COPY migrations ./migrations
 COPY scripts/bootstrap_internal_account.py ./scripts/bootstrap_internal_account.py
 
-RUN python -m pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" .
+RUN /usr/bin/python3 -m venv "${VIRTUAL_ENV}" \
+    && python -m pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" \
+        --upgrade pip==26.2.1 setuptools==83.0.0 wheel==0.46.2 \
+    && python -m pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" .
 RUN mkdir -p /var/lib/haha && chown -R 65532:65532 /app /var/lib/haha
 
 USER 65532:65532

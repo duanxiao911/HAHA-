@@ -4,7 +4,7 @@ ARG NPM_REGISTRY=https://registry.npmjs.org
 ARG PNPM_VERSION=10.18.3
 ENV COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN corepack enable \
     && corepack install --global pnpm@${PNPM_VERSION} \
     && pnpm config set registry "${NPM_REGISTRY}" \

@@ -31,6 +31,7 @@ REQUIRED_KEYS = (
     "HAHA_WEB_BIND",
     "POSTGRES_PASSWORD",
     "HAHA_JWT_SECRET",
+    "HAHA_METRICS_TOKEN",
     "HAHA_RELEASE_ID",
     *ROLE_KEYS,
 )
@@ -93,10 +94,20 @@ def validate(
         if value and not valid_image:
             errors.append(f"{key} must use an immutable @sha256 digest")
 
-    for key, minimum in (("POSTGRES_PASSWORD", 20), ("HAHA_JWT_SECRET", 32)):
+    for key, minimum in (
+        ("POSTGRES_PASSWORD", 20),
+        ("HAHA_JWT_SECRET", 32),
+        ("HAHA_METRICS_TOKEN", 32),
+    ):
         value = values.get(key, "")
         if value and len(value) < minimum:
             errors.append(f"{key} must contain at least {minimum} characters")
+
+    if (
+        values.get("HAHA_METRICS_TOKEN")
+        and values.get("HAHA_METRICS_TOKEN") == values.get("HAHA_JWT_SECRET")
+    ):
+        errors.append("HAHA_METRICS_TOKEN must be independent from HAHA_JWT_SECRET")
 
     api_url = values.get("HAHA_PUBLIC_API_URL", "").rstrip("/")
     web_origin = values.get("HAHA_PUBLIC_WEB_ORIGIN", "").rstrip("/")
@@ -131,6 +142,7 @@ def validate(
         "HAHA_RELEASE_ID",
         "POSTGRES_PASSWORD",
         "HAHA_JWT_SECRET",
+        "HAHA_METRICS_TOKEN",
         "HAHA_PUBLIC_API_URL",
         "HAHA_PUBLIC_WEB_ORIGIN",
     ):

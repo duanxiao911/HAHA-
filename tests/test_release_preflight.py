@@ -19,6 +19,7 @@ def _valid_values() -> dict[str, str]:
         "HAHA_WEB_BIND": "127.0.0.1:13000",
         "POSTGRES_PASSWORD": "p" * 24,
         "HAHA_JWT_SECRET": "j" * 40,
+        "HAHA_METRICS_TOKEN": "m" * 40,
         "HAHA_RELEASE_ID": "2026-10-09.c5.1",
         "HAHA_RELEASE_OWNER": "release-team",
         "HAHA_ROLLBACK_OWNER": "platform-oncall",
@@ -40,6 +41,7 @@ def test_release_preflight_rejects_fail_open_inputs() -> None:
         "HAHA_ALLOWED_ORIGINS": "*",
         "HAHA_API_BIND": "0.0.0.0:18000",
         "HAHA_JWT_SECRET": "short",
+        "HAHA_METRICS_TOKEN": "short",
         "POSTGRES_PASSWORD": "replace-with-a-long-password-value",
         "HAHA_SECURITY_OWNER": "replace-with-security-owner",
     })
@@ -51,8 +53,16 @@ def test_release_preflight_rejects_fail_open_inputs() -> None:
     assert "HAHA_ALLOWED_ORIGINS must not contain a wildcard" in errors
     assert "HAHA_API_BIND must bind a loopback host and explicit port" in errors
     assert "HAHA_JWT_SECRET must contain at least 32 characters" in errors
+    assert "HAHA_METRICS_TOKEN must contain at least 32 characters" in errors
     assert "POSTGRES_PASSWORD still contains a placeholder" in errors
     assert "HAHA_SECURITY_OWNER still contains a placeholder" in errors
+
+
+def test_release_preflight_rejects_shared_jwt_and_metrics_secret() -> None:
+    values = _valid_values()
+    values["HAHA_METRICS_TOKEN"] = values["HAHA_JWT_SECRET"]
+
+    assert "HAHA_METRICS_TOKEN must be independent from HAHA_JWT_SECRET" in validate(values)
 
 
 def test_release_preflight_allows_local_image_ids_only_for_rehearsal() -> None:
