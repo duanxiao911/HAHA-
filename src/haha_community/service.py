@@ -7,6 +7,7 @@ import json
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
+from pathlib import Path, PurePath
 from uuid import uuid4
 
 from haha_community.domain import (
@@ -15,6 +16,7 @@ from haha_community.domain import (
     REVIEWER_TRANSITIONS,
     CommunityComment,
     CommunityConflictError,
+    CommunityMediaAsset,
     CommunityNotFoundError,
     CommunityPermissionError,
     CommunityValidationError,
@@ -23,6 +25,7 @@ from haha_community.domain import (
     SubmissionEvent,
     SubmissionStatus,
 )
+from haha_community.media_storage import FileSystemMediaStorage, MediaStorageError
 from haha_community.repository import CommunityRepository
 from haha_user_center.service import UserCenterService
 
@@ -32,6 +35,8 @@ SUBMISSION_TYPES = frozenset({"video", "article", "project", "event"})
 EDITABLE_SUBMISSION_STATUSES = frozenset({"draft", "needs_revision", "rejected"})
 CREATOR_ROLES = frozenset({"creator", "contributor"})
 REVIEW_ROLES = frozenset({"reviewer", "admin"})
+MEDIA_LIMITS = {"video": 100 * 1024 * 1024, "image": 15 * 1024 * 1024}
+MEDIA_MIME_TYPES = frozenset({"video/mp4", "video/webm", "image/jpeg", "image/png"})
 
 
 def _now() -> str:
@@ -68,9 +73,11 @@ class CommunityService:
         self,
         repository: CommunityRepository,
         user_center: UserCenterService,
+        media_storage: FileSystemMediaStorage | None = None,
     ) -> None:
         self.repository = repository
         self.user_center = user_center
+        self.media_storage = media_storage or FileSystemMediaStorage()
 
     def _ensure_catalog(self, workspace_id: str) -> None:
         self.repository.ensure_seed(workspace_id)
@@ -598,7 +605,7 @@ class CommunityService:
         payload = json.loads(current.payload_json)
         allowed = {
             "title", "summary", "categoryId", "regionId", "projectIds",
-            "personIds", "sourceIds", "tags", "assets", "aiDisclosure",
+            "personIds", "sourceIds", "tags", "aiDisclosure",
         }
         if set(patch) - allowed:
             raise CommunityValidationError("投稿包含不允许修改的字段")
@@ -629,6 +636,181 @@ class CommunityService:
             ),
         )
         return self._submission_payload(updated)
+
+    def upload_submission_asset(
+        self,
+        user_id: str,
+        workspace_id: str,
+        actor_role: str,
+        submission_id: str,
+        expected_version: int,
+        *,
+        staged_path: Path,
+        original_name: str,
+        kind: str,
+        declared_mime_type: str,
+        byte_size: int,
+        sha256: str,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        if actor_role not in CREATOR_ROLES:
+            raise CommunityPermissionError("当前身份不能上传投稿素材")
+        current = self._owned_submission(submission_id, user_id, workspace_id)
+        key = _clean(
+            idempotency_key, label="幂等键", maximum=200, required=True
+        )
+        existing = self.repository.find_media_asset_by_idempotency(
+            user_id, workspace_id, key
+        )
+        if existing:
+            if (
+                existing.submission_id != submission_id
+                or existing.sha256 != sha256
+                or existing.byte_size != byte_size
+            ):
+                raise CommunityConflictError("同一幂等键对应了不同素材")
+            self.media_storage.discard(staged_path)
+            return self._submission_payload(current)
+        if current.status not in EDITABLE_SUBMISSION_STATUSES:
+            raise CommunityConflictError("当前投稿状态不可修改素材")
+        if current.version != expected_version:
+            raise CommunityConflictError("投稿版本已变化，请刷新后重试")
+        if kind not in MEDIA_LIMITS:
+            raise CommunityValidationError("只支持视频或图片素材")
+        if byte_size < 1 or byte_size > MEDIA_LIMITS[kind]:
+            raise CommunityValidationError("素材大小超过服务端限制")
+        if declared_mime_type not in MEDIA_MIME_TYPES:
+            raise CommunityValidationError("素材 MIME 类型不受支持")
+        safe_name = PurePath(original_name).name.strip()
+        if not safe_name or len(safe_name) > 255 or any(ord(char) < 32 for char in safe_name):
+            raise CommunityValidationError("素材文件名无效")
+        detected_mime = self._detect_media_type(staged_path)
+        if detected_mime != declared_mime_type:
+            raise CommunityValidationError("文件内容与声明的 MIME 类型不一致")
+        expected_kind = "video" if detected_mime.startswith("video/") else "image"
+        if expected_kind != kind:
+            raise CommunityValidationError("文件内容与素材类型不一致")
+        payload = json.loads(current.payload_json)
+        assets = payload.get("assets", [])
+        if not isinstance(assets, list) or len(assets) >= 20:
+            raise CommunityValidationError("每份投稿最多包含 20 个素材")
+        now = _now()
+        asset_id = _id("media")
+        extension = {
+            "video/mp4": "mp4",
+            "video/webm": "webm",
+            "image/jpeg": "jpg",
+            "image/png": "png",
+        }[detected_mime]
+        workspace_partition = hashlib.sha256(workspace_id.encode()).hexdigest()[:16]
+        storage_key = f"{workspace_partition}/{asset_id}.{extension}"
+        asset = CommunityMediaAsset(
+            id=asset_id,
+            workspace_id=workspace_id,
+            submission_id=submission_id,
+            owner_user_id=user_id,
+            original_name=safe_name,
+            kind=kind,
+            declared_mime_type=declared_mime_type,
+            detected_mime_type=detected_mime,
+            byte_size=byte_size,
+            sha256=sha256,
+            storage_key=storage_key,
+            status="ready",
+            idempotency_key=key,
+            created_at=now,
+            updated_at=now,
+        )
+        assets.append(self._media_payload(asset))
+        payload["assets"] = assets
+        payload["updatedAt"] = now
+        payload["version"] = current.version + 1
+        updated = replace(
+            current,
+            version=current.version + 1,
+            payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            updated_at=now,
+        )
+        try:
+            self.media_storage.commit(staged_path, storage_key)
+            self.repository.save_media_attachment(
+                asset,
+                updated,
+                self._submission_event(
+                    updated,
+                    user_id,
+                    "submission.media_attached",
+                    current.status,
+                    current.status,
+                    {"asset_id": asset.id, "sha256": asset.sha256},
+                ),
+            )
+        except Exception:
+            self.media_storage.delete(storage_key)
+            raise
+        return self._submission_payload(updated)
+
+    def delete_submission_asset(
+        self,
+        user_id: str,
+        workspace_id: str,
+        actor_role: str,
+        submission_id: str,
+        asset_id: str,
+        expected_version: int,
+    ) -> dict[str, object]:
+        if actor_role not in CREATOR_ROLES:
+            raise CommunityPermissionError("当前身份不能移除投稿素材")
+        current = self._owned_submission(submission_id, user_id, workspace_id)
+        if current.status not in EDITABLE_SUBMISSION_STATUSES:
+            raise CommunityConflictError("当前投稿状态不可修改素材")
+        if current.version != expected_version:
+            raise CommunityConflictError("投稿版本已变化，请刷新后重试")
+        asset = self.repository.get_media_asset(asset_id, workspace_id)
+        if not asset or asset.submission_id != submission_id:
+            raise CommunityNotFoundError("投稿素材不存在")
+        if asset.owner_user_id != user_id:
+            raise CommunityPermissionError("只能移除自己的投稿素材")
+        payload = json.loads(current.payload_json)
+        assets = payload.get("assets", [])
+        if not isinstance(assets, list):
+            raise CommunityValidationError("投稿素材记录损坏")
+        now = _now()
+        payload["assets"] = [item for item in assets if item.get("id") != asset_id]
+        payload["updatedAt"] = now
+        payload["version"] = current.version + 1
+        updated = replace(
+            current,
+            version=current.version + 1,
+            payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            updated_at=now,
+        )
+        self.repository.delete_media_attachment(
+            asset_id,
+            updated,
+            self._submission_event(
+                updated,
+                user_id,
+                "submission.media_removed",
+                current.status,
+                current.status,
+                {"asset_id": asset_id},
+            ),
+        )
+        self.media_storage.delete(asset.storage_key)
+        return self._submission_payload(updated)
+
+    def get_published_media(self, asset_id: str) -> tuple[CommunityMediaAsset, Path]:
+        asset = self.repository.get_media_asset(asset_id)
+        if not asset or asset.status != "ready":
+            raise CommunityNotFoundError("媒体素材不存在")
+        submission = self.repository.get_submission(asset.submission_id, asset.workspace_id)
+        if not submission or submission.status != SubmissionStatus.PUBLISHED.value:
+            raise CommunityNotFoundError("媒体素材尚未发布")
+        try:
+            return asset, self.media_storage.path_for(asset.storage_key)
+        except MediaStorageError as exc:
+            raise CommunityNotFoundError("媒体文件不存在") from exc
 
     def transition_submission(
         self,
@@ -856,7 +1038,7 @@ class CommunityService:
             )
             patch = {
                 key: item[key]
-                for key in ("summary", "categoryId", "regionId", "projectIds", "personIds", "sourceIds", "tags", "assets", "aiDisclosure")
+                for key in ("summary", "categoryId", "regionId", "projectIds", "personIds", "sourceIds", "tags", "aiDisclosure")
                 if key in item
             }
             self.update_submission(user_id, workspace_id, "creator", identifier, int(draft["version"]), patch)
@@ -971,23 +1153,9 @@ class CommunityService:
         payload["tags"] = list(dict.fromkeys(_clean(value, label="标签", maximum=40, required=True) for value in tags))
         assets = payload.get("assets", [])
         if not isinstance(assets, list) or len(assets) > 20:
-            raise CommunityValidationError("素材元数据格式或数量无效")
-        safe_assets = []
-        for item in assets:
-            if not isinstance(item, dict):
-                raise CommunityValidationError("素材元数据格式无效")
-            size = int(item.get("sizeBytes", 0))
-            if size < 0 or size > 2 * 1024 * 1024 * 1024:
-                raise CommunityValidationError("素材大小声明无效")
-            safe_assets.append({
-                "id": _clean(item.get("id"), label="素材 ID", maximum=200, required=True),
-                "name": _clean(item.get("name"), label="素材名称", maximum=255, required=True),
-                "kind": _clean(item.get("kind"), label="素材类型", maximum=20, required=True),
-                "mimeType": _clean(item.get("mimeType"), label="MIME", maximum=100, required=True),
-                "sizeBytes": size,
-                "localOnly": True,
-            })
-        payload["assets"] = safe_assets
+            raise CommunityValidationError("素材记录格式或数量无效")
+        if any(not isinstance(item, dict) for item in assets):
+            raise CommunityValidationError("素材记录格式无效")
         return payload
 
     @staticmethod
@@ -1001,8 +1169,11 @@ class CommunityService:
             missing.append("关联项目")
         if not payload.get("sourceIds"):
             missing.append("事实来源")
-        if not payload.get("assets"):
-            missing.append("素材元数据")
+        assets = payload.get("assets")
+        if not isinstance(assets, list) or not assets:
+            missing.append("已上传素材")
+        elif any(item.get("localOnly") is not False for item in assets):
+            missing.append("服务端已验证素材")
         if missing:
             raise CommunityValidationError(f"提交前仍需补充：{'、'.join(missing)}")
 
@@ -1026,6 +1197,35 @@ class CommunityService:
             detail_json=json.dumps(detail, ensure_ascii=False, sort_keys=True),
             created_at=_now(),
         )
+
+    @staticmethod
+    def _detect_media_type(path: Path) -> str:
+        with path.open("rb") as handle:
+            header = handle.read(32)
+        if len(header) >= 12 and header[4:8] == b"ftyp":
+            return "video/mp4"
+        if header.startswith(b"\x1aE\xdf\xa3"):
+            return "video/webm"
+        if header.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if header.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        raise CommunityValidationError("无法识别或不支持该媒体文件内容")
+
+    @staticmethod
+    def _media_payload(asset: CommunityMediaAsset) -> dict[str, object]:
+        return {
+            "id": asset.id,
+            "name": asset.original_name,
+            "kind": asset.kind,
+            "mimeType": asset.detected_mime_type,
+            "sizeBytes": asset.byte_size,
+            "sha256": asset.sha256,
+            "status": asset.status,
+            "scanStatus": "signature_verified",
+            "url": f"/api/backend/api/community/media/{asset.id}",
+            "localOnly": False,
+        }
 
     def _publish_submission(self, submission: Submission) -> None:
         payload = json.loads(submission.payload_json)
@@ -1065,6 +1265,7 @@ class CommunityService:
             self._entity(submission.workspace_id, "source", source_id)
             for source_id in payload.get("sourceIds", [])
         ]
+        uploaded_assets = payload.get("assets", [])
         cover = {
             "id": f"asset-{content_id}-cover",
             "kind": "image",
@@ -1097,7 +1298,17 @@ class CommunityService:
             "viewer": {"reactions": [], "followedCreator": False, "viewed": False, "watchProgressSeconds": 0},
             "publishedAt": now,
             "body": submission.summary,
-            "media": [cover],
+            "media": [
+                {
+                    "id": item["id"],
+                    "kind": item["kind"],
+                    "url": item["url"],
+                    "alt": f"{submission.title}的投稿素材",
+                    "mimeType": item["mimeType"],
+                }
+                for item in uploaded_assets
+                if isinstance(item, dict) and item.get("localOnly") is False
+            ] or [cover],
             "claims": [],
             "sources": source_payloads,
             "relatedContentIds": [],

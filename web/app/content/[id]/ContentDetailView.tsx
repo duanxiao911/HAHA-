@@ -139,6 +139,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const reactions = new Set(content.viewer.reactions);
   const disabled = busyAction !== null;
+  const playableVideo = content.media.find((asset) => asset.kind === "video" && asset.url);
 
   async function runWrite(
     key: string,
@@ -228,7 +229,18 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
 
       <div className="productDetailGrid">
         <section className="productPanel" aria-label="媒体演示区">
-          <div className="productMediaStage" role="img" aria-label={content.cover.alt}>
+          {playableVideo ? (
+            <div className="productMediaStage productMediaStagePlayable">
+              <video
+                controls
+                preload="metadata"
+                aria-label={playableVideo.alt}
+                src={playableVideo.url}
+                onEnded={() => void actions.recordWatchHistory(content.id, content.durationSeconds ?? 0)}
+              >当前浏览器不支持视频播放。</video>
+              <small>已审核发布素材 · 服务端真实媒体源</small>
+            </div>
+          ) : <div className="productMediaStage" role="img" aria-label={content.cover.alt}>
             <span aria-hidden="true">{coverMark}</span>
             <button
               type="button"
@@ -240,13 +252,13 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
                   const progress = Math.min(10, content.durationSeconds ?? 10);
                   await actions.recordWatchHistory(content.id, progress);
                 },
-                `${apiMode ? "媒体进度已同步到文化账户" : "媒体进度已保存到本机演示"}；当前没有接入真实视频流。`,
+                `${apiMode ? "媒体进度已同步到文化账户" : "媒体进度已保存到本机演示"}；当前内容使用占位媒体。`,
               )}
             >
               ▶
             </button>
-            <small>媒体演示区 · 当前没有接入真实视频源 · {formatDuration(content.durationSeconds ?? 0)}</small>
-          </div>
+            <small>占位媒体 · 尚无已发布视频源 · {formatDuration(content.durationSeconds ?? 0)}</small>
+          </div>}
         </section>
 
         <aside className="productDetailSidebar">

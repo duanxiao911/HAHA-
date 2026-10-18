@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Column,
     ForeignKeyConstraint,
     Index,
@@ -26,11 +27,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
 from haha_community.domain import (
     CommunityComment,
     CommunityConflictError,
+    CommunityMediaAsset,
     KnowledgeAnnotation,
     Submission,
     SubmissionEvent,
@@ -156,6 +159,45 @@ community_submission_events = Table(
     ),
 )
 Index("ix_community_submission_event", community_submission_events.c.submission_id, community_submission_events.c.created_at)
+
+community_media_assets = Table(
+    "community_media_assets",
+    community_metadata,
+    Column("id", String(64), primary_key=True),
+    Column("workspace_id", String(100), nullable=False),
+    Column("submission_id", String(64), nullable=False),
+    Column("owner_user_id", String(200), nullable=False),
+    Column("original_name", String(255), nullable=False),
+    Column("kind", String(20), nullable=False),
+    Column("declared_mime_type", String(100), nullable=False),
+    Column("detected_mime_type", String(100), nullable=False),
+    Column("byte_size", Integer, nullable=False),
+    Column("sha256", String(64), nullable=False),
+    Column("storage_key", String(500), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("idempotency_key", String(200), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    ForeignKeyConstraint(
+        ["submission_id"], ["community_submissions.id"], ondelete="CASCADE"
+    ),
+    UniqueConstraint(
+        "workspace_id",
+        "owner_user_id",
+        "idempotency_key",
+        name="uq_community_media_idempotency",
+    ),
+    UniqueConstraint("storage_key", name="uq_community_media_storage_key"),
+    CheckConstraint("kind IN ('video', 'image')", name="ck_community_media_kind"),
+    CheckConstraint("byte_size > 0", name="ck_community_media_size"),
+    CheckConstraint("status = 'ready'", name="ck_community_media_status"),
+)
+Index(
+    "ix_community_media_submission",
+    community_media_assets.c.workspace_id,
+    community_media_assets.c.submission_id,
+    community_media_assets.c.status,
+)
 
 community_import_receipts = Table(
     "community_import_receipts",
@@ -477,6 +519,106 @@ class SQLAlchemyCommunityRepository:
                 values["detail_json"] = json.dumps(values["detail_json"], ensure_ascii=False, sort_keys=True)
                 result.append(SubmissionEvent(**values))
             return result
+
+    @staticmethod
+    def _media_asset(row: Any) -> CommunityMediaAsset:
+        return CommunityMediaAsset(**dict(row._mapping))
+
+    def get_media_asset(
+        self, asset_id: str, workspace_id: str = ""
+    ) -> CommunityMediaAsset | None:
+        query = select(community_media_assets).where(
+            community_media_assets.c.id == asset_id
+        )
+        if workspace_id:
+            query = query.where(community_media_assets.c.workspace_id == workspace_id)
+        with self.engine.connect() as connection:
+            row = connection.execute(query).first()
+            return self._media_asset(row) if row else None
+
+    def find_media_asset_by_idempotency(
+        self, user_id: str, workspace_id: str, idempotency_key: str
+    ) -> CommunityMediaAsset | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(community_media_assets).where(
+                    community_media_assets.c.owner_user_id == user_id,
+                    community_media_assets.c.workspace_id == workspace_id,
+                    community_media_assets.c.idempotency_key == idempotency_key,
+                )
+            ).first()
+            return self._media_asset(row) if row else None
+
+    def list_submission_media(
+        self, submission_id: str, workspace_id: str
+    ) -> list[CommunityMediaAsset]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(community_media_assets)
+                .where(
+                    community_media_assets.c.submission_id == submission_id,
+                    community_media_assets.c.workspace_id == workspace_id,
+                )
+                .order_by(community_media_assets.c.created_at)
+            )
+            return [self._media_asset(row) for row in rows]
+
+    def save_media_attachment(
+        self,
+        asset: CommunityMediaAsset,
+        submission: Submission,
+        event: SubmissionEvent,
+    ) -> None:
+        event_values = asdict(event)
+        event_values["detail_json"] = json.loads(event.detail_json)
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(community_media_assets.insert().values(**asdict(asset)))
+                self._save_submission(connection, submission)
+                self._insert_ignore(connection, community_submission_revisions, {
+                    "id": f"{submission.id}:v{submission.version}",
+                    "submission_id": submission.id,
+                    "workspace_id": submission.workspace_id,
+                    "version": submission.version,
+                    "payload_json": json.loads(submission.payload_json),
+                    "created_at": submission.updated_at,
+                }, ["submission_id", "version"])
+                connection.execute(
+                    community_submission_events.insert().values(**event_values)
+                )
+        except IntegrityError as exc:
+            raise CommunityConflictError("媒体上传发生并发冲突，请重试") from exc
+
+    def delete_media_attachment(
+        self,
+        asset_id: str,
+        submission: Submission,
+        event: SubmissionEvent,
+    ) -> None:
+        event_values = asdict(event)
+        event_values["detail_json"] = json.loads(event.detail_json)
+        with self.engine.begin() as connection:
+            removed = connection.execute(
+                delete(community_media_assets).where(
+                    community_media_assets.c.id == asset_id,
+                    community_media_assets.c.submission_id == submission.id,
+                    community_media_assets.c.workspace_id == submission.workspace_id,
+                )
+            )
+            if removed.rowcount != 1:
+                raise CommunityConflictError("媒体附件已被其他会话移除")
+            self._save_submission(connection, submission)
+            self._insert_ignore(connection, community_submission_revisions, {
+                "id": f"{submission.id}:v{submission.version}",
+                "submission_id": submission.id,
+                "workspace_id": submission.workspace_id,
+                "version": submission.version,
+                "payload_json": json.loads(submission.payload_json),
+                "created_at": submission.updated_at,
+            }, ["submission_id", "version"])
+            connection.execute(
+                community_submission_events.insert().values(**event_values)
+            )
 
     def find_import_receipt(self, user_id: str, workspace_id: str, fingerprint: str) -> dict[str, object] | None:
         with self.engine.connect() as connection:

@@ -12,8 +12,9 @@ Gate C2 把 Phase D 的浏览器本地社区闭环迁移为服务端权威的浏
 人物、来源、事实、互动、评论、知识注释、投稿版本和审核状态由 FastAPI + PostgreSQL 管理，
 并复用 C1 的账户资产、G2/G3 安全会话和 G4 多身份授权。
 
-本轮不实现真实视频对象存储、转码、CDN、AI 学习（C3）、电商交易（D）或四模块统一审核后台
-（E）。内容审核只建立 C2 投稿所需的最小权限与状态机，不能扩大解释为 Gate E 完成。
+原 C2 验收不包含二进制媒体。2026-10-18 的 Gate C 收口增量已补齐单节点真实上传、持久卷、
+发布后 HTTP Range 与浏览器播放，但仍不包含对象存储、恶意文件扫描、转码、CDN、AI 学习
+（C3）、电商交易（D）或四模块统一审核后台（E）。
 
 ## 2. Architecture Scanner 决策
 
@@ -27,7 +28,7 @@ Gate C2 把 Phase D 的浏览器本地社区闭环迁移为服务端权威的浏
 | PostgreSQL / Alembic | 当前 head `20261014_0008` | ADAPT：新增 C2 表与索引 |
 | Redis / Dramatiq | 已运行 | KEEP；C2 同步业务不新增队列 |
 | Elasticsearch / Kafka / 微服务 | 不存在且当前无容量证据 | NOT ADDED |
-| 对象存储与媒体处理 | 不存在 | DEFER，UI 不伪装上传成功 |
+| 媒体存储与播放 | 单节点文件适配器 + 独立持久卷 | ADAPT：真实上传/播放；生产级对象存储与处理继续 OPEN |
 
 `SOURCE_MISSING`：统一 SOP 引用的外部知识树、Project Architecture Scanner V2.0 与独立
 Production Readiness Gate 原文未随仓库提供。
@@ -62,6 +63,7 @@ Production Readiness Gate 原文未随仓库提供。
 7. 所有投稿状态变化写追加式审计事件；非法跳转返回冲突。
 8. 浏览器导入的 `verified/approved/published` 状态均不可信，必须降级为待核验或草稿。
 9. 幂等写和迁移重试不得产生重复记录。
+10. 只有服务端上传接口创建的 ready 素材可提交；未发布媒体对匿名读取返回 404。
 
 ## 6. 投稿状态机
 
@@ -103,6 +105,9 @@ draft / needs_revision / rejected -> archived
 - `GET|POST /api/community/submissions`
 - `GET|PATCH /api/community/submissions/{submission_id}`
 - `POST /api/community/submissions/{submission_id}/transition`
+- `PUT /api/community/submissions/{submission_id}/assets`
+- `DELETE /api/community/submissions/{submission_id}/assets/{asset_id}`
+- `GET /api/community/media/{asset_id}`（仅已发布，支持 Range）
 
 迁移：
 
@@ -115,6 +120,7 @@ draft / needs_revision / rejected -> archived
 ## 8. 数据迁移、发布与回滚
 
 - Alembic 迁移只新增 C2 表，不破坏 C1 数据。
+- `20261018_0013` 新增 `community_media_assets`，`0014` 增加 kind/size/status 检查约束；降级删除媒体元数据表前，文件卷需先备份或按保留策略处理。
 - 目录种子通过幂等服务端导入写入，所有条目标记 `demo_seed`，不会冒充权威名录。
 - 本地档案导入先预览、再确认，以 payload 指纹和旧实体 ID 去重；成功前不删除浏览器副本。
 - 应用回滚时显式切回静态演示仅用于演示站；真实账户环境不得自动回退。

@@ -6,6 +6,7 @@ from typing import Protocol
 
 from haha_community.domain import (
     CommunityComment,
+    CommunityMediaAsset,
     KnowledgeAnnotation,
     Submission,
     SubmissionEvent,
@@ -76,6 +77,32 @@ class CommunityRepository(Protocol):
     def list_submission_events(
         self, submission_id: str, workspace_id: str
     ) -> list[SubmissionEvent]: ...
+
+    def get_media_asset(
+        self, asset_id: str, workspace_id: str = ""
+    ) -> CommunityMediaAsset | None: ...
+
+    def find_media_asset_by_idempotency(
+        self, user_id: str, workspace_id: str, idempotency_key: str
+    ) -> CommunityMediaAsset | None: ...
+
+    def list_submission_media(
+        self, submission_id: str, workspace_id: str
+    ) -> list[CommunityMediaAsset]: ...
+
+    def save_media_attachment(
+        self,
+        asset: CommunityMediaAsset,
+        submission: Submission,
+        event: SubmissionEvent,
+    ) -> None: ...
+
+    def delete_media_attachment(
+        self,
+        asset_id: str,
+        submission: Submission,
+        event: SubmissionEvent,
+    ) -> None: ...
 
     def find_import_receipt(
         self, user_id: str, workspace_id: str, fingerprint: str

@@ -142,7 +142,10 @@ export function publicAccount(session: TokenPayload) {
 
 export function proxyResponse(upstream: Response): NextResponse {
   const headers = new Headers();
-  for (const name of ["content-type", "cache-control", "x-request-id"]) {
+  for (const name of [
+    "accept-ranges", "cache-control", "content-disposition", "content-length",
+    "content-range", "content-type", "etag", "x-content-type-options", "x-request-id",
+  ]) {
     const value = upstream.headers.get(name);
     if (value) headers.set(name, value);
   }

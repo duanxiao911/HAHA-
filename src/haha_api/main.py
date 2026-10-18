@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import time
 from dataclasses import asdict
+from urllib.parse import unquote
 from uuid import uuid4
 
 from fastapi import (
@@ -21,7 +23,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from redis import Redis
 
@@ -56,6 +58,7 @@ from haha_community.domain import (
     CommunityPermissionError,
     CommunityValidationError,
 )
+from haha_community.media_storage import FileSystemMediaStorage
 from haha_community.repository import CommunityRepository
 from haha_community.service import CommunityService
 from haha_core.bootstrap import build_repository, enqueue_run
@@ -299,6 +302,7 @@ def create_app(
     repository: CreatorRepository | None = None,
     community_repository: CommunityRepository | None = None,
     commerce_repository: CommerceRepository | None = None,
+    media_storage: FileSystemMediaStorage | None = None,
 ) -> FastAPI:
     validate_security_configuration()
     active_repository = repository or build_repository()
@@ -308,7 +312,9 @@ def create_app(
     active_community_repository = community_repository or build_community_repository(
         active_repository
     )
-    community_service = CommunityService(active_community_repository, user_center_service)
+    community_service = CommunityService(
+        active_community_repository, user_center_service, media_storage
+    )
     learning_service = LearningService(active_repository)  # type: ignore[arg-type]
     active_commerce_repository = commerce_repository or build_commerce_repository(
         active_repository
@@ -334,6 +340,10 @@ def create_app(
         allow_headers=(
             "Authorization",
             "Content-Type",
+            "Idempotency-Key",
+            "X-CSRF-Token",
+            "X-Upload-Filename",
+            "X-Upload-Kind",
             "Idempotency-Key",
             "Last-Event-ID",
             "X-Request-ID",
@@ -1658,6 +1668,87 @@ def create_app(
             payload.expected_version,
             payload.status,
             payload.reviewer_note,
+        )
+
+    @application.put("/api/community/submissions/{submission_id}/assets")
+    async def upload_community_submission_asset(
+        submission_id: str,
+        request: Request,
+        expected_version: int = Query(ge=1),
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=200),
+        original_name: str = Header(alias="X-Upload-Filename", min_length=1, max_length=255),
+        kind: str = Header(alias="X-Upload-Kind", pattern="^(video|image)$"),
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        role, _ = community_actor(principal)
+        declared_mime_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        maximum = 25 * 1024 * 1024 if kind == "video" else 15 * 1024 * 1024
+        declared_length = request.headers.get("content-length", "")
+        try:
+            if declared_length and int(declared_length) > maximum:
+                raise HTTPException(status_code=413, detail="素材大小超过服务端限制")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Content-Length 无效") from exc
+        staged_path = community_service.media_storage.create_staging_path()
+        digest = hashlib.sha256()
+        byte_size = 0
+        try:
+            with staged_path.open("wb") as handle:
+                async for chunk in request.stream():
+                    byte_size += len(chunk)
+                    if byte_size > maximum:
+                        raise HTTPException(status_code=413, detail="素材大小超过服务端限制")
+                    digest.update(chunk)
+                    handle.write(chunk)
+            return community_service.upload_submission_asset(
+                principal.user_id,
+                principal.workspace_id,
+                role,
+                submission_id,
+                expected_version,
+                staged_path=staged_path,
+                original_name=unquote(original_name),
+                kind=kind,
+                declared_mime_type=declared_mime_type,
+                byte_size=byte_size,
+                sha256=digest.hexdigest(),
+                idempotency_key=idempotency_key,
+            )
+        finally:
+            community_service.media_storage.discard(staged_path)
+
+    @application.delete(
+        "/api/community/submissions/{submission_id}/assets/{asset_id}"
+    )
+    def delete_community_submission_asset(
+        submission_id: str,
+        asset_id: str,
+        expected_version: int = Query(ge=1),
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        role, _ = community_actor(principal)
+        return community_service.delete_submission_asset(
+            principal.user_id,
+            principal.workspace_id,
+            role,
+            submission_id,
+            asset_id,
+            expected_version,
+        )
+
+    @application.get("/api/community/media/{asset_id}")
+    def get_published_community_media(asset_id: str) -> FileResponse:
+        asset, path = community_service.get_published_media(asset_id)
+        return FileResponse(
+            path,
+            media_type=asset.detected_mime_type,
+            filename=asset.original_name,
+            content_disposition_type="inline",
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "ETag": f'"{asset.sha256}"',
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     @application.post("/api/community/imports/preview")

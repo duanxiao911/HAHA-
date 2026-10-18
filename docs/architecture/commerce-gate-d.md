@@ -1,6 +1,6 @@
 # Gate D：非遗交易沙盒架构决策
 
-状态：IMPLEMENTED / Gate D 本地实证通过
+状态：IMPLEMENTED_NOT_SEQUENTIALLY_ACCEPTED。既有本地沙盒证据保留；Gate C 总目标解阻并签署前，不越序宣称 Gate D 已完成本轮收口。
 日期：2026-10-16
 
 ## 目标与边界

@@ -625,6 +625,29 @@ export class LocalCommunityAdapter implements CommunityAdapter {
     return clone(draft);
   }
 
+  async uploadSubmissionAsset(draftId: EntityId, file: File): Promise<SubmissionDraft> {
+    const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
+    if (!kind) throw new CommunityDataError("validation", "本地演示只登记视频或图片元数据");
+    const current = this.draftOrThrow(draftId);
+    return this.updateSubmissionDraft(draftId, {
+      assets: [...current.assets, {
+        id: newId("local-asset"),
+        name: file.name,
+        kind,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        localOnly: true,
+      }],
+    });
+  }
+
+  async deleteSubmissionAsset(draftId: EntityId, assetId: EntityId): Promise<SubmissionDraft> {
+    const current = this.draftOrThrow(draftId);
+    return this.updateSubmissionDraft(draftId, {
+      assets: current.assets.filter((asset) => asset.id !== assetId),
+    });
+  }
+
   async updateSubmissionDraft(draftId: EntityId, patch: SubmissionDraftPatch): Promise<SubmissionDraft> {
     const current = this.draftOrThrow(draftId);
     if (!["draft", "needs_revision", "rejected"].includes(current.status)) throw new CommunityDataError("conflict", "当前投稿状态不可编辑");

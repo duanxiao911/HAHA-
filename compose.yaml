@@ -37,6 +37,18 @@ services:
       postgres:
         condition: service_healthy
 
+  media-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /var/lib/haha/community-media && chown -R 65532:65532 /var/lib/haha/community-media"]
+    volumes:
+      - media-data:/var/lib/haha/community-media
+    restart: "no"
+
   api:
     build:
       context: .
@@ -53,10 +65,15 @@ services:
       HAHA_JWT_ISSUER: ${HAHA_JWT_ISSUER:-haha-auth}
       HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
       HAHA_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      HAHA_MEDIA_ROOT: /var/lib/haha/community-media
+    volumes:
+      - media-data:/var/lib/haha/community-media
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      media-init:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -107,3 +124,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  media-data:

@@ -129,3 +129,24 @@ class SubmissionEvent:
     to_status: str
     detail_json: str
     created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CommunityMediaAsset:
+    """A server-owned binary attached to a creator submission."""
+
+    id: str
+    workspace_id: str
+    submission_id: str
+    owner_user_id: str
+    original_name: str
+    kind: str
+    declared_mime_type: str
+    detected_mime_type: str
+    byte_size: int
+    sha256: str
+    storage_key: str
+    status: str
+    idempotency_key: str
+    created_at: str
+    updated_at: str

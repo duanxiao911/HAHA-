@@ -429,6 +429,8 @@
 }
 
 .productMediaStage > span { font: 900 clamp(74px, 14vw, 180px) Georgia, serif; opacity: .86; }
+.productMediaStage > video { width: 100%; height: 100%; object-fit: contain; background: #111; }
+.productMediaStagePlayable small { pointer-events: none; padding: 7px 10px; border-radius: 8px; background: rgba(17,17,17,.66); }
 .productMediaStage > button {
   position: absolute;
   display: grid;

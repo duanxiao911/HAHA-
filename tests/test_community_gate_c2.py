@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -12,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from haha_api.main import create_app
 from haha_auth.service import AuthService
 from haha_community.domain import SubmissionEvent
+from haha_community.media_storage import FileSystemMediaStorage
 from haha_community.service import CommunityService
 from haha_community.sqlalchemy_repository import SQLAlchemyCommunityRepository
 from haha_core.repository import SQLiteCreatorRepository
@@ -20,20 +22,24 @@ from haha_identity.service import IdentityService
 from haha_user_center.service import UserCenterService
 
 WORKSPACE = "community-c2"
+SMALL_MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"test-media"
 
 
 def _headers(user_id: str, workspace_id: str = WORKSPACE) -> dict[str, str]:
     return {"X-User-ID": user_id, "X-Workspace-ID": workspace_id}
 
 
-def _runtime() -> tuple[
+def _runtime(media_root: Path | None = None) -> tuple[
     SQLiteCreatorRepository,
     SQLAlchemyCommunityRepository,
     TestClient,
 ]:
     repository = SQLiteCreatorRepository(":memory:")
     community = SQLAlchemyCommunityRepository.for_sqlite_path(":memory:")
-    return repository, community, TestClient(create_app(repository, community))
+    storage = FileSystemMediaStorage(media_root) if media_root else None
+    return repository, community, TestClient(
+        create_app(repository, community, media_storage=storage)
+    )
 
 
 def _grant_controlled_role(
@@ -86,14 +92,6 @@ def _complete_draft_payload(snapshot: dict[str, object]) -> dict[str, object]:
         "personIds": [],
         "sourceIds": [sources[0]["id"]],
         "tags": ["苗绣", "工艺记录"],
-        "assets": [{
-            "id": "asset-meta-1",
-            "name": "internal-preview.mp4",
-            "kind": "video",
-            "mimeType": "video/mp4",
-            "sizeBytes": 1024,
-            "localOnly": True,
-        }],
         "aiDisclosure": "assisted",
     }
 
@@ -267,8 +265,10 @@ def test_interactions_are_server_authoritative_and_owner_scoped() -> None:
     ] == []
 
 
-def test_submission_versions_roles_audit_publish_and_notification_close_the_loop() -> None:
-    repository, community, client = _runtime()
+def test_submission_versions_roles_audit_publish_and_notification_close_the_loop(
+    tmp_path: Path,
+) -> None:
+    repository, community, client = _runtime(tmp_path / "media")
     creator_id = "creator-a"
     creator_headers = _headers(creator_id)
     snapshot = client.get("/api/community/bootstrap", headers=creator_headers).json()
@@ -297,6 +297,38 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     )
     assert updated.status_code == 200
     assert updated.json()["version"] == 2
+    upload = client.put(
+        f"/api/community/submissions/{submission_id}/assets",
+        headers={
+            **creator_headers,
+            "Content-Type": "video/mp4",
+            "Idempotency-Key": "upload-c2-real-video-1",
+            "X-Upload-Filename": "internal-preview.mp4",
+            "X-Upload-Kind": "video",
+        },
+        params={"expected_version": 2},
+        content=SMALL_MP4,
+    )
+    assert upload.status_code == 200
+    assert upload.json()["version"] == 3
+    media_asset = upload.json()["assets"][0]
+    assert media_asset["localOnly"] is False
+    assert media_asset["scanStatus"] == "signature_verified"
+    assert client.get(f"/api/community/media/{media_asset['id']}").status_code == 404
+    retry = client.put(
+        f"/api/community/submissions/{submission_id}/assets",
+        headers={
+            **creator_headers,
+            "Content-Type": "video/mp4",
+            "Idempotency-Key": "upload-c2-real-video-1",
+            "X-Upload-Filename": "internal-preview.mp4",
+            "X-Upload-Kind": "video",
+        },
+        params={"expected_version": 2},
+        content=SMALL_MP4,
+    )
+    assert retry.status_code == 200
+    assert retry.json()["version"] == 3
     stale = client.patch(
         f"/api/community/submissions/{submission_id}",
         headers=creator_headers,
@@ -307,13 +339,13 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     checking = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=creator_headers,
-        json={"expected_version": 2, "status": "checking"},
+        json={"expected_version": 3, "status": "checking"},
     )
     assert checking.status_code == 200
     submitted = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=creator_headers,
-        json={"expected_version": 3, "status": "submitted"},
+        json={"expected_version": 4, "status": "submitted"},
     )
     assert submitted.status_code == 200
 
@@ -321,7 +353,7 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     self_review = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=creator_headers,
-        json={"expected_version": 4, "status": "reviewing"},
+        json={"expected_version": 5, "status": "reviewing"},
     )
     assert self_review.status_code == 403
 
@@ -331,14 +363,14 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     reviewing = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=reviewer_headers,
-        json={"expected_version": 4, "status": "reviewing"},
+        json={"expected_version": 5, "status": "reviewing"},
     )
     assert reviewing.status_code == 200
     approved = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=reviewer_headers,
         json={
-            "expected_version": 5,
+            "expected_version": 6,
             "status": "approved",
             "reviewer_note": "来源与披露已核对。",
         },
@@ -348,7 +380,7 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     reviewer_publish = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=reviewer_headers,
-        json={"expected_version": 6, "status": "published"},
+        json={"expected_version": 7, "status": "published"},
     )
     assert reviewer_publish.status_code == 409
 
@@ -357,10 +389,19 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     published = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=_headers(admin_id),
-        json={"expected_version": 6, "status": "published"},
+        json={"expected_version": 7, "status": "published"},
     )
     assert published.status_code == 200
-    assert published.json()["version"] == 7
+    assert published.json()["version"] == 8
+    playback = client.get(f"/api/community/media/{media_asset['id']}")
+    assert playback.status_code == 200
+    assert playback.headers["content-type"].startswith("video/mp4")
+    assert playback.content == SMALL_MP4
+    partial = client.get(
+        f"/api/community/media/{media_asset['id']}", headers={"Range": "bytes=0-7"}
+    )
+    assert partial.status_code == 206
+    assert partial.content == SMALL_MP4[:8]
 
     creator_snapshot = client.get(
         "/api/community/bootstrap", headers=creator_headers
@@ -368,6 +409,15 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     assert any(
         item["id"] == f"content-{submission_id}"
         for item in creator_snapshot["contents"]
+    )
+    published_content = next(
+        item
+        for item in creator_snapshot["contents"]
+        if item["id"] == f"content-{submission_id}"
+    )
+    assert published_content["media"][0]["id"] == media_asset["id"]
+    assert published_content["media"][0]["url"] == (
+        f"/api/backend/api/community/media/{media_asset['id']}"
     )
     assert any(
         item["kind"] == "review" for item in creator_snapshot["notifications"]
@@ -378,7 +428,46 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     )
     assert audited.status_code == 200
     assert [event["to_status"] for event in audited.json()["events"]][-1] == "published"
-    assert len(community.list_submission_events(submission_id, WORKSPACE)) == 7
+    assert len(community.list_submission_events(submission_id, WORKSPACE)) == 8
+
+
+def test_media_upload_rejects_spoofed_content_and_unauthorized_users(
+    tmp_path: Path,
+) -> None:
+    repository, community, client = _runtime(tmp_path / "media-security")
+    creator_id = "media-owner"
+    creator_headers = _headers(creator_id)
+    _activate_creator(client, creator_id)
+    created = client.post(
+        "/api/community/submissions",
+        headers=creator_headers,
+        json={"submission_type": "video", "title": "安全上传"},
+    ).json()
+    endpoint = f"/api/community/submissions/{created['id']}/assets"
+    upload_headers = {
+        "Content-Type": "video/mp4",
+        "Idempotency-Key": "media-security-upload-1",
+        "X-Upload-Filename": "../../payload.mp4",
+        "X-Upload-Kind": "video",
+    }
+
+    unauthorized = client.put(
+        endpoint,
+        headers={**_headers("other-user"), **upload_headers},
+        params={"expected_version": 1},
+        content=SMALL_MP4,
+    )
+    assert unauthorized.status_code == 403
+
+    spoofed = client.put(
+        endpoint,
+        headers={**creator_headers, **upload_headers},
+        params={"expected_version": 1},
+        content=b"not-an-mp4",
+    )
+    assert spoofed.status_code == 400
+    assert community.list_submission_media(created["id"], WORKSPACE) == []
+    assert not list((tmp_path / "media-security" / ".staging").iterdir())
 
 
 def test_local_archive_import_is_idempotent_and_downgrades_trust() -> None:

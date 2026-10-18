@@ -145,6 +145,8 @@ export interface CommunityAdapter {
   ): Promise<CommunityImportResult>;
 
   createSubmissionDraft(input: CreateDraftInput): Promise<SubmissionDraft>;
+  uploadSubmissionAsset(draftId: EntityId, file: File): Promise<SubmissionDraft>;
+  deleteSubmissionAsset(draftId: EntityId, assetId: EntityId): Promise<SubmissionDraft>;
   updateSubmissionDraft(
     draftId: EntityId,
     patch: SubmissionDraftPatch,
@@ -182,6 +184,8 @@ export interface CommunityActions {
   previewLocalArchive: CommunityAdapter["previewLocalArchive"];
   importLocalArchive: CommunityAdapter["importLocalArchive"];
   createSubmissionDraft: CommunityAdapter["createSubmissionDraft"];
+  uploadSubmissionAsset: CommunityAdapter["uploadSubmissionAsset"];
+  deleteSubmissionAsset: CommunityAdapter["deleteSubmissionAsset"];
   updateSubmissionDraft: CommunityAdapter["updateSubmissionDraft"];
   transitionSubmissionDraft: CommunityAdapter["transitionSubmissionDraft"];
   deleteSubmissionDraft: CommunityAdapter["deleteSubmissionDraft"];

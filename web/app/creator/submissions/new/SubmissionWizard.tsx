@@ -24,7 +24,7 @@ const submissionTypes: { value: SubmissionType; title: string; detail: string }[
 
 const allowedTypes = new Set<SubmissionType>(submissionTypes.map((item) => item.value));
 const maxBytes: Record<SubmissionAssetDraft["kind"], number> = {
-  video: 100 * 1024 * 1024,
+  video: 25 * 1024 * 1024,
   image: 15 * 1024 * 1024,
   document: 10 * 1024 * 1024,
 };
@@ -134,20 +134,58 @@ export function SubmissionWizard({
     next(list.includes(value) ? list.filter((item) => item !== value) : [...list, value]);
   }
 
-  function selectFiles(event: ChangeEvent<HTMLInputElement>) {
+  async function selectFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
     setError("");
+    if (apiMode) {
+      setBusy(true);
+      try {
+        let draft = await persist();
+        for (const file of files) {
+          const kind = assetKind(file);
+          if (kind === "document") throw new Error("服务端投稿当前只支持 MP4、WebM、JPEG 和 PNG 素材。");
+          if (file.size > maxBytes[kind]) throw new Error(`${file.name} 超过${kind === "video" ? "25 MB" : "15 MB"}上传限制。`);
+          draft = await actions.uploadSubmissionAsset(draft.id, file);
+        }
+        setAssets(draft.assets);
+        setFeedback("素材内容已上传到服务端，并完成 MIME 签名与摘要校验。");
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "素材上传失败。 ");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const next: SubmissionAssetDraft[] = [];
     for (const file of files) {
       const kind = assetKind(file);
       if (file.size > maxBytes[kind]) {
-        setError(`${file.name} 超过${kind === "video" ? "100 MB" : kind === "image" ? "15 MB" : "10 MB"}的素材登记限制。`);
+        setError(`${file.name} 超过${kind === "video" ? "25 MB" : kind === "image" ? "15 MB" : "10 MB"}的素材登记限制。`);
         continue;
       }
       next.push({ id: crypto.randomUUID(), name: file.name, kind, mimeType: file.type || "application/octet-stream", sizeBytes: file.size, localOnly: true });
     }
     setAssets((current) => [...current, ...next].slice(0, 12));
-    event.target.value = "";
+  }
+
+  async function removeAsset(asset: SubmissionAssetDraft) {
+    if (!apiMode || asset.localOnly) {
+      setAssets((items) => items.filter((item) => item.id !== asset.id));
+      return;
+    }
+    if (!draftId) return;
+    setBusy(true);
+    setError("");
+    try {
+      const draft = await actions.deleteSubmissionAsset(draftId, asset.id);
+      setAssets(draft.assets);
+      setFeedback("服务端素材已移除。");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "素材移除失败。 ");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function persist(): Promise<SubmissionDraft> {
@@ -235,7 +273,7 @@ export function SubmissionWizard({
 
   return (
     <ProductFrame>
-      <div className="productDemoStrip" role="note"><b>{apiMode ? "内部投稿工作区" : "投稿演示模式"}</b><span>文件仅登记名称、类型和大小，不上传文件内容；{apiMode ? "草稿、版本和审核状态保存在服务端。" : "提交与审核状态仅保存在当前浏览器。"}</span></div>
+      <div className="productDemoStrip" role="note"><b>{apiMode ? "服务端投稿工作区" : "投稿演示模式"}</b><span>{apiMode ? "文件内容、摘要和投稿版本保存在服务端；仅已发布素材可公开播放。" : "文件仅登记名称、类型和大小，提交与审核状态只保存在当前浏览器。"}</span></div>
       <div className="productPageToolbar"><button className="productButtonQuiet" type="button" onClick={() => setExitDialogOpen(true)}>← 退出投稿</button><span>{currentDraft ? "已保存草稿可从创作中心继续" : "尚未创建草稿"}</span></div>
       <div className="productWizard">
         <ol className="productWizardSteps" aria-label="投稿步骤">
@@ -244,7 +282,7 @@ export function SubmissionWizard({
         <section className="productWizardPanel" aria-live="polite">
           <small className="productEyebrow">STEP {step + 1} / {steps.length}</small>
           {step === 0 ? <><h1>选择内容类型</h1><p>四类投稿共用同一套来源、披露和审核规则。</p><div className="productTypeGrid">{submissionTypes.map((item) => <button type="button" aria-pressed={type === item.value} onClick={() => setType(item.value)} key={item.value}><b>{item.title}</b><span>{item.detail}</span></button>)}</div></> : null}
-          {step === 1 ? <><h1>登记素材</h1><p>当前只保存文件元数据，尚未接入对象存储、服务端 MIME 复核和病毒扫描；选择文件不代表上传成功。</p><label className="productButtonSecondary">选择本地文件<input className="productVisuallyHidden" type="file" multiple accept="video/*,image/*,.pdf,.docx" onChange={selectFiles} /></label>{assets.length ? <ul className="productSourceList">{assets.map((asset) => <li key={asset.id}><b>{asset.name}</b><p>{asset.kind} · {asset.mimeType} · {fileSize(asset.sizeBytes)} · 仅登记元数据</p><button className="productButtonQuiet" type="button" onClick={() => setAssets((items) => items.filter((item) => item.id !== asset.id))}>移除</button></li>)}</ul> : <StateNotice compact kind="empty" title="尚未登记素材" description="可选择一个小型图片或视频文件用于登记；文件内容不会被上传或写入浏览器存储。" />}</> : null}
+          {step === 1 ? <><h1>{apiMode ? "上传素材" : "登记素材"}</h1><p>{apiMode ? "支持 MP4、WebM、JPEG、PNG；视频最大 25 MB、图片最大 15 MB。服务端复核 MIME 签名并保存 SHA-256 摘要，病毒扫描与转码属于后续生产门禁。" : "本地演示只保存文件元数据，不上传文件内容。"}</p><label className="productButtonSecondary">{busy ? "处理中…" : "选择本地文件"}<input className="productVisuallyHidden" type="file" multiple disabled={busy} accept="video/mp4,video/webm,image/jpeg,image/png" onChange={(event) => void selectFiles(event)} /></label>{assets.length ? <ul className="productSourceList">{assets.map((asset) => <li key={asset.id}><b>{asset.name}</b><p>{asset.kind} · {asset.mimeType} · {fileSize(asset.sizeBytes)} · {asset.localOnly ? "仅登记元数据" : "服务端已上传并校验"}</p><button className="productButtonQuiet" type="button" disabled={busy} onClick={() => void removeAsset(asset)}>移除</button></li>)}</ul> : <StateNotice compact kind="empty" title={apiMode ? "尚未上传素材" : "尚未登记素材"} description={apiMode ? "选择一个小型图片或视频文件；上传成功后才能提交审核。" : "可选择一个图片或视频文件用于本地元数据登记。"} />}</> : null}
           {step === 2 ? <><h1>填写基础信息</h1><p>标题和简介将同时用于预览与事实检查。</p><div className="productForm"><label>标题<input value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} placeholder="准确描述内容，不使用夸张数字" /></label><label>内容简介<textarea value={summary} maxLength={4000} onChange={(event) => setSummary(event.target.value)} placeholder="说明人物、地方、材料、过程和内容边界" /></label><div className="productFormGrid"><label>内容分类<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">请选择</option>{Array.from(new Map(snapshot.contents.map((item) => [item.categoryId, item.categoryLabel]))).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label><label>地区<select value={regionId} onChange={(event) => setRegionId(event.target.value)}><option value="">请选择</option>{snapshot.regions.map((region) => <option value={region.id} key={region.id}>{region.name}</option>)}</select></label></div><label>标签<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="用中文逗号分隔，例如：苗绣，人物故事" /></label></div></> : null}
           {step === 3 ? <><h1>关联项目、人物与来源</h1><p>来源是事实层的一部分，不能在发布时静默丢失。</p><div className="productForm"><fieldset><legend>非遗项目（至少一项）</legend>{snapshot.projects.map((project) => <label key={project.id}><input type="checkbox" checked={projectIds.includes(project.id)} onChange={() => toggle(projectIds, project.id, setProjectIds)} /> {project.name}</label>)}</fieldset><fieldset><legend>相关人物</legend>{snapshot.people.map((person) => <label key={person.id}><input type="checkbox" checked={personIds.includes(person.id)} onChange={() => toggle(personIds, person.id, setPersonIds)} /> {person.displayName}</label>)}</fieldset><fieldset><legend>事实来源（至少一条）</legend>{snapshot.sources.map((source) => <label key={source.id}><input type="checkbox" checked={sourceIds.includes(source.id)} onChange={() => toggle(sourceIds, source.id, setSourceIds)} /> {source.title} · {source.publisher}</label>)}</fieldset></div></> : null}
           {step === 4 ? <><h1>AI 披露与自动检查</h1><p>同一事实层可以被多个平台版本复用，但不能因改写而产生新事实。</p><div className="productTypeGrid">{(["none", "assisted", "generated"] as const).map((value) => <button type="button" aria-pressed={aiDisclosure === value} onClick={() => setAiDisclosure(value)} key={value}><b>{value === "none" ? "未使用 AI" : value === "assisted" ? "AI 辅助" : "AI 主要生成"}</b><span>{value === "none" ? "完全人工整理" : value === "assisted" ? "人工主导，AI 协助表达" : "需重点复核事实与归因"}</span></button>)}</div><ul className="productClaimList">{checks.map((check) => <li key={check.label}><b>{check.pass ? "✓" : "○"} {check.label}</b><small>{check.pass ? " 已完成" : " 仍需补充"}</small></li>)}</ul><div className="productInlineAlert">这是一组前端完整性检查，不等于后端 Verifier、文件安全扫描或人工文化审核。</div></> : null}

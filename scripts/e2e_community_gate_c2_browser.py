@@ -62,6 +62,16 @@ def api(method: str, path: str, payload: dict[str, object] | None = None) -> int
         return exc.code
 
 
+def api_json(path: str) -> dict[str, Any]:
+    call = urllib.request.Request(
+        f"{API_URL}{path}",
+        headers={"X-User-ID": USER_ID, "X-Workspace-ID": WORKSPACE},
+        method="GET",
+    )
+    with urllib.request.urlopen(call, timeout=15) as response:
+        return json.loads(response.read())
+
+
 def prepare_identity() -> None:
     if api("GET", "/api/community/bootstrap") != 200:
         raise RuntimeError("Community bootstrap failed before browser test")
@@ -216,6 +226,32 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["bookmark_survives_reload"] = active == "true"
         await screenshot("content-api-state.png")
 
+        published_snapshot = api_json("/api/community/bootstrap")
+        published_candidates = [
+            item for item in published_snapshot.get("contents", [])
+            if item.get("provenance") == "creator_submission"
+            and any(asset.get("kind") == "video" and asset.get("url") for asset in item.get("media", []))
+        ]
+        published_media_content = max(
+            published_candidates, key=lambda item: str(item.get("updatedAt", "")), default=None
+        )
+        assertions["published_video_discoverable"] = published_media_content is not None
+        if published_media_content:
+            await navigate(
+                f"/content/{urllib.parse.quote(str(published_media_content['id']))}",
+                "已审核发布素材",
+            )
+            playback_started = await evaluate("""(async () => {
+              const video=document.querySelector('video'); if(!video)return false;
+              video.muted=true; await video.play();
+              await new Promise((resolve)=>setTimeout(resolve,350));
+              return video.currentTime>0 || video.ended;
+            })()""")
+            assertions["published_video_browser_playback"] = bool(playback_started)
+            await screenshot("published-video-playback.png")
+        else:
+            assertions["published_video_browser_playback"] = False
+
         archive_marker = f"browser-migration-{int(time.time() * 1000)}"
         local_archive = {
             "schemaVersion": 1,
@@ -291,15 +327,15 @@ async def run(websocket_url: str) -> dict[str, Any]:
 
         await navigate("/creator/submissions/new?type=article", "选择内容类型")
         await click_ready("保存并继续")
-        await wait_for("登记素材")
-        assertions["asset_metadata_selected"] = bool(await evaluate("""(() => {
+        await wait_for("上传素材")
+        assertions["asset_binary_uploaded"] = bool(await evaluate("""(() => {
           const input=document.querySelector('input[type=file]'); if(!input)return false;
           const transfer=new DataTransfer();
-          transfer.items.add(new File(['c2'], 'c2-browser.png', {type:'image/png'}));
+          transfer.items.add(new File([new Uint8Array([137,80,78,71,13,10,26,10,0,0,0,0])], 'c2-browser.png', {type:'image/png'}));
           Object.defineProperty(input,'files',{value:transfer.files,configurable:true});
           input.dispatchEvent(new Event('change',{bubbles:true})); return true;
         })()"""))
-        await wait_for("c2-browser.png")
+        await wait_for("服务端已上传并校验")
         await click_ready("保存并继续")
         await wait_for("填写基础信息")
         fields = await evaluate("""(() => {

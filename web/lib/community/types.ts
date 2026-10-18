@@ -229,7 +229,11 @@ export interface SubmissionAssetDraft {
   kind: "image" | "video" | "document";
   mimeType: string;
   sizeBytes: number;
-  localOnly: true;
+  localOnly: boolean;
+  status?: "ready";
+  scanStatus?: "signature_verified";
+  sha256?: string;
+  url?: string;
 }
 
 export interface SubmissionDraft extends DemoEntity {

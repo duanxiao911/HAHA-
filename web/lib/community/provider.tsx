@@ -53,6 +53,8 @@ export function CommunityProvider({ children }: { children: ReactNode }) {
     previewLocalArchive: (localState) => adapter.previewLocalArchive(localState),
     importLocalArchive: (localState) => adapter.importLocalArchive(localState),
     createSubmissionDraft: (input) => adapter.createSubmissionDraft(input),
+    uploadSubmissionAsset: (draftId, file) => adapter.uploadSubmissionAsset(draftId, file),
+    deleteSubmissionAsset: (draftId, assetId) => adapter.deleteSubmissionAsset(draftId, assetId),
     updateSubmissionDraft: (draftId, patch) => adapter.updateSubmissionDraft(draftId, patch),
     transitionSubmissionDraft: (draftId, nextStatus, reviewerNote) => adapter.transitionSubmissionDraft(draftId, nextStatus, reviewerNote),
     deleteSubmissionDraft: (draftId) => adapter.deleteSubmissionDraft(draftId),

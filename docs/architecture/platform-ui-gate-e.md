@@ -1,10 +1,12 @@
 # Gate E：四大板块 UI 集成
 
+顺序状态（2026-10-18）：`IMPLEMENTED_NOT_SEQUENTIALLY_ACCEPTED`。既有 UI 集成与证据保留；Gate C、D 依次收口前，不越序签署 Gate E。
+
 ## 目标与边界
 
 Gate E 统一视频社区、非遗电商、AI 学习与用户中心的全局入口、账户身份入口和响应式导航。它复用 A–D 已有的统一账户、权限与服务端事实源，不新增数据库表、迁移、账户体系或平行前端技术栈。
 
-本 Gate 不把正式媒体链路、真实支付、正式文化事实认证或 AI 非遗老师解释为已完成。AI 非遗老师继续显示 `BLOCKED`；电商继续显示 `INTERNAL SANDBOX`。
+本 Gate 不把生产级媒体处理、真实支付、正式文化事实认证或 AI 非遗老师解释为已完成。AI 非遗老师继续显示 `BLOCKED`；电商继续显示 `INTERNAL SANDBOX`。
 
 ## 信息架构决策
 

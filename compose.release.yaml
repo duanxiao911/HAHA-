@@ -39,6 +39,15 @@ services:
         condition: service_healthy
     restart: "no"
 
+  media-init:
+    image: ${HAHA_API_IMAGE:?set immutable HAHA_API_IMAGE digest}
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /var/lib/haha/community-media && chown -R 65532:65532 /var/lib/haha/community-media"]
+    volumes:
+      - release-media-data:/var/lib/haha/community-media
+    networks: [data]
+    restart: "no"
+
   api:
     image: ${HAHA_API_IMAGE:?set immutable HAHA_API_IMAGE digest}
     environment:
@@ -52,6 +61,9 @@ services:
       HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
       HAHA_ALLOWED_ORIGINS: ${HAHA_ALLOWED_ORIGINS:?set HAHA_ALLOWED_ORIGINS}
       HAHA_RELEASE_ID: ${HAHA_RELEASE_ID:?set HAHA_RELEASE_ID}
+      HAHA_MEDIA_ROOT: /var/lib/haha/community-media
+    volumes:
+      - release-media-data:/var/lib/haha/community-media
     ports:
       - "${HAHA_API_BIND:?set HAHA_API_BIND}:8000"
     networks: [edge, data]
@@ -62,6 +74,8 @@ services:
       retries: 12
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      media-init:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -112,3 +126,4 @@ networks:
 volumes:
   release-postgres-data:
   release-redis-data:
+  release-media-data:

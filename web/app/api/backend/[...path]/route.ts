@@ -21,10 +21,21 @@ async function handle(request: NextRequest, context: RouteContext) {
   if (tokenEndpoints.has(`/${path.map(encodeURIComponent).join("/")}`)) {
     return NextResponse.json({ detail: "令牌端点只能通过安全会话接口访问" }, { status: 404 });
   }
+  const isMediaUpload = request.method === "PUT"
+    && path.length === 5
+    && path[0] === "api"
+    && path[1] === "community"
+    && path[2] === "submissions"
+    && path[4] === "assets";
+  const bodyLimit = isMediaUpload ? 25 * 1024 * 1024 : 1024 * 1024;
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (declaredLength > bodyLimit) {
+    return NextResponse.json({ detail: `BFF 请求体超过 ${isMediaUpload ? "25 MiB" : "1 MiB"} 限制` }, { status: 413 });
+  }
   const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
   const contentLength = Number(request.headers.get("content-length") ?? body?.byteLength ?? 0);
-  if (contentLength > 1024 * 1024) {
-    return NextResponse.json({ detail: "BFF 请求体超过 1 MiB 限制" }, { status: 413 });
+  if (contentLength > bodyLimit) {
+    return NextResponse.json({ detail: `BFF 请求体超过 ${isMediaUpload ? "25 MiB" : "1 MiB"} 限制` }, { status: 413 });
   }
   let accessToken = request.cookies.get(ACCESS_COOKIE)?.value ?? "";
   const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value ?? "";
@@ -35,7 +46,7 @@ async function handle(request: NextRequest, context: RouteContext) {
   }
   const call = (token: string) => {
     const headers = new Headers();
-    for (const name of ["content-type", "idempotency-key", "last-event-id", "x-request-id"]) {
+    for (const name of ["content-type", "idempotency-key", "last-event-id", "range", "x-request-id", "x-upload-filename", "x-upload-kind"]) {
       const value = request.headers.get(name);
       if (value) headers.set(name, value);
     }

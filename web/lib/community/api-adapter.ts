@@ -402,13 +402,56 @@ export class ApiCommunityAdapter implements CommunityAdapter {
     }
   }
 
-  async updateSubmissionDraft(draftId: EntityId, patch: SubmissionDraftPatch): Promise<SubmissionDraft> {
+  async uploadSubmissionAsset(draftId: EntityId, file: File): Promise<SubmissionDraft> {
+    const current = this.snapshot.drafts.find((item) => item.id === draftId);
+    if (!current) throw new CommunityDataError("not_found", "投稿草稿不存在");
+    const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : "";
+    if (!kind) throw new CommunityDataError("validation", "只支持视频或图片素材");
+    try {
+      const draft = await communityApiRequest<SubmissionDraft>(
+        `/api/community/submissions/${encodeURIComponent(draftId)}/assets?expected_version=${current.version}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": file.type,
+            "X-Upload-Filename": encodeURIComponent(file.name),
+            "X-Upload-Kind": kind,
+          },
+          body: file,
+        },
+        crypto.randomUUID(),
+      );
+      await this.refresh();
+      return draft;
+    } catch (error) {
+      throw translateError(error);
+    }
+  }
+
+  async deleteSubmissionAsset(draftId: EntityId, assetId: EntityId): Promise<SubmissionDraft> {
     const current = this.snapshot.drafts.find((item) => item.id === draftId);
     if (!current) throw new CommunityDataError("not_found", "投稿草稿不存在");
     try {
       const draft = await communityApiRequest<SubmissionDraft>(
+        `/api/community/submissions/${encodeURIComponent(draftId)}/assets/${encodeURIComponent(assetId)}?expected_version=${current.version}`,
+        { method: "DELETE" },
+      );
+      await this.refresh();
+      return draft;
+    } catch (error) {
+      throw translateError(error);
+    }
+  }
+
+  async updateSubmissionDraft(draftId: EntityId, patch: SubmissionDraftPatch): Promise<SubmissionDraft> {
+    const current = this.snapshot.drafts.find((item) => item.id === draftId);
+    if (!current) throw new CommunityDataError("not_found", "投稿草稿不存在");
+    try {
+      const serverPatch = { ...patch };
+      delete serverPatch.assets;
+      const draft = await communityApiRequest<SubmissionDraft>(
         `/api/community/submissions/${encodeURIComponent(draftId)}`,
-        { method: "PATCH", body: JSON.stringify({ expected_version: current.version, ...patch }) },
+        { method: "PATCH", body: JSON.stringify({ expected_version: current.version, ...serverPatch }) },
       );
       await this.refresh();
       return draft;
