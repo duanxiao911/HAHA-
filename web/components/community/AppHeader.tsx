@@ -129,9 +129,10 @@ export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
         </button> : <Link className="productLoginAction" href="/login">登录</Link>}
         {identityMenuOpen ? <div className="productIdentityPopover" id="product-identity-menu" role="menu">
           <div className="productIdentityPopoverHead"><small>当前账户</small><strong>{displayName}</strong></div>
-          {activeRoles.map((item) => <button type="button" role="menuitem" className={item.role === activeRole ? "current" : ""} disabled={item.role === activeRole || Boolean(switchingRole)} onClick={() => void changeRole(item.role)} key={item.id}><span>{item.label}</span><em>{item.role === activeRole ? "当前" : switchingRole === item.role ? "切换中…" : "切换"}</em></button>)}
+          <div className="productIdentityPopoverHint" role="presentation"><strong>切换已开通身份</strong><span>只改变当前操作视角，不会新增权限。</span></div>
+          {activeRoles.map((item) => <button type="button" role="menuitem" data-role={item.role} className={item.role === activeRole ? "current" : ""} disabled={item.role === activeRole || Boolean(switchingRole)} onClick={() => void changeRole(item.role)} key={item.id}><span>{item.label}</span><em>{item.role === activeRole ? "当前" : switchingRole === item.role ? "切换中…" : "切换"}</em></button>)}
           {identityError ? <p role="alert">{identityError}</p> : null}
-          <Link role="menuitem" href={DEMO_MODE ? "/profile/demo-user" : "/identity"} onClick={() => setIdentityMenuOpen(false)}>{DEMO_MODE ? "查看本地演示档案" : "管理身份与账户"}</Link>
+          <Link role="menuitem" href={DEMO_MODE ? "/profile/demo-user" : "/identity?manage=roles"} onClick={() => setIdentityMenuOpen(false)}>{DEMO_MODE ? "查看本地演示档案" : "管理与开通身份"}</Link>
         </div> : null}
       </div>
     </nav>

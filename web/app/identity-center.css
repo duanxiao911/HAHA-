@@ -9,7 +9,9 @@
 .identityProfileTrigger small,.identityProfileTrigger em,.identityVisibility { color: var(--product-ink-soft); font-size: 10px; font-style: normal; }
 .identityProfileTrigger strong { font-size: 20px; }
 .identityAvatar { display: grid; width: 48px; height: 48px; place-items: center; border-radius: 50%; background: var(--product-brand); color: #fff; font-size: 19px; font-weight: 900; }
-.identityVisibility { display: block; margin: 7px 4px 0; text-align: right; }
+.identityProfileUtilities { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 4px 0; }
+.identityVisibility { display: block; }
+.identityProfileUtilities button { padding: 0; border: 0; background: transparent; color: var(--product-brand); font-size: 10px; font-weight: 800; cursor: pointer; }
 .identityRoleMenu { position: absolute; z-index: 90; top: calc(100% + 8px); right: 0; display: grid; width: min(300px,calc(100vw - 44px)); gap: 5px; padding: 10px; border: 1px solid var(--product-line); border-radius: 14px; background: var(--product-surface); box-shadow: 0 20px 55px rgba(45,34,25,.18); }
 .identityRoleMenu>small { padding: 5px 7px; color: var(--product-ink-soft); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
 .identityRoleMenu button { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 0 11px; border: 0; border-radius: 9px; background: transparent; color: var(--product-ink); cursor: pointer; }
@@ -80,6 +82,9 @@
 .identityRoleGrid p,.identityActionGrid p,.identityWorkspaceGrid p,.identityTaskList p { margin: 0; color: var(--product-ink-soft); font-size: 12px; line-height: 1.6; }
 .identityRoleGrid article>button { min-height: 40px; padding: 0 14px; border: 1px solid var(--product-line); border-radius: 9px; background: var(--product-surface); cursor: pointer; }
 .identityRoleGrid article>b { color: var(--product-brand); font-size: 11px; }
+.identityManagerNotice { padding: 14px 16px; border: 1px solid #e6c98c; border-radius: 11px; background: #fbf2df; color: var(--product-amber); }
+.identityManagerNotice p { margin-top: 4px; }
+.identityRoleSectionHeading { margin-top: 8px !important; padding-top: 0 !important; border-top: 0 !important; }
 .identityActionGrid,.identityWorkspaceGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .identityActionGrid article,.identityWorkspaceGrid article { display: grid; align-content: start; gap: 10px; min-height: 160px; padding: 18px; border: 1px solid var(--product-line); border-radius: 13px; background: var(--product-muted); }
 .identityActionGrid article>:last-child,.identityWorkspaceGrid article>:last-child { align-self: end; margin-top: auto; width: fit-content; }

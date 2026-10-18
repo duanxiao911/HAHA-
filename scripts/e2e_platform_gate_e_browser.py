@@ -99,6 +99,16 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 await asyncio.sleep(0.25)
             raise TimeoutError(f"Timed out waiting for {text!r}: {body[-1200:]}")
 
+        async def wait_for_value(expression: str, expected: Any, timeout: float = 30) -> Any:
+            deadline = time.monotonic() + timeout
+            value = None
+            while time.monotonic() < deadline:
+                value = await evaluate(expression)
+                if value == expected:
+                    return value
+                await asyncio.sleep(0.25)
+            raise TimeoutError(f"Timed out waiting for {expected!r}; last value was {value!r}")
+
         async def click_selector(selector: str) -> None:
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
@@ -126,7 +136,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
         for width in (390, 768, 1440):
             await command("Emulation.setDeviceMetricsOverride", {"width": width, "height": 920, "deviceScaleFactor": 1, "mobile": width <= 768})
             body = await navigate("/", "四大板块，一处进入")
-            body = await wait_for("当前以“学习者”身份进入")
+            body = await wait_for("当前使用“学习者”视角")
             metrics = await evaluate("""(() => ({
               viewport: innerWidth,
               scrollWidth: document.documentElement.scrollWidth,
@@ -136,13 +146,14 @@ async def run(websocket_url: str) -> dict[str, Any]:
               platformCards: document.querySelectorAll('.platformModuleCard').length
             }))()""")
             checks = {
-                "loaded_real_summary": "当前以“学习者”身份进入" in body,
+                "loaded_real_summary": "当前使用“学习者”视角" in body,
                 "no_overflow": metrics["scrollWidth"] <= metrics["viewport"] + 1,
                 "desktop_four_modules": metrics["desktopModules"] == ["视频社区", "非遗电商", "AI 学习", "用户中心"],
                 "neutral_home_has_no_active_module": metrics["activeDesktop"] == 0,
                 "four_platform_cards": metrics["platformCards"] == 4,
                 "mobile_five_entries": width > 768 or metrics["mobileModules"] == ["首页", "社区", "学习", "电商", "我的"],
                 "honest_boundaries": "AI 非遗老师 · BLOCKED" in body and "INTERNAL SANDBOX" in body,
+                "identity_conversion_only": "开通或申请是权限变化" in body and not await evaluate("Boolean(document.querySelector('[data-testid=identity-conversion-guide] button'))"),
             }
             if not all(checks.values()):
                 raise RuntimeError({"viewport": width, "checks": checks, "metrics": metrics})
@@ -177,22 +188,46 @@ async def run(websocket_url: str) -> dict[str, Any]:
         active_commerce = await evaluate("document.querySelector('.productPrimaryNav a[aria-current=\"page\"]')?.textContent.trim()")
         assertions["commerce_nav_active"] = active_commerce == "非遗电商"
 
-        await navigate("/identity", "文化账户")
+        await navigate("/identity?manage=roles", "切换与开通是两件事")
         identity_state = await evaluate("""(() => ({
           active: document.querySelector('.productPrimaryNav a[aria-current="page"]')?.textContent.trim(),
           duplicateCards: document.querySelectorAll('.platformModuleCard').length,
-          currentRole: document.querySelector('.productIdentityCopy strong')?.textContent.trim()
+          currentRole: document.querySelector('.productIdentityCopy strong')?.textContent.trim(),
+          managerOpen: Boolean(document.querySelector('[data-testid="identity-manager"]')),
+          separatesPermissions: document.querySelector('[data-testid="identity-manager"]')?.innerText.includes('切换与开通是两件事')
         }))()""")
         assertions["identity_is_distinct_not_duplicate_home"] = identity_state["active"] == "用户中心" and identity_state["duplicateCards"] == 0
         assertions["header_displays_active_role"] = identity_state["currentRole"] == "学习者"
+        assertions["identity_center_is_primary_management_entry"] = identity_state["managerOpen"] and identity_state["separatesPermissions"]
+        await shot("identity-manager.png")
+
+        await click_selector('.identityActionGrid button[data-role="creator"]')
+        confirmation = await evaluate("""(() => ({
+          open: Boolean(document.querySelector('[role="alertdialog"]')),
+          text: document.querySelector('[role="alertdialog"]')?.innerText || '',
+          managerStillOpen: Boolean(document.querySelector('[data-testid="identity-manager"]'))
+        }))()""")
+        assertions["self_activation_requires_confirmation"] = confirmation["open"] and "确认开通" in confirmation["text"] and confirmation["managerStillOpen"]
+        await shot("identity-activation-confirm.png")
+        await click_selector('.productConfirmActions .productButtonSecondary')
+        await click_selector('.identityDialogClose')
 
         await click_selector(".productIdentityTrigger")
         menu_state = await evaluate("""(() => ({
           open: document.querySelector('.productIdentityTrigger')?.getAttribute('aria-expanded'),
-          labels: [...document.querySelectorAll('.productIdentityPopover button')].map(node => node.textContent.trim())
+          labels: [...document.querySelectorAll('.productIdentityPopover button')].map(node => node.textContent.trim()),
+          hint: document.querySelector('.productIdentityPopoverHint')?.innerText || '',
+          manageHref: document.querySelector('.productIdentityPopover a')?.getAttribute('href')
         }))()""")
-        assertions["identity_menu_discoverable"] = menu_state["open"] == "true" and any("浏览者" in label for label in menu_state["labels"])
+        assertions["identity_menu_discoverable"] = menu_state["open"] == "true" and any("浏览者" in label for label in menu_state["labels"]) and "不会新增权限" in menu_state["hint"] and menu_state["manageHref"] == "/identity?manage=roles"
         await shot("identity-menu.png")
+
+        await click_selector('.productIdentityPopover button[data-role="viewer"]')
+        await wait_for_value("document.querySelector('.productIdentityCopy strong')?.textContent.trim()", "浏览者")
+        await click_selector(".productIdentityTrigger")
+        await click_selector('.productIdentityPopover button[data-role="learner"]')
+        await wait_for_value("document.querySelector('.productIdentityCopy strong')?.textContent.trim()", "学习者")
+        assertions["quick_switch_round_trip_is_server_authoritative"] = True
 
         browser_errors = [item for item in events if item.get("method") in {"Runtime.exceptionThrown", "Log.entryAdded"}]
         assertions["no_browser_exceptions"] = not browser_errors

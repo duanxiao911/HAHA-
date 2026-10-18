@@ -23,6 +23,12 @@ const roleLabels: Record<BusinessRole, string> = {
   viewer: "浏览者", buyer: "买家", learner: "学习者", creator: "创作者",
   contributor: "知识贡献者", seller: "卖家", reviewer: "审核员", admin: "管理员",
 };
+const roleConversionCopy: Partial<Record<BusinessRole, string>> = {
+  learner: "开通学习者，保存课程进度、测验记录与成长成就。",
+  creator: "开通创作者，进入脚本创作与内容投稿工作台。",
+  contributor: "申请知识贡献者，提交来源、纠错与文化资料。",
+  seller: "申请卖家，管理商品、库存与订单。",
+};
 
 type ModuleCardProps = {
   href: string;
@@ -78,6 +84,9 @@ export function PlatformHome() {
   const signedOut = AUTH_REQUIRED && authState === "anonymous";
   const loading = canLoadPersonal && !snapshot && !error;
   const activeRole = snapshot?.profile.active_role;
+  const selfActivateRole = snapshot?.available_actions.self_activate[0];
+  const applicationRole = snapshot?.available_actions.apply[0];
+  const conversionRole = selfActivateRole ?? applicationRole;
   const availableCapability = workbench?.capabilities.find((item) => item.status === "available" && item.href);
   const resumeItems = snapshot ? [
     snapshot.today.continue_watching ? {
@@ -100,7 +109,7 @@ export function PlatformHome() {
         <small>HAHA · 文化今日</small>
         <h1>{snapshot ? `${snapshot.account.display_name}，继续你的非遗探索` : "从今天开始，认识仍在发生的非遗"}</h1>
         <p>{snapshot
-          ? `一个账户连接观看、学习、创作与交易。当前以“${activeRole ? roleLabels[activeRole] : "读取中"}”身份进入，切换身份不会改变已有授权。`
+          ? `一个账户连接观看、学习、创作与交易。当前使用“${activeRole ? roleLabels[activeRole] : "读取中"}”视角，首页会据此推荐可继续的任务。`
           : DEMO_MODE
             ? "当前为本地演示，仅展示模块结构与本机社区数据；真实账户摘要只在 API 模式从服务端读取。"
             : "从视频、学习、创作与可信交易入口进入；登录后可以跨设备恢复服务端保存的进度与任务。"}</p>
@@ -122,6 +131,11 @@ export function PlatformHome() {
       </aside>
     </section>
 
+    {snapshot && conversionRole ? <section className="platformIdentityGuide" data-testid="identity-conversion-guide">
+      <div><small>身份成长建议</small><h2>{selfActivateRole ? `想使用${roleLabels[conversionRole]}能力？` : `想申请${roleLabels[conversionRole]}身份？`}</h2><p>{roleConversionCopy[conversionRole] ?? "前往用户中心查看身份用途、授权状态与申请要求。"} 开通或申请是权限变化，与快捷切换已开通身份不同。</p></div>
+      <Link className="productButtonSecondary" href="/identity?manage=roles">{selfActivateRole ? `了解并开通${roleLabels[conversionRole]}` : `查看${roleLabels[conversionRole]}申请`}</Link>
+    </section> : null}
+
     {error ? <StateNotice kind="error" title="个人摘要暂未加载" description={error} actionLabel="重新读取" onAction={() => void load()} compact /> : null}
 
     <section className="platformModuleSection" aria-labelledby="platform-modules-title">
@@ -130,7 +144,7 @@ export function PlatformHome() {
         <ModuleCard href="/community" icon="▶" title="视频社区" description="发现内容、观看互动、加入想学清单，并进入创作者投稿。" status="可使用" action="进入社区" />
         <ModuleCard href="/commerce" icon="袋" title="非遗电商" description="浏览商品、管理购物车与订单，或进入卖家经营工作台。" status="内部沙盒" statusTone="sandbox" action="进入电商" className="is-commerce" />
         <ModuleCard href="/learning" icon="学" title="AI 学习" description="学习路径、知识卡、测验、每日任务与成长记录。" status="学习可用 · AI 老师未接通" statusTone="bounded" action="进入学习" className="is-learning" />
-        <ModuleCard href="/identity" icon="人" title="用户中心" description="身份切换、文化资产、通知任务、成长汇总与安全设置。" status={activeRole ? roleLabels[activeRole] : "统一账户"} action="管理账户" />
+        <ModuleCard href="/identity" icon="人" title="用户中心" description="统一账户、文化资产、成长汇总、身份权限与安全设置。" status={activeRole ? `当前：${roleLabels[activeRole]}` : "统一账户"} action="管理账户" />
       </div>
     </section>
 

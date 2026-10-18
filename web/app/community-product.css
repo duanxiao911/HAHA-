@@ -193,6 +193,9 @@
 .productIdentityPopoverHead small,.productIdentityPopoverHead strong { display: block; }
 .productIdentityPopoverHead small { color: var(--product-ink-soft); font-size: 9px; }
 .productIdentityPopoverHead strong { margin-top: 3px; font-size: 13px; }
+.productIdentityPopoverHint { display: grid; gap: 2px; padding: 8px 9px 5px; }
+.productIdentityPopoverHint strong { font-size: 10px; }
+.productIdentityPopoverHint span { color: var(--product-ink-soft); font-size: 9px; line-height: 1.45; }
 .productIdentityPopover > button,.productIdentityPopover > a { display: flex; min-height: 40px; align-items: center; justify-content: space-between; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--product-ink); font-size: 12px; text-decoration: none; cursor: pointer; }
 .productIdentityPopover > button:hover,.productIdentityPopover > a:hover { background: var(--product-brand-soft); color: var(--product-brand); }
 .productIdentityPopover > button.current { background: var(--product-muted); color: var(--product-ink-soft); }

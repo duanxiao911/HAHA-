@@ -19,6 +19,8 @@ test("desktop shell exposes exactly the four governed platform modules", () => {
   assert.doesNotMatch(primaryBlock, /href: "\/"/);
   assert.match(source, /当前身份/);
   assert.match(source, /switchIdentityContext/);
+  assert.match(source, /切换已开通身份/);
+  assert.match(source, /管理与开通身份/);
 });
 
 test("mobile shell uses home plus the four modules and no duplicate creator tab", () => {
@@ -44,7 +46,19 @@ test("root is a neutral platform home and community reuses the shared shell", ()
   assert.match(home, /FOUR CORE SPACES/);
   assert.match(home, /AI 非遗老师 · BLOCKED/);
   assert.match(home, /非遗电商 · INTERNAL SANDBOX/);
+  assert.match(home, /identity-conversion-guide/);
+  assert.match(home, /开通或申请是权限变化/);
+  assert.doesNotMatch(home, /switchIdentityContext/);
   assert.match(community, /<ProductFrame className="communityV2"/);
   assert.doesNotMatch(community, /className="globalHeader"/);
   assert.doesNotMatch(community, /href="\/creator">AI 学习/);
+});
+
+test("identity management separates context switching from permission changes", () => {
+  const source = read("app/identity/IdentityCenter.tsx");
+  assert.match(source, /身份与权限/);
+  assert.match(source, /切换与开通是两件事/);
+  assert.match(source, /searchParams\.get\("manage"\) === "roles"/);
+  assert.match(source, /目前不能自行移除/);
+  assert.match(source, /confirmLabel: "确认开通"/);
 });

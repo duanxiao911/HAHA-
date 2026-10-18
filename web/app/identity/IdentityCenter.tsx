@@ -46,6 +46,7 @@ type ConfirmationRequest = {
   message: string;
   reload?: boolean;
   onSuccess?: () => void;
+  tone?: "danger" | "primary";
 };
 
 const centerViews = new Set<CenterView>(["today", "archive", "workbench", "tasks", "settings"]);
@@ -93,6 +94,8 @@ export function IdentityCenter() {
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const requestedView = searchParams.get("tab");
+  const roleManagerRequested = searchParams.get("manage") === "roles";
+  const identityManagerVisible = identityManagerOpen || roleManagerRequested;
   const routeView = requestedView && centerViews.has(requestedView as CenterView)
     ? requestedView as CenterView
     : "today";
@@ -162,9 +165,26 @@ export function IdentityCenter() {
 
   function selectView(nextView: CenterView) {
     const params = new URLSearchParams(searchParams.toString());
+    params.delete("manage");
+    setIdentityManagerOpen(false);
     if (nextView === "today") params.delete("tab");
     else params.set("tab", nextView);
     router.push(`/identity${params.size ? `?${params.toString()}` : ""}`, { scroll: false });
+  }
+
+  function openIdentityManager() {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("manage", "roles");
+    setRoleMenuOpen(false);
+    setIdentityManagerOpen(true);
+    router.replace(`/identity?${params.toString()}`, { scroll: false });
+  }
+
+  function closeIdentityManager() {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("manage");
+    setIdentityManagerOpen(false);
+    router.replace(`/identity${params.size ? `?${params.toString()}` : ""}`, { scroll: false });
   }
 
   async function confirmPendingAction() {
@@ -183,8 +203,10 @@ export function IdentityCenter() {
   }
 
   async function switchRole(role: BusinessRole, label: string) {
-    await run(`switch-${role}`, () => switchIdentityContext(role), `已切换为${label}。`);
-    setRoleMenuOpen(false); setIdentityManagerOpen(false);
+    const success = await run(`switch-${role}`, () => switchIdentityContext(role), `已切换为${label}。`);
+    if (!success) return;
+    setRoleMenuOpen(false);
+    if (identityManagerVisible) closeIdentityManager();
     if (!professionalRoles.has(role)) selectView("today");
   }
 
@@ -224,13 +246,13 @@ export function IdentityCenter() {
       <div className="identityProfileMenu" ref={profileMenuRef}>
         <button className="identityProfileTrigger" type="button" aria-haspopup="menu" aria-expanded={roleMenuOpen} aria-controls="identity-role-menu" onClick={() => setRoleMenuOpen((open) => !open)}>
           <span className="identityAvatar" aria-hidden="true">{snapshot.account.display_name.slice(0, 1).toUpperCase()}</span>
-          <span><small>当前身份</small><strong>{roleLabels[activeRole]}</strong><em>{snapshot.account.region || "尚未设置地区"}</em></span><b aria-hidden="true">⌄</b>
+          <span><small>当前使用身份</small><strong>{roleLabels[activeRole]}</strong><em>{snapshot.account.region || "尚未设置地区"} · 快速切换</em></span><b aria-hidden="true">⌄</b>
         </button>
-        {roleMenuOpen ? <div className="identityRoleMenu" id="identity-role-menu" role="menu"><small>切换工作上下文</small>
-          {activeRoles.map((item) => <button type="button" role="menuitem" className={item.role === activeRole ? "current" : ""} disabled={item.role === activeRole || Boolean(busy)} key={item.id} onClick={() => void switchRole(item.role, item.label)}><span>{item.label}</span><em>{item.role === activeRole ? "当前" : "切换"}</em></button>)}
-          <button className="manage" type="button" role="menuitem" onClick={() => { setRoleMenuOpen(false); setIdentityManagerOpen(true); }}>管理身份与申请</button>
+        {roleMenuOpen ? <div className="identityRoleMenu" id="identity-role-menu" role="menu"><small>快速切换已开通身份</small>
+          {activeRoles.map((item) => <button type="button" role="menuitem" data-role={item.role} className={item.role === activeRole ? "current" : ""} disabled={item.role === activeRole || Boolean(busy)} key={item.id} onClick={() => void switchRole(item.role, item.label)}><span>{item.label}</span><em>{item.role === activeRole ? "当前" : "切换"}</em></button>)}
+          <button className="manage" type="button" role="menuitem" onClick={openIdentityManager}>管理与开通身份</button>
         </div> : null}
-        <small className="identityVisibility">{snapshot.account.profile_visibility === "private" ? "仅自己可见" : snapshot.account.profile_visibility === "members" ? "成员可见" : "公开"}</small>
+        <div className="identityProfileUtilities"><small className="identityVisibility">资料{snapshot.account.profile_visibility === "private" ? "仅自己可见" : snapshot.account.profile_visibility === "members" ? "成员可见" : "公开"}</small><button type="button" onClick={openIdentityManager}>身份与权限</button></div>
       </div>
     </section>
 
@@ -286,10 +308,10 @@ export function IdentityCenter() {
       {sessions.length ? <ul className="identityTaskList" data-testid="account-session-list">{sessions.map((session) => <li className={session.status === "active" ? "open" : "completed"} key={session.id}><div><span>{session.is_current ? "当前会话" : "其他会话"} · {session.status === "active" ? "有效" : session.status === "expired" ? "已过期" : "已撤销"}</span><h3>{session.id.slice(0, 20)}…</h3><p>最近使用：{new Date(session.last_used_at).toLocaleString("zh-CN")} · 到期：{new Date(session.expires_at).toLocaleString("zh-CN")}</p></div>{session.status === "active" ? <button className={session.is_current ? "productButtonDanger" : "productButtonSecondary"} type="button" onClick={() => setConfirmation({ title: session.is_current ? "退出当前会话？" : "撤销这条会话？", description: session.is_current ? "当前设备会立即退出，并返回登录页。" : "此会话会立即失效；对应设备需要重新登录。", confirmLabel: session.is_current ? "退出当前会话" : "撤销会话", actionKey: `revoke-${session.id}`, action: async () => { await revokeAccountSession(session.id); if (session.is_current) await logoutAccount(); else setSessions((items) => items.map((item) => item.id === session.id ? { ...item, status: "revoked" } : item)); }, message: session.is_current ? "当前会话已退出。" : "该会话已撤销。", reload: !session.is_current, onSuccess: session.is_current ? () => router.push("/login") : undefined })}>{session.is_current ? "退出此设备" : "撤销会话"}</button> : null}</li>)}</ul> : <p>当前没有可显示的服务端会话。</p>}
     </section> : null}
 
-    {identityManagerOpen ? <div className="identityDialogBackdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setIdentityManagerOpen(false); }}><section className="identityDialog identityManagerDialog" role="dialog" aria-modal="true" aria-labelledby="identity-manager-title"><button className="identityDialogClose" type="button" aria-label="关闭" autoFocus onClick={() => setIdentityManagerOpen(false)}>×</button><small>ROLE MANAGEMENT</small><h2 id="identity-manager-title">管理身份与申请</h2><p>身份切换只改变工作上下文，服务端授权不会因此扩大。</p><div className="identityRoleGrid">{activeRoles.map((item) => <article className={item.role === activeRole ? "current" : ""} key={item.id}><span className="identityRoleMark">{item.label.slice(0, 1)}</span><div><h3>{item.label}</h3><p>{roleDescriptions[item.role]}</p></div>{item.role === activeRole ? <b>当前身份</b> : <button type="button" disabled={Boolean(busy)} onClick={() => void switchRole(item.role, item.label)}>切换</button>}</article>)}</div>{snapshot.available_actions.self_activate.length ? <><div className="identitySectionHeading"><div><h2>开通基础身份</h2><p>学习者和创作者可由本人开通，但不会获得管理权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.self_activate.map((role) => <article key={role}><h3>开通{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButton" type="button" onClick={() => void run(`activate-${role}`, () => activateBusinessRole(role), `${roleLabels[role]}已开通。`)}>开通身份</button></article>)}</div></> : null}{snapshot.available_actions.apply.length ? <><div className="identitySectionHeading"><div><h2>申请受控身份</h2><p>贡献者和卖家须进入审核，提交申请不会自动获得权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.apply.map((role) => <article key={role}><h3>申请{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButtonSecondary" type="button" onClick={() => { setIdentityManagerOpen(false); setApplyRole(role); }}>申请审核</button></article>)}</div></> : null}<div className="identityDialogActions"><button className="productButtonSecondary" type="button" onClick={() => setIdentityManagerOpen(false)}>取消</button></div></section></div> : null}
+    {identityManagerVisible ? <div className="identityDialogBackdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeIdentityManager(); }}><section className="identityDialog identityManagerDialog" data-testid="identity-manager" role="dialog" aria-modal="true" aria-labelledby="identity-manager-title"><button className="identityDialogClose" type="button" aria-label="关闭" autoFocus onClick={closeIdentityManager}>×</button><small>IDENTITY & PERMISSIONS</small><h2 id="identity-manager-title">身份与权限</h2><div className="identityManagerNotice"><strong>切换与开通是两件事</strong><p>切换只改变当前操作视角；开通或申请会改变账户权限，并始终由服务端校验和保存。</p></div><div className="identitySectionHeading identityRoleSectionHeading"><div><h2>切换已开通身份</h2><p>当前账户已开通 {activeRoles.length} 个身份，切换不会删除任何业务数据。</p></div></div><div className="identityRoleGrid">{activeRoles.map((item) => <article className={item.role === activeRole ? "current" : ""} key={item.id}><span className="identityRoleMark">{item.label.slice(0, 1)}</span><div><h3>{item.label}</h3><p>{roleDescriptions[item.role]}</p></div>{item.role === activeRole ? <b>当前身份</b> : <button type="button" data-role={item.role} disabled={Boolean(busy)} onClick={() => void switchRole(item.role, item.label)}>切换</button>}</article>)}</div>{snapshot.available_actions.self_activate.length ? <><div className="identitySectionHeading"><div><h2>开通基础身份</h2><p>学习者和创作者可由本人开通；开通会新增对应业务权限，但不会获得管理权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.self_activate.map((role) => <article key={role}><h3>开通{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButton" type="button" data-role={role} onClick={() => setConfirmation({ title: `开通${roleLabels[role]}身份？`, description: `开通后，当前账户将长期拥有${roleLabels[role]}权限；这不是临时切换，且目前不能自行移除。`, confirmLabel: "确认开通", actionKey: `activate-${role}`, action: () => activateBusinessRole(role), message: `${roleLabels[role]}已开通。`, tone: "primary" })}>开通身份</button></article>)}</div></> : null}{snapshot.available_actions.apply.length ? <><div className="identitySectionHeading"><div><h2>申请受控身份</h2><p>贡献者和卖家须进入审核，提交申请不会自动获得权限。</p></div></div><div className="identityActionGrid">{snapshot.available_actions.apply.map((role) => <article key={role}><h3>申请{roleLabels[role]}</h3><p>{roleDescriptions[role]}</p><button className="productButtonSecondary" type="button" data-role={role} onClick={() => { closeIdentityManager(); setApplyRole(role); }}>申请审核</button></article>)}</div></> : null}<div className="identityDialogActions"><button className="productButtonSecondary" type="button" onClick={closeIdentityManager}>完成</button></div></section></div> : null}
 
     {applyRole ? <div className="identityDialogBackdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setApplyRole(""); }}><form className="identityDialog" role="dialog" aria-modal="true" onSubmit={submitApplication}><button className="identityDialogClose" type="button" aria-label="关闭" autoFocus onClick={() => setApplyRole("")}>×</button><h2>申请{roleLabels[applyRole]}身份</h2><p>提交后进入审核，不会自动获得权限。</p><label>申请说明<textarea value={reason} minLength={8} maxLength={1000} required onChange={(event) => setReason(event.target.value)} /></label><div className="identityDialogActions"><button className="productButtonSecondary" type="button" onClick={() => setApplyRole("")}>取消</button><button className="productButton" type="submit">提交审核</button></div></form></div> : null}
-    <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.title ?? ""} description={confirmation?.description ?? ""} confirmLabel={confirmation?.confirmLabel ?? "确认"} busy={Boolean(confirmation && busy === confirmation.actionKey)} onCancel={() => setConfirmation(null)} onConfirm={() => void confirmPendingAction()} />
+    <ConfirmDialog open={Boolean(confirmation)} title={confirmation?.title ?? ""} description={confirmation?.description ?? ""} confirmLabel={confirmation?.confirmLabel ?? "确认"} tone={confirmation?.tone} busy={Boolean(confirmation && busy === confirmation.actionKey)} onCancel={() => setConfirmation(null)} onConfirm={() => void confirmPendingAction()} />
     {feedback ? <div className="productToast" role="status">{feedback}</div> : null}
   </ProductFrame>;
 }
