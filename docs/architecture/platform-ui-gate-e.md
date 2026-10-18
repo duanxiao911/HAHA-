@@ -1,6 +1,6 @@
 # Gate E：四大板块 UI 集成
 
-顺序状态（2026-10-18）：`IMPLEMENTED_NOT_SEQUENTIALLY_ACCEPTED`。既有 UI 集成与证据保留；Gate C、D 依次收口前，不越序签署 Gate E。
+顺序状态（2026-10-18）：`CLOSED_INTERNAL_NON_PRODUCTION`。Gate C、D 已按依赖顺序完成内部验收，Gate E 的真实 API、运行时能力、响应式浏览器与全量回归证据已重新执行并通过。Gate F 继续暂停；本状态不代表 Production Candidate 或 Production Ready。
 
 ## 目标与边界
 
@@ -52,3 +52,15 @@ Gate E 统一视频社区、非遗电商、AI 学习与用户中心的全局入�
 4. AI 学习与电商边界标签始终诚实展示。
 5. 390、768、1440 浏览器视口无横向溢出，移动端恰好五个主入口。
 6. lint、前端契约、Next.js 生产构建、全量 pytest 和真实 Chrome E2E 通过。
+
+## 2026-10-18 收口证据
+
+- 全局搜索文案与真实搜索契约一致，只承诺内容、项目、人物和地区；商品搜索继续留在电商目录。
+- 首页按 learner 工作台的服务端运行时能力显示 AI 老师“可用/受阻/按运行状态”，不再使用静态“未接通”文案；DeepSeek 凭据只验证存在性，未写入仓库或测试产物。
+- 身份菜单支持点击外部与 `Escape` 关闭；键盘关闭后焦点返回身份触发按钮。身份开通仍需确认，快捷切换仍只允许服务端已授权身份。
+- ESLint、4 项平台壳契约、6 项社区契约和 Ruff 均通过；Next.js 生产构建生成 57 条路由。
+- 隔离 PostgreSQL 从空库迁移至 `20261018_0015 (head)` 后执行全量测试：`139 passed, 1 warning`；随机临时数据库已删除，主开发库未被测试清空。
+- 真实 API/Web 容器健康，API 容器内 DeepSeek 凭据存在；真实 Chrome 在 390、768、1440 三档通过，无横向溢出、无浏览器异常。
+- 浏览器覆盖四大入口、移动端五入口、全局搜索提交、社区共享 Header、创作者路由、AI/沙盒边界、用户中心不重复、身份开通确认、Escape 焦点恢复与服务端身份往返切换。
+- 可复核产物：`artifacts/e2e/platform-gate-e-browser/report.json` 与同目录 6 张截图。
+- 远端 GitHub CI 尚未针对本提交执行，状态为 `UNKNOWN`。

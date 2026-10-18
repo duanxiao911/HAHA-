@@ -21,6 +21,9 @@ test("desktop shell exposes exactly the four governed platform modules", () => {
   assert.match(source, /switchIdentityContext/);
   assert.match(source, /切换已开通身份/);
   assert.match(source, /管理与开通身份/);
+  assert.match(source, /搜索非遗内容、项目、人物和地区/);
+  assert.doesNotMatch(source, /搜索非遗内容、项目、人物和商品/);
+  assert.match(source, /identityTriggerRef\.current\?\.focus\(\)/);
 });
 
 test("mobile shell uses home plus the four modules and no duplicate creator tab", () => {
@@ -45,6 +48,8 @@ test("root is a neutral platform home and community reuses the shared shell", ()
   assert.match(rootPage, /export default function HomePage/);
   assert.match(home, /FOUR CORE SPACES/);
   assert.match(home, /AI 非遗老师 · 受控能力/);
+  assert.match(home, /AI 老师可用/);
+  assert.match(home, /AI 老师受阻/);
   assert.match(home, /非遗电商 · INTERNAL SANDBOX/);
   assert.match(home, /identity-conversion-guide/);
   assert.match(home, /开通或申请是权限变化/);

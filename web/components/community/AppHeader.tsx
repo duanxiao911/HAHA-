@@ -63,6 +63,7 @@ export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
   const [switchingRole, setSwitchingRole] = useState<BusinessRole | null>(null);
   const [identityError, setIdentityError] = useState("");
   const identityMenuRef = useRef<HTMLDivElement>(null);
+  const identityTriggerRef = useRef<HTMLButtonElement>(null);
   const authState = useSyncExternalStore(subscribeAuthSession, getAuthSessionSnapshot, getServerAuthSessionSnapshot);
   const signedIn = authState === "authenticated";
   const environmentLabel = demoLabel ?? (snapshot.runtime.mode === "api" ? "内部 API" : "本地演示");
@@ -75,15 +76,19 @@ export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
     return () => { active = false; };
   }, [signedIn]);
   useEffect(() => {
+    if (!identityMenuOpen) return;
     function closeMenu(event: MouseEvent | KeyboardEvent) {
       if (event instanceof KeyboardEvent && event.key !== "Escape") return;
       if (event instanceof MouseEvent && identityMenuRef.current?.contains(event.target as Node)) return;
       setIdentityMenuOpen(false);
+      if (event instanceof KeyboardEvent) {
+        requestAnimationFrame(() => identityTriggerRef.current?.focus());
+      }
     }
     document.addEventListener("mousedown", closeMenu);
     document.addEventListener("keydown", closeMenu);
     return () => { document.removeEventListener("mousedown", closeMenu); document.removeEventListener("keydown", closeMenu); };
-  }, []);
+  }, [identityMenuOpen]);
 
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -117,14 +122,14 @@ export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
       return <Link href={href} aria-current={active ? "page" : undefined} key={href}>{label}</Link>;
     })}</nav>
     <form className="productSearch" role="search" onSubmit={submitSearch}>
-      <label className="productVisuallyHidden" htmlFor="product-global-search">搜索非遗内容、项目、人物和商品</label>
-      <input id="product-global-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索非遗内容、项目、人物和商品" />
+      <label className="productVisuallyHidden" htmlFor="product-global-search">搜索非遗内容、项目、人物和地区</label>
+      <input id="product-global-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索非遗内容、项目、人物和地区" />
       <button type="submit" aria-label="提交搜索"><SearchIcon /></button>
     </form>
     <nav className="productUtilityNav" aria-label="账户功能">
       <Link className="productMessageAction" href="/notifications" aria-label="消息与通知" aria-current={pathMatches(pathname, "/notifications") ? "page" : undefined}><MessageIcon /><span>消息</span></Link>
       <div className="productIdentityMenu" ref={identityMenuRef}>
-        {signedIn || !AUTH_REQUIRED ? <button className="productIdentityTrigger" type="button" aria-haspopup="menu" aria-expanded={identityMenuOpen} aria-controls="product-identity-menu" onClick={() => setIdentityMenuOpen((open) => !open)}>
+        {signedIn || !AUTH_REQUIRED ? <button className="productIdentityTrigger" ref={identityTriggerRef} type="button" aria-haspopup="menu" aria-expanded={identityMenuOpen} aria-controls="product-identity-menu" onClick={() => setIdentityMenuOpen((open) => !open)}>
           <span className="productIdentityAvatar" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span><span className="productIdentityCopy"><small>当前身份</small><strong>{activeRoleLabel}</strong></span><b aria-hidden="true">⌄</b>
         </button> : <Link className="productLoginAction" href="/login">登录</Link>}
         {identityMenuOpen ? <div className="productIdentityPopover" id="product-identity-menu" role="menu">

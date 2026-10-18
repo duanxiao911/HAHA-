@@ -88,6 +88,12 @@ export function PlatformHome() {
   const applicationRole = snapshot?.available_actions.apply[0];
   const conversionRole = selfActivateRole ?? applicationRole;
   const availableCapability = workbench?.capabilities.find((item) => item.status === "available" && item.href);
+  const aiTutorCapability = workbench?.capabilities.find((item) => item.key === "ai_tutor");
+  const aiTutorStatus = aiTutorCapability?.status === "available"
+    ? "学习可用 · AI 老师可用"
+    : aiTutorCapability?.status === "blocked"
+      ? "学习可用 · AI 老师受阻"
+      : "学习可用 · AI 按运行状态";
   const resumeItems = snapshot ? [
     snapshot.today.continue_watching ? {
       eyebrow: "视频社区", title: snapshot.today.continue_watching.title,
@@ -143,7 +149,7 @@ export function PlatformHome() {
       <div className="platformModuleGrid">
         <ModuleCard href="/community" icon="▶" title="视频社区" description="发现内容、观看互动、加入想学清单，并进入创作者投稿。" status="可使用" action="进入社区" />
         <ModuleCard href="/commerce" icon="袋" title="非遗电商" description="浏览商品、管理购物车与订单，或进入卖家经营工作台。" status="内部沙盒" statusTone="sandbox" action="进入电商" className="is-commerce" />
-        <ModuleCard href="/learning" icon="学" title="AI 学习" description="学习路径、知识卡、测验、每日任务与成长记录。" status="学习可用 · AI 老师未接通" statusTone="bounded" action="进入学习" className="is-learning" />
+        <ModuleCard href="/learning" icon="学" title="AI 学习" description="学习路径、知识卡、测验、每日任务与成长记录。" status={aiTutorStatus} statusTone="bounded" action="进入学习" className="is-learning" />
         <ModuleCard href="/identity" icon="人" title="用户中心" description="统一账户、文化资产、成长汇总、身份权限与安全设置。" status={activeRole ? `当前：${roleLabels[activeRole]}` : "统一账户"} action="管理账户" />
       </div>
     </section>

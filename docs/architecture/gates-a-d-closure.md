@@ -1,8 +1,8 @@
-# Gate A–D 收口矩阵
+# Gate A–E 收口矩阵
 
 日期：2026-10-18（Asia/Shanghai）
 
-状态：`GATE_D_CLOSED_E_PENDING`。A、B 保持通过；C、D 已按用户确认的依赖顺序完成内部验收，下一步复验 E。提前落地的 F 基础设施增量保留，但 F 已暂停，不得称 E 已重新签署或已进入生产收口。
+状态：`GATE_E_CLOSED_F_PAUSED`。A、B 保持通过；C、D、E 已按用户确认的依赖顺序完成内部验收。提前落地的 F 基础设施增量保留，但 F 仍暂停，不得据此宣称已进入生产收口。
 
 ## 判定口径
 
@@ -19,6 +19,7 @@
 | B 身份中心闭环 | PASS | PASS | 多身份、申请、独立审核、授权、切换、任务、审计和刷新恢复均有 API、数据库与浏览器证据。 |
 | C 视频与 AI 学习 | PASS | PASS（内部非生产范围） | 真实媒体链、服务端学习成长，以及 DeepSeek + 版本化内部复核知识库的受控 AI 老师均有 PostgreSQL、真实 API、重启、模型评测和 Chrome 证据。来源不冒充官方认证。 |
 | D 买卖家交易 | PASS | PASS（内部沙盒范围） | 统一身份、独立审核、并发幂等、库存、订单、明确标记的沙盒支付、履约、售后和通知均有 PostgreSQL、真实 API、重启与 Chrome 证据；无真实资金流。 |
+| E 四大板块 UI | PASS | PASS（内部非生产范围） | 首页负责模块发现与身份转化引导，用户中心负责身份管理；全局搜索、AI/沙盒边界、确认交互、键盘焦点和 390/768/1440 响应式状态均有真实 API 与 Chrome 证据。 |
 
 ## 2026-10-18 Gate C 媒体收口项
 
@@ -41,23 +42,24 @@
 - **生产级媒体处理：OPEN（不再是功能链路缺失）**。当前本地/单节点真实上传、持久化和播放已通过；对象存储、恶意文件扫描、FFprobe 深度检查、转码、封面、CDN、配额与异地备份仍属于后续生产门禁。
 - **AI 内容治理：OPEN（不再是 Gate C 功能阻断）**。当前来源可信状态是内部复核，不是官方认证；部分链接是主管机构入口页而非条目级永久链接。正式教学发布前仍需来源编辑审核、条目级引用、内容版本发布和模型质量持续评测。
 - **真实支付与退款：BLOCKED**。需要经营地区、商业主体、支付服务商、退款/结算责任、隐私和消费者保护方案。
-- **Production Readiness：PAUSED**。已有提前实施的容量、数据库恢复、指标与 CI 增量保留；E 顺序收口前不继续推进或签署 F。
+- **Production Readiness：PAUSED**。已有提前实施的容量、数据库恢复、指标与 CI 增量保留；启动或签署 F 仍需作为独立生产工程阶段执行。
 
 ## 本轮执行证据
 
 - Ruff：`src tests scripts` 通过。
 - Python 社区回归：`8 passed`；包含上传权限、签名拒绝、幂等、发布可见性与 Range 读取。
-- Python 完整回归：`138 passed, 1 warning`（注入测试专用 PostgreSQL、Redis 与 JWT 配置）。
+- Python 完整回归：`139 passed, 1 warning`（隔离 PostgreSQL、项目内临时目录与测试专用 JWT 配置）。
 - PostgreSQL 学习适配器：`16 passed`；包含 AI 对话持久化与应用重建恢复。
 - PostgreSQL/Alembic：`20261018_0015 (head)`；旧数据保留，新增 AI 对话审计表、约束与索引存在。
 - 真实 API：26 项社区/媒体断言通过；真实 H.264 文件上传、发布和逐字节读取通过。
 - Next.js：ESLint、6 项社区契约、4 项平台壳契约和生产构建通过。
 - 真实 Chrome：390/768/1024/1440 无横向溢出；真实上传、已发布 H.264 解码播放、刷新、权限和 API 失败状态通过，浏览器异常为 0。
+- Gate E 真实 Chrome：390/768/1440 的平台首页、四板块导航、全局搜索、用户中心不重复、身份确认、Escape 焦点恢复和服务端身份往返切换通过，浏览器异常为 0。
 - 服务重启：API 重启后媒体与学习事实仍存在；学习恢复 9 项断言全部通过，包含 AI 对话历史。
 - 迁移回滚：在独立 PostgreSQL 临时库执行完整迁移、`downgrade 0014`、再次 `upgrade head` 通过。
 - 真实 AI 评测：3/3 通过，覆盖有来源回答、提示注入/越界引用边界和未知项目零调用拒答；估算峰值成本 `0.0006633 USD`。
 - 真实学习 API：14 项完整闭环断言通过；真实 Chrome 在 390/768/1440 三档完成学习、AI 提问、刷新恢复与用户中心同步，浏览器异常为 0。
-- 证据文件：`artifacts/e2e/community-gate-c2-*`、`artifacts/e2e/learning-gate-c3-*` 与 `artifacts/evals/gate-c-learning-tutor-live-eval.json`。
+- 证据文件：`artifacts/e2e/community-gate-c2-*`、`artifacts/e2e/learning-gate-c3-*`、`artifacts/e2e/platform-gate-e-browser/` 与 `artifacts/evals/gate-c-learning-tutor-live-eval.json`。
 - 远端 GitHub CI：当前提交尚未推送，因此为 `UNKNOWN`。
 
-因此，对外准确表述应为：**Gate A、B、C、D 已在内部非生产范围闭环；E 保留既有实现但尚未按本轮顺序重新签署；F 已暂停。当前仍不是 Production Candidate 或 Production Ready。**
+因此，对外准确表述应为：**Gate A、B、C、D、E 已在内部非生产范围闭环；F 已暂停且尚未执行独立生产验收。当前仍不是 Production Candidate 或 Production Ready。**

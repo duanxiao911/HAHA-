@@ -152,7 +152,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 "neutral_home_has_no_active_module": metrics["activeDesktop"] == 0,
                 "four_platform_cards": metrics["platformCards"] == 4,
                 "mobile_five_entries": width > 768 or metrics["mobileModules"] == ["首页", "社区", "学习", "电商", "我的"],
-                "honest_boundaries": "AI 非遗老师 · BLOCKED" in body and "INTERNAL SANDBOX" in body,
+                "honest_boundaries": "AI 非遗老师 · 受控能力" in body and "AI 老师可用" in body and "INTERNAL SANDBOX" in body,
                 "identity_conversion_only": "开通或申请是权限变化" in body and not await evaluate("Boolean(document.querySelector('[data-testid=identity-conversion-guide] button'))"),
             }
             if not all(checks.values()):
@@ -161,6 +161,31 @@ async def run(websocket_url: str) -> dict[str, Any]:
             viewports.append({"width": width, "checks": checks, "metrics": metrics})
 
         await command("Emulation.setDeviceMetricsOverride", {"width": 1440, "height": 1000, "deviceScaleFactor": 1, "mobile": False})
+        search_scope = await evaluate("""(() => ({
+          placeholder: document.querySelector('#product-global-search')?.getAttribute('placeholder'),
+          label: document.querySelector('label[for="product-global-search"]')?.textContent.trim()
+        }))()""")
+        assertions["global_search_scope_is_honest"] = search_scope == {
+            "placeholder": "搜索非遗内容、项目、人物和地区",
+            "label": "搜索非遗内容、项目、人物和地区",
+        }
+        submitted = await evaluate("""(async () => {
+          const input = document.querySelector('#product-global-search');
+          const form = document.querySelector('.productSearch');
+          if (!(input instanceof HTMLInputElement) || !(form instanceof HTMLFormElement)) return false;
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+          setter?.call(input, '苗绣');
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise(resolve => setTimeout(resolve, 0));
+          form.requestSubmit();
+          return true;
+        })()""")
+        if not submitted:
+            raise RuntimeError("Global search form was not available")
+        await wait_for("搜索与发现")
+        search_state = await evaluate("({path: location.pathname, query: new URLSearchParams(location.search).get('q')})")
+        assertions["global_search_uses_expected_route"] = search_state == {"path": "/search", "query": "苗绣"}
+
         await navigate("/community", "内容 Feed")
         community_shell = await evaluate("""(() => ({
           active: document.querySelector('.productPrimaryNav a[aria-current="page"]')?.textContent.trim(),
@@ -179,7 +204,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["creator_route_preserved_after_root_split"] = creator_state == {"path": "/creator", "console": True, "communityReturn": True}
 
         body = await navigate("/learning", "学习成长中心")
-        assertions["learning_route_and_boundary"] = "AI 非遗老师尚未接通" in body and "BLOCKED" in body
+        assertions["learning_route_and_boundary"] = "GROUNDED AI TUTOR" in body and "AI 非遗老师" in body and "BLOCKED" not in body
         active_learning = await evaluate("document.querySelector('.productPrimaryNav a[aria-current=\"page\"]')?.textContent.trim()")
         assertions["learning_nav_active"] = active_learning == "AI 学习"
 
@@ -222,6 +247,13 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["identity_menu_discoverable"] = menu_state["open"] == "true" and any("浏览者" in label for label in menu_state["labels"]) and "不会新增权限" in menu_state["hint"] and menu_state["manageHref"] == "/identity?manage=roles"
         await shot("identity-menu.png")
 
+        await command("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Escape", "code": "Escape"})
+        await command("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Escape", "code": "Escape"})
+        await wait_for_value("document.querySelector('.productIdentityTrigger')?.getAttribute('aria-expanded')", "false")
+        await wait_for_value("document.activeElement?.classList.contains('productIdentityTrigger')", True)
+        assertions["identity_menu_escape_restores_focus"] = True
+
+        await click_selector(".productIdentityTrigger")
         await click_selector('.productIdentityPopover button[data-role="viewer"]')
         await wait_for_value("document.querySelector('.productIdentityCopy strong')?.textContent.trim()", "浏览者")
         await click_selector(".productIdentityTrigger")
