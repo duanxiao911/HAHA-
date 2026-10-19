@@ -2,6 +2,10 @@
 
 HAHA 飞颐是采用 Next.js、FastAPI、PostgreSQL、Redis 与 Dramatiq 构建的非遗内容社区和 AI 创作平台。
 
+**在线演示：** [https://duanxiao911.github.io/HAHA-/](https://duanxiao911.github.io/HAHA-/)
+
+> 在线地址为 GitHub Pages 静态演示版，用于跨设备查看页面与基础交互，不承载真实注册、登录会话、服务端数据库、支付或在线 AI 调用。完整功能需要按下文启动前后端环境。
+
 项目开发、升级、验收与发布默认遵守
 [`AI 全栈应用开发统一 SOP V1.0`](docs/governance/AI_FULLSTACK_SOP_V1.md)，并由根目录
 [`AGENTS.md`](AGENTS.md) 补充 HAHA 项目级约束。
@@ -72,7 +76,7 @@ pnpm build
 pnpm start
 ```
 
-浏览器访问：<http://localhost:3000>
+本机浏览器访问：<http://localhost:3000>（仅当前开发电脑可用）
 
 这是当前唯一正式 Web 前端。
 
@@ -102,8 +106,8 @@ API 环境变量参见 [`config/api.env.example`](config/api.env.example)。容�
 docker compose up --build
 ```
 
-- Next.js：<http://localhost:3000>
-- FastAPI：<http://localhost:8000/docs>
+- Next.js 本机地址：<http://localhost:3000>
+- FastAPI 本机地址：<http://localhost:8000/docs>
 - PostgreSQL 和 Redis 只在容器网络中开放。
 
 `compose.yaml` 通过三项显式变量开启仅限本机的开发认证，并把 Web/API 端口绑定到
