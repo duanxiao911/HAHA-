@@ -9,15 +9,19 @@
 | 单元/契约 | `python -m pytest -q`、前端两套 contract | 安全配置、阈值与模块回归 |
 | AI Eval | `python scripts/run_ai_eval.py` | 保持创作链 golden gate；不代表 AI 老师已接通 |
 | PostgreSQL | Alembic head + integration tests | 真实数据库、事务、并发与权限 |
-| 恢复 | `postgres_restore_drill.py` | 当前 schema 逻辑备份、隔离恢复与一致性 |
+| 恢复 | PostgreSQL + `media_restore_drill.py` | 当前 schema、媒体元数据/文件、隔离恢复一致性 |
 | 容量 | `production_load_gate.py` | 错误率、P95、P99 阈值 |
-| 浏览器 | C1/C2/C3/D/E 与 G3/G4 | 用户链路、会话、响应式与持久化 |
+| 浏览器 | C1/C2/C3/D/E 与 G3/G4 | 用户链路、危险操作确认、会话、响应式与持久化 |
 | 发布 | preflight + smoke + rollback rehearsal | 配置、镜像、TLS/CORS、回滚 |
 
 ## 本地容量基线
 
 CI/本机默认只读 `/ready`：100 请求、并发 10、错误率 0、P95 ≤ 750 ms、P99 ≤ 1500 ms。
 该阈值用于发现明显回归，不是生产 SLO。外部 staging 必须用预期拓扑、数据规模和网络重新基准。
+
+2026-10-19 隔离准发布栈实测 `/ready`：500 请求、并发 25、错误率 0、P95 89.692 ms、
+P99 97.630 ms。开发栈代表性社区读接口另测 200 请求、并发 10、错误率 0、P95 806.559 ms；
+这些数字只作本机回归基线。
 
 ## 恢复验收
 
@@ -26,6 +30,15 @@ CI/本机默认只读 `/ready`：100 请求、并发 10、错误率 0、P95 ≤ 
 3. 新隔离库恢复成功。
 4. revision 与所有验证表计数完全一致。
 5. 隔离库和容器临时文件按策略清理；报告保留散列、大小和耗时。
+6. 媒体卷文件必须与数据库媒体记录一一对应，归档及解包后的大小和 SHA-256 必须一致。
+
+## 2026-10-19 本地验收摘要
+
+- Ruff 与 25 项 Gate F 聚焦测试通过；完整 PostgreSQL 回归 `149 passed`。
+- 前端 ESLint、6 项社区契约、4 项平台壳契约及 57 路由生产构建通过。
+- G3 真实浏览器 19 项断言通过，包含危险操作二次确认、HttpOnly、CSRF、刷新轮换与注销。
+- 隔离准发布 smoke、PostgreSQL 恢复、真实媒体恢复和安全响应头检查通过。
+- 当前提交远端 CI、Python 在线漏洞审计、外部 HTTPS/告警/异地备份仍为 `UNKNOWN/BLOCKED`。
 
 ## 失败处理
 

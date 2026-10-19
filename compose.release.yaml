@@ -61,7 +61,12 @@ services:
       HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
       HAHA_ALLOWED_ORIGINS: ${HAHA_ALLOWED_ORIGINS:?set HAHA_ALLOWED_ORIGINS}
       HAHA_RELEASE_ID: ${HAHA_RELEASE_ID:?set HAHA_RELEASE_ID}
+      HAHA_GIT_SHA: ${HAHA_GIT_SHA:?set HAHA_GIT_SHA}
       HAHA_MEDIA_ROOT: /var/lib/haha/community-media
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+      HAHA_TUTOR_REQUEST_LIMIT_24H: ${HAHA_TUTOR_REQUEST_LIMIT_24H:-20}
     volumes:
       - release-media-data:/var/lib/haha/community-media
     ports:
@@ -88,9 +93,10 @@ services:
       DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
       REDIS_URL: redis://redis:6379/0
       HAHA_RELEASE_ID: ${HAHA_RELEASE_ID:?set HAHA_RELEASE_ID}
+      HAHA_GIT_SHA: ${HAHA_GIT_SHA:?set HAHA_GIT_SHA}
     networks: [data]
     healthcheck:
-      test: ["CMD", "python", "-c", "from pathlib import Path; assert b'dramatiq' in Path('/proc/1/cmdline').read_bytes()"]
+      test: ["CMD", "python", "-c", "import os; from pathlib import Path; from redis import Redis; assert b'dramatiq' in Path('/proc/1/cmdline').read_bytes(); assert Redis.from_url(os.environ['REDIS_URL']).ping()"]
       interval: 30s
       timeout: 5s
       start_period: 10s

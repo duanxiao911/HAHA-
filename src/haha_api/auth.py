@@ -10,6 +10,7 @@ import os
 import time
 from dataclasses import dataclass
 from enum import StrEnum
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import Header, HTTPException, status
@@ -42,6 +43,26 @@ def _dev_auth_enabled() -> bool:
     return os.getenv("HAHA_ALLOW_DEV_AUTH", "").strip().lower() == "true"
 
 
+def _valid_shared_origin(value: str, *, allow_loopback: bool) -> bool:
+    parsed = urlparse(value)
+    secure = parsed.scheme == "https"
+    loopback = (
+        allow_loopback
+        and parsed.scheme == "http"
+        and parsed.hostname in {"127.0.0.1", "localhost"}
+    )
+    return (
+        (secure or loopback)
+        and bool(parsed.netloc)
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path in {"", "/"}
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
 def validate_security_configuration() -> None:
     environment = _environment()
     mode = _auth_mode()
@@ -65,6 +86,23 @@ def validate_security_configuration() -> None:
             raise RuntimeError("staging/production 的 HAHA_METRICS_TOKEN 至少需要 32 个字符")
         if metrics_token == os.getenv("HAHA_JWT_SECRET", ""):
             raise RuntimeError("HAHA_METRICS_TOKEN 不得与 HAHA_JWT_SECRET 共用")
+        if not os.getenv("HAHA_JWT_ISSUER", "haha-auth").strip():
+            raise RuntimeError("HAHA_JWT_ISSUER 不得为空")
+        if not os.getenv("HAHA_JWT_AUDIENCE", "haha-api").strip():
+            raise RuntimeError("HAHA_JWT_AUDIENCE 不得为空")
+        origins = [
+            item.strip().rstrip("/")
+            for item in os.getenv("HAHA_ALLOWED_ORIGINS", "").split(",")
+            if item.strip()
+        ]
+        if not origins or "*" in origins:
+            raise RuntimeError("staging/production 必须配置非通配的 HAHA_ALLOWED_ORIGINS")
+        allow_loopback = environment == "staging"
+        if any(
+            not _valid_shared_origin(origin, allow_loopback=allow_loopback)
+            for origin in origins
+        ):
+            raise RuntimeError("共享环境的 HAHA_ALLOWED_ORIGINS 必须是安全 origin")
 
 
 def authorize_metrics(

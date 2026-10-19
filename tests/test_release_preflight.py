@@ -21,6 +21,7 @@ def _valid_values() -> dict[str, str]:
         "HAHA_JWT_SECRET": "j" * 40,
         "HAHA_METRICS_TOKEN": "m" * 40,
         "HAHA_RELEASE_ID": "2026-10-09.c5.1",
+        "HAHA_GIT_SHA": "a" * 40,
         "HAHA_RELEASE_OWNER": "release-team",
         "HAHA_ROLLBACK_OWNER": "platform-oncall",
         "HAHA_SECURITY_OWNER": "security-team",
@@ -44,6 +45,7 @@ def test_release_preflight_rejects_fail_open_inputs() -> None:
         "HAHA_METRICS_TOKEN": "short",
         "POSTGRES_PASSWORD": "replace-with-a-long-password-value",
         "HAHA_SECURITY_OWNER": "replace-with-security-owner",
+        "HAHA_GIT_SHA": "short-sha",
     })
 
     errors = validate(values)
@@ -56,13 +58,27 @@ def test_release_preflight_rejects_fail_open_inputs() -> None:
     assert "HAHA_METRICS_TOKEN must contain at least 32 characters" in errors
     assert "POSTGRES_PASSWORD still contains a placeholder" in errors
     assert "HAHA_SECURITY_OWNER still contains a placeholder" in errors
+    assert "HAHA_GIT_SHA must be a full 40-character lowercase commit SHA" in errors
 
 
 def test_release_preflight_rejects_shared_jwt_and_metrics_secret() -> None:
     values = _valid_values()
     values["HAHA_METRICS_TOKEN"] = values["HAHA_JWT_SECRET"]
 
-    assert "HAHA_METRICS_TOKEN must be independent from HAHA_JWT_SECRET" in validate(values)
+    assert (
+        "POSTGRES_PASSWORD, HAHA_JWT_SECRET, and HAHA_METRICS_TOKEN must be independent"
+        in validate(values)
+    )
+
+
+def test_release_preflight_rejects_shared_database_and_auth_secret() -> None:
+    values = _valid_values()
+    values["POSTGRES_PASSWORD"] = values["HAHA_JWT_SECRET"]
+
+    assert (
+        "POSTGRES_PASSWORD, HAHA_JWT_SECRET, and HAHA_METRICS_TOKEN must be independent"
+        in validate(values)
+    )
 
 
 def test_release_preflight_allows_local_image_ids_only_for_rehearsal() -> None:
@@ -80,12 +96,47 @@ def test_web_container_requires_explicit_api_url_and_defaults_to_jwt() -> None:
     assert 'test -n "${NEXT_PUBLIC_API_BASE_URL}"' in dockerfile
     assert "io.haha.web.api-base-url" in dockerfile
     assert "io.haha.web.auth-mode" in dockerfile
+    assert "org.opencontainers.image.revision" in dockerfile
+
+
+def test_api_release_image_uses_reviewed_runtime_constraints() -> None:
+    dockerfile = (ROOT / "Dockerfile.api").read_text(encoding="utf-8")
+    constraints = (ROOT / "constraints" / "runtime.txt").read_text(encoding="utf-8")
+
+    assert "--constraint constraints/runtime.txt" in dockerfile
+    assert "python -m pip check" in dockerfile
+    assert "fastapi==" in constraints
+    assert "sqlalchemy==" in constraints.lower()
 
 
 def test_ci_web_image_is_built_with_jwt_contract() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "NEXT_PUBLIC_API_BASE_URL=https://api.staging.example.invalid" in workflow
     assert "NEXT_PUBLIC_AUTH_MODE=jwt" in workflow
+    assert "VCS_REF=${{ github.sha }}" in workflow
+
+
+def test_dynamic_web_shell_sets_baseline_security_headers() -> None:
+    config = (ROOT / "web" / "next.config.ts").read_text(encoding="utf-8")
+    for header in (
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+        "Referrer-Policy",
+        "Permissions-Policy",
+        "Strict-Transport-Security",
+    ):
+        assert header in config
+
+
+def test_container_health_checks_cover_dependencies_and_readiness() -> None:
+    api_dockerfile = (ROOT / "Dockerfile.api").read_text(encoding="utf-8")
+    local_compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    release_compose = (ROOT / "compose.release.yaml").read_text(encoding="utf-8")
+
+    assert "http://127.0.0.1:8000/ready" in api_dockerfile
+    assert "condition: service_healthy" in local_compose
+    assert "Redis.from_url(os.environ['REDIS_URL']).ping()" in local_compose
+    assert "Redis.from_url(os.environ['REDIS_URL']).ping()" in release_compose
 
 
 def test_browser_session_gate_keeps_tokens_server_only_and_static_demo_separate() -> None:

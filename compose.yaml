@@ -93,7 +93,7 @@ services:
       DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD:-local-change-me}@postgres:5432/haha
       REDIS_URL: redis://redis:6379/0
     healthcheck:
-      test: ["CMD", "python", "-c", "from pathlib import Path; assert b'dramatiq' in Path('/proc/1/cmdline').read_bytes()"]
+      test: ["CMD", "python", "-c", "import os; from pathlib import Path; from redis import Redis; assert b'dramatiq' in Path('/proc/1/cmdline').read_bytes(); assert Redis.from_url(os.environ['REDIS_URL']).ping()"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -123,7 +123,7 @@ services:
       HAHA_REFRESH_TOKEN_TTL_SECONDS: ${HAHA_REFRESH_TOKEN_TTL_SECONDS:-604800}
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   postgres-data:

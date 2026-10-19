@@ -17,11 +17,21 @@ RESTORE_DATABASE = re.compile(r"^haha_restore_\d{8}_\d{6}_[0-9a-f]{8}$")
 VERIFIED_TABLES = (
     "users",
     "memberships",
+    "auth_sessions",
+    "identity_audit_events",
     "projects",
+    "runs",
+    "community_submissions",
+    "community_media_assets",
     "learning_profiles",
+    "learning_events",
     "quiz_attempts",
+    "achievement_grants",
+    "tutor_interactions",
     "community_entities",
     "commerce_orders",
+    "commerce_payments",
+    "commerce_after_sales",
 )
 
 
@@ -56,11 +66,18 @@ def run(
     return result.stdout.decode(errors="replace").strip()
 
 
-def compose_command(compose_file: Path, *arguments: str) -> list[str]:
-    return ["docker", "compose", "-f", str(compose_file), *arguments]
+def compose_command(
+    compose_file: Path, *arguments: str, project_name: str = ""
+) -> list[str]:
+    prefix = ["docker", "compose"]
+    if project_name:
+        prefix.extend(("-p", project_name))
+    return [*prefix, "-f", str(compose_file), *arguments]
 
 
-def database_snapshot(compose_file: Path, user: str, database: str) -> dict[str, object]:
+def database_snapshot(
+    compose_file: Path, user: str, database: str, project_name: str = ""
+) -> dict[str, object]:
     output = run(
         compose_command(
             compose_file,
@@ -75,6 +92,7 @@ def database_snapshot(compose_file: Path, user: str, database: str) -> dict[str,
             "-At",
             "-c",
             verification_sql(),
+            project_name=project_name,
         )
     )
     assert isinstance(output, str)
@@ -86,6 +104,7 @@ def main() -> None:
     parser.add_argument("--compose-file", type=Path, default=Path("compose.yaml"))
     parser.add_argument("--source-database", default="haha")
     parser.add_argument("--database-user", default="haha")
+    parser.add_argument("--project-name", default="")
     parser.add_argument("--backup-path", type=Path)
     parser.add_argument("--report", type=Path, default=Path("artifacts/recovery/gate-f-restore.json"))
     parser.add_argument("--keep-restore-db", action="store_true")
@@ -110,7 +129,7 @@ def main() -> None:
     error = ""
     try:
         source_snapshot = database_snapshot(
-            args.compose_file, args.database_user, args.source_database
+            args.compose_file, args.database_user, args.source_database, args.project_name
         )
         dump = run(
             compose_command(
@@ -124,6 +143,7 @@ def main() -> None:
                 "-d",
                 args.source_database,
                 "-Fc",
+                project_name=args.project_name,
             ),
             capture_bytes=True,
         )
@@ -135,6 +155,7 @@ def main() -> None:
                 "cp",
                 str(backup_path),
                 f"postgres:{container_backup}",
+                project_name=args.project_name,
             )
         )
         copied_backup = True
@@ -147,6 +168,7 @@ def main() -> None:
                 "pg_restore",
                 "-l",
                 container_backup,
+                project_name=args.project_name,
             )
         )
         run(
@@ -159,6 +181,7 @@ def main() -> None:
                 "-U",
                 args.database_user,
                 restore_database,
+                project_name=args.project_name,
             )
         )
         created_restore = True
@@ -175,10 +198,11 @@ def main() -> None:
                 restore_database,
                 "--exit-on-error",
                 container_backup,
+                project_name=args.project_name,
             )
         )
         restored_snapshot = database_snapshot(
-            args.compose_file, args.database_user, restore_database
+            args.compose_file, args.database_user, restore_database, args.project_name
         )
         if restored_snapshot != source_snapshot:
             raise RuntimeError("restored schema revision or verified table counts differ")
@@ -199,6 +223,7 @@ def main() -> None:
                         args.database_user,
                         "--force",
                         restore_database,
+                        project_name=args.project_name,
                     )
                 )
                 created_restore = False
@@ -216,6 +241,7 @@ def main() -> None:
                         "rm",
                         "-f",
                         container_backup,
+                        project_name=args.project_name,
                     )
                 )
             except Exception as cleanup_exc:

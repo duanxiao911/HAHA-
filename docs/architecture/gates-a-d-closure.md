@@ -2,7 +2,8 @@
 
 日期：2026-10-18（Asia/Shanghai）
 
-状态：`GATE_E_CLOSED_F_PAUSED`。A、B 保持通过；C、D、E 已按用户确认的依赖顺序完成内部验收。提前落地的 F 基础设施增量保留，但 F 仍暂停，不得据此宣称已进入生产收口。
+状态：`GATE_F_REPOSITORY_PASS_REMOTE_AND_EXTERNAL_BLOCKED`。A–E 保持内部闭环；F 已完成仓库侧与
+隔离准发布栈验收，但当前提交远端 CI、外部 HTTPS、告警、异地备份和回滚签署尚未完成。
 
 ## 判定口径
 
@@ -42,7 +43,8 @@
 - **生产级媒体处理：OPEN（不再是功能链路缺失）**。当前本地/单节点真实上传、持久化和播放已通过；对象存储、恶意文件扫描、FFprobe 深度检查、转码、封面、CDN、配额与异地备份仍属于后续生产门禁。
 - **AI 内容治理：OPEN（不再是 Gate C 功能阻断）**。当前来源可信状态是内部复核，不是官方认证；部分链接是主管机构入口页而非条目级永久链接。正式教学发布前仍需来源编辑审核、条目级引用、内容版本发布和模型质量持续评测。
 - **真实支付与退款：BLOCKED**。需要经营地区、商业主体、支付服务商、退款/结算责任、隐私和消费者保护方案。
-- **Production Readiness：PAUSED**。已有提前实施的容量、数据库恢复、指标与 CI 增量保留；启动或签署 F 仍需作为独立生产工程阶段执行。
+- **Production Readiness：BLOCKED**。仓库与隔离准发布栈已通过；远端 CI、外部 HTTPS、托管告警、
+  异地加密备份、PITR、staging 回滚和具名签署仍需真实环境证据。
 
 ## 本轮执行证据
 
@@ -62,4 +64,5 @@
 - 证据文件：`artifacts/e2e/community-gate-c2-*`、`artifacts/e2e/learning-gate-c3-*`、`artifacts/e2e/platform-gate-e-browser/` 与 `artifacts/evals/gate-c-learning-tutor-live-eval.json`。
 - 远端 GitHub CI：当前提交尚未推送，因此为 `UNKNOWN`。
 
-因此，对外准确表述应为：**Gate A、B、C、D、E 已在内部非生产范围闭环；F 已暂停且尚未执行独立生产验收。当前仍不是 Production Candidate 或 Production Ready。**
+因此，对外准确表述应为：**Gate A–E 已在内部非生产范围闭环；Gate F 的仓库实现与隔离准发布
+演练已通过，但远端和外部门禁仍阻断。当前仍不是 Production Candidate 或 Production Ready。**

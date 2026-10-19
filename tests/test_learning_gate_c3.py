@@ -40,7 +40,10 @@ def _correct_answers(snapshot: dict[str, object]) -> dict[str, int]:
     return {item["id"]: 1 for item in quiz_unit["quiz"]["questions"]}
 
 
-def test_learning_requires_persisted_learner_grant() -> None:
+def test_learning_requires_persisted_learner_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     repository = _repository()
     service = LearningService(repository)
 
@@ -203,7 +206,10 @@ def test_card_versions_and_learning_candidate_ownership_fail_closed() -> None:
         )
 
 
-def test_learning_api_permission_idempotency_and_server_grading() -> None:
+def test_learning_api_permission_idempotency_and_server_grading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     repository = _repository()
     client = TestClient(create_app(repository))
     headers_a = {"X-User-ID": "learner-a", "X-Workspace-ID": "workspace-a"}

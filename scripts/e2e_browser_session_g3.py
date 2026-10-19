@@ -93,6 +93,16 @@ async def run(websocket_url: str) -> dict[str, Any]:
               if(!node) return false; node.click(); return true;
             }})()"""))
 
+        async def click_dialog(fragment: str) -> bool:
+            return bool(await evaluate(f"""(() => {{
+              const text={json.dumps(fragment)};
+              const dialog=document.querySelector('[role=alertdialog]');
+              if(!dialog) return false;
+              const node=[...dialog.querySelectorAll('button')]
+                .find((item)=>!item.disabled&&(item.innerText||'').trim()===text);
+              if(!node) return false; node.click(); return true;
+            }})()"""))
+
         async def fill(selector: str, value: str) -> None:
             changed = await evaluate(f"""(() => {{
               const node=document.querySelector({json.dumps(selector)});
@@ -181,7 +191,9 @@ async def run(websocket_url: str) -> dict[str, Any]:
         await shot("authenticated-session-settings.png")
 
         assertions["revoke_all_clicked"] = await click("退出全部设备")
-        await wait_for("请先登录文化账户")
+        await wait_for("退出全部设备？")
+        assertions["revoke_all_confirmed"] = await click_dialog("退出全部设备")
+        await wait_for("登录你的 HAHA 文化账户")
         final_cookies = (await command("Network.getAllCookies"))["cookies"]
         final_names = {item["name"] for item in final_cookies if item.get("domain") in {"127.0.0.1", "localhost"}}
         assertions["credentials_cleared_after_revoke_all"] = not {"haha_access", "haha_refresh"}.intersection(final_names)

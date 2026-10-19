@@ -39,6 +39,7 @@ def main() -> None:
     api_url = os.environ["HAHA_PUBLIC_API_URL"].rstrip("/")
     web_origin = os.environ["HAHA_PUBLIC_WEB_ORIGIN"].rstrip("/")
     release_id = os.environ["HAHA_RELEASE_ID"]
+    git_sha = os.environ["HAHA_GIT_SHA"]
     token = os.environ["HAHA_RELEASE_ACCESS_TOKEN"]
     metrics_token = os.environ["HAHA_METRICS_TOKEN"]
     request_id = f"release-smoke-{uuid4().hex}"
@@ -80,7 +81,9 @@ def main() -> None:
 
     allowed_headers = cors_headers.get("access-control-allow-headers", "").lower()
     checks = {
-        "health": health_status == 200 and health.get("release_id") == release_id,
+        "health": health_status == 200
+        and health.get("release_id") == release_id
+        and health.get("git_sha") == git_sha,
         "readiness": ready_status == 200 and ready.get("status") == "ready",
         "web": web_status == 200,
         "anonymous_rejected": anonymous_status == 401,
@@ -97,6 +100,7 @@ def main() -> None:
     result = {
         "status": "passed" if all(checks.values()) else "failed",
         "release_id": release_id,
+        "git_sha": git_sha,
         "checks": checks,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))

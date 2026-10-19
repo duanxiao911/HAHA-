@@ -1,8 +1,8 @@
 # Gate F 目标架构
 
-状态：实施中
+状态：仓库与本地准发布门禁已通过；远端及外部发布门禁阻断
 
-基线：`83070f3`
+实施起点：`33a0e58`
 
 范围：生产工程，不包含公开发布授权
 
@@ -17,16 +17,20 @@
 - Async：Redis + Dramatiq。
 - Delivery：不可变镜像、Compose 发布包、HTTPS ingress、发布预检与烟测。
 - Supply chain：API/Worker/Migrate 使用 `/opt/haha-venv` 隔离 Python 包；Web 锁定已修复的
-  Next.js 与传递依赖版本，生产依赖审计进入 CI。
+  Next.js 与传递依赖版本；Python 发布镜像和 CI 共用复核后的 Linux 运行时约束锁，生产依赖
+  审计进入 CI。
 
 ## Gate F 增强边界
 
-1. `staging/production` 的 `/metrics` 使用独立 Bearer 凭据，且不得与 JWT 密钥复用。
-2. 发布预检、Compose、烟测与运维文档共享同一指标凭据契约。
-3. 容量烟测输出错误率、P50/P95/P99 并执行机器阈值判定。
-4. 恢复演练从当前 PostgreSQL 创建 custom-format 备份，只恢复到随机隔离数据库，核对
-   Alembic revision 及身份、创作、社区、学习、交易关键表计数。
-5. CI 纳入平台壳契约、Gate E 浏览器验收、容量阈值和当前 schema 恢复演练。
+1. `staging/production` 的 `/metrics` 使用独立 Bearer 凭据；数据库、JWT 与指标凭据三者不得复用。
+2. 发布预检、Compose、烟测与运维文档共享同一指标凭据、发布 ID 和完整 Git SHA 契约。
+3. API 与 Web 镜像记录 OCI revision；`/health` 暴露非秘密 Git SHA，烟测核对发布 ID 与 SHA。
+4. API 与动态 Web 壳统一输出基础安全响应头；不可信或超长请求 ID 由服务端替换。
+5. API 使用 `/ready` 健康检查；Worker 同时验证进程与 Redis；Web 等待 API ready 后启动。
+6. 容量烟测输出错误率、P50/P95/P99 并执行机器阈值判定。
+7. PostgreSQL 恢复演练只恢复到随机隔离数据库，核对 revision 与 17 张跨模块关键表。
+8. 媒体恢复演练核对 PostgreSQL 元数据、卷中文件、归档及隔离恢复后的大小和 SHA-256。
+9. CI 纳入平台壳、浏览器、容量、PostgreSQL 恢复和真实媒体恢复门禁。
 
 ## 明确不做
 
@@ -34,7 +38,7 @@
 - 不创建托管监控/告警账户，不虚构告警送达证据。
 - 不替代 ingress 的 TLS、HSTS、WAF 与网络访问控制。
 - 不将本机容量烟测外推为生产容量承诺。
-- 不解除真实媒体链、AI 非遗老师、真实支付等既有阻断。
+- 不把内部复核 AI、单机媒体链或沙盒交易外推为正式教学、生产媒体处理或真实支付。
 
 ## 关键质量属性
 
@@ -49,3 +53,5 @@
 - 当前指标是进程内计数器，多副本需外部采集聚合。
 - 尚无托管告警、分布式追踪、跨主机加密备份和 PITR。
 - 多副本 refresh token 竞争与分布式滥用控制仍需后续安全专项。
+- 现有开发媒体卷有 5 个无数据库记录的历史测试文件；隔离准发布卷的一致性演练已通过，
+  但开发卷在人工确认前不自动删除。

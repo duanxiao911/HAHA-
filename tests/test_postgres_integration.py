@@ -151,7 +151,11 @@ def test_postgres_user_center_assets_preferences_and_history_are_durable(reposit
     assert reloaded["history"][0]["completed"] is True
 
 
-def test_postgres_learning_loop_is_durable_server_graded_and_idempotent(repository) -> None:
+def test_postgres_learning_loop_is_durable_server_graded_and_idempotent(
+    repository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     repository.ensure_identity("learning-user", "pg-workspace", role="owner")
     identity = IdentityService(repository)
     identity.bootstrap("learning-user", "pg-workspace")

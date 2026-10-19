@@ -19,7 +19,10 @@ def _repository() -> SQLiteCreatorRepository:
     return repository
 
 
-def test_workbench_projects_active_identity_and_capability_boundaries() -> None:
+def test_workbench_projects_active_identity_and_capability_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     repository = _repository()
     identity = IdentityService(repository)
     center = UserCenterService(repository)

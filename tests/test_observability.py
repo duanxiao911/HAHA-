@@ -6,7 +6,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from haha_api.main import create_app
+from haha_api.main import create_app, normalize_request_id
 from haha_api.observability import JsonFormatter, Metrics
 from haha_core.repository import SQLiteCreatorRepository
 
@@ -51,12 +51,22 @@ def test_http_middleware_correlates_request_and_exposes_metrics() -> None:
 
     assert response.status_code == 200
     assert response.headers["X-Request-ID"] == "req-observe-002"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
     assert metrics_response.status_code == 200
     assert "haha_http_requests_total" in metrics_response.text
     assert 'route="/health"' in metrics_response.text
     assert "haha_http_request_duration_seconds_sum" in metrics_response.text
     assert metrics_response.headers["cache-control"] == "no-store"
     assert metrics_response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_request_id_rejects_unbounded_or_unsafe_values() -> None:
+    assert normalize_request_id("safe-request:001") == "safe-request:001"
+    generated = normalize_request_id("unsafe request\nvalue")
+    assert generated != "unsafe request\nvalue"
+    assert len(generated) == 32
 
 
 def test_shared_environment_requires_a_dedicated_metrics_secret(monkeypatch) -> None:
@@ -77,6 +87,7 @@ def test_shared_environment_protects_metrics_with_independent_bearer_token(
     monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
     monkeypatch.setenv("HAHA_JWT_SECRET", "jwt-secret-with-at-least-thirty-two-characters")
     monkeypatch.setenv("HAHA_METRICS_TOKEN", metrics_token)
+    monkeypatch.setenv("HAHA_ALLOWED_ORIGINS", "https://staging.haha.test")
     client = TestClient(create_app(SQLiteCreatorRepository(":memory:")))
 
     missing = client.get("/metrics")
@@ -90,6 +101,7 @@ def test_shared_environment_protects_metrics_with_independent_bearer_token(
     assert incorrect.status_code == 401
     assert authorized.status_code == 200
     assert "haha_http_requests_total" in authorized.text
+    assert authorized.headers["strict-transport-security"].startswith("max-age=")
 
 
 def test_shared_environment_rejects_reused_jwt_and_metrics_secret(monkeypatch) -> None:
@@ -101,3 +113,15 @@ def test_shared_environment_rejects_reused_jwt_and_metrics_secret(monkeypatch) -
 
     with pytest.raises(RuntimeError, match="不得与"):
         create_app(SQLiteCreatorRepository(":memory:"))
+
+
+def test_production_rejects_insecure_or_wildcard_origins(monkeypatch) -> None:
+    monkeypatch.setenv("HAHA_ENVIRONMENT", "production")
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", "jwt-secret-with-at-least-thirty-two-characters")
+    monkeypatch.setenv("HAHA_METRICS_TOKEN", "metrics-secret-with-at-least-thirty-two-characters")
+
+    for origins in ("*", "http://public.example.test", ""):
+        monkeypatch.setenv("HAHA_ALLOWED_ORIGINS", origins)
+        with pytest.raises(RuntimeError, match="HAHA_ALLOWED_ORIGINS|安全 origin"):
+            create_app(SQLiteCreatorRepository(":memory:"))

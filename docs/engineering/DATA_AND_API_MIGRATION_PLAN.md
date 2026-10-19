@@ -2,19 +2,23 @@
 
 ## 数据库边界
 
-Gate F 首批增强不新增表、列、索引或约束，因此不创建 Alembic revision。当前期望 head 为
-`20261016_0012`。发布仍先执行 `alembic upgrade head`，不得跳过迁移前备份。
+Gate F 增强不新增表、列、索引或约束，因此不创建 Alembic revision。当前期望 head 为
+`20261018_0015`。发布仍先执行 `alembic upgrade head`，不得跳过迁移前备份。
 
 ## 恢复兼容策略
 
 - 使用 PostgreSQL custom-format (`pg_dump -Fc`)。
 - 恢复目标必须是新建的随机 `haha_restore_*` 数据库。
-- 核对 `alembic_version` 以及 `users`、`memberships`、`projects`、`learning_profiles`、
-  `quiz_attempts`、`community_entities`、`commerce_orders` 计数。
+- 核对 `alembic_version` 以及身份、会话、创作、社区媒体、学习、AI 对话和交易共 17 张
+  关键表的记录计数。
 - 验证失败不修改源数据库，并阻断发布签署。
 - 默认验证后删除隔离库；调试保留必须显式使用 `--keep-restore-db`。
 
 这证明逻辑备份能恢复当前 schema 和选定跨模块记录，不证明跨区域灾备、PITR 或业务 RTO 已达标。
+
+社区媒体必须与 PostgreSQL 同一恢复点备份。媒体演练要求卷文件清单与
+`community_media_assets` 的 `storage_key`、大小和 SHA-256 完全一致，再验证归档解包后的清单；
+任一孤立文件或缺失文件都阻断发布。它不替代对象存储版本控制、恶意文件扫描或异地备份。
 
 ## API 契约变化
 
@@ -25,7 +29,8 @@ Gate F 首批增强不新增表、列、索引或约束，因此不创建 Alembi
 - 无/错误凭据返回 `401` 与 `WWW-Authenticate: Bearer`。
 - 成功响应增加 `Cache-Control: no-store` 与 `X-Content-Type-Options: nosniff`。
 
-`/health`、`/ready` 与业务 API 不变。指标密钥必须至少 32 字符且不得等于 JWT 密钥。
+`GET /health` 增加 `git_sha`，用于核对运行实例与不可变镜像来源；`/ready` 与业务响应结构不变。
+API 响应增加基础安全头，不可信请求 ID 会被替换。数据库密码、JWT 密钥和指标密钥必须分别设置。
 
 ## 回滚
 

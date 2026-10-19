@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import time
 from dataclasses import asdict
 from urllib.parse import unquote
@@ -87,6 +88,29 @@ from haha_learning.service import LearningService
 from haha_learning.tutor import HeritageTutor
 from haha_user_center.service import UserCenterNotFoundError, UserCenterService
 from haha_workbench.service import WorkbenchPermissionError, WorkbenchService
+
+REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def normalize_request_id(value: str) -> str:
+    candidate = value.strip()
+    return candidate if REQUEST_ID.fullmatch(candidate) else uuid4().hex
+
+
+def apply_security_headers(response: Response) -> None:
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+    )
+    if os.getenv("HAHA_ENVIRONMENT", "production").lower() in {
+        "staging",
+        "production",
+    }:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
 
 
 class ProjectCreate(BaseModel):
@@ -498,7 +522,7 @@ def create_app(
 
     @application.middleware("http")
     async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
-        request_id = request.headers.get("X-Request-ID") or uuid4().hex
+        request_id = normalize_request_id(request.headers.get("X-Request-ID", ""))
         token = request_id_context.set(request_id)
         started = time.perf_counter()
         response_status = 500
@@ -506,6 +530,7 @@ def create_app(
             response = await call_next(request)
             response_status = response.status_code
             response.headers["X-Request-ID"] = request_id
+            apply_security_headers(response)
             return response
         finally:
             duration = time.perf_counter() - started
@@ -534,6 +559,7 @@ def create_app(
             "service": "haha-creator-api",
             "version": "0.2.0",
             "release_id": os.getenv("HAHA_RELEASE_ID", "development"),
+            "git_sha": os.getenv("HAHA_GIT_SHA", "unknown"),
         }
 
     @application.get("/ready")

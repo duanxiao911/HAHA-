@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 IMAGE_DIGEST = re.compile(r"^[^\s]+@sha256:[0-9a-f]{64}$")
 LOCAL_IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
+GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 PLACEHOLDER_MARKERS = ("replace-with", "example.com", "changeme", "todo")
 ROLE_KEYS = (
     "HAHA_RELEASE_OWNER",
@@ -33,6 +34,7 @@ REQUIRED_KEYS = (
     "HAHA_JWT_SECRET",
     "HAHA_METRICS_TOKEN",
     "HAHA_RELEASE_ID",
+    "HAHA_GIT_SHA",
     *ROLE_KEYS,
 )
 
@@ -103,11 +105,20 @@ def validate(
         if value and len(value) < minimum:
             errors.append(f"{key} must contain at least {minimum} characters")
 
-    if (
-        values.get("HAHA_METRICS_TOKEN")
-        and values.get("HAHA_METRICS_TOKEN") == values.get("HAHA_JWT_SECRET")
-    ):
-        errors.append("HAHA_METRICS_TOKEN must be independent from HAHA_JWT_SECRET")
+    secret_values = {
+        key: values.get(key, "")
+        for key in ("POSTGRES_PASSWORD", "HAHA_JWT_SECRET", "HAHA_METRICS_TOKEN")
+        if values.get(key, "")
+    }
+    if len(set(secret_values.values())) != len(secret_values):
+        errors.append(
+            "POSTGRES_PASSWORD, HAHA_JWT_SECRET, and HAHA_METRICS_TOKEN "
+            "must be independent"
+        )
+
+    git_sha = values.get("HAHA_GIT_SHA", "")
+    if git_sha and not GIT_SHA.fullmatch(git_sha):
+        errors.append("HAHA_GIT_SHA must be a full 40-character lowercase commit SHA")
 
     api_url = values.get("HAHA_PUBLIC_API_URL", "").rstrip("/")
     web_origin = values.get("HAHA_PUBLIC_WEB_ORIGIN", "").rstrip("/")
@@ -140,6 +151,7 @@ def validate(
     for key in (
         *ROLE_KEYS,
         "HAHA_RELEASE_ID",
+        "HAHA_GIT_SHA",
         "POSTGRES_PASSWORD",
         "HAHA_JWT_SECRET",
         "HAHA_METRICS_TOKEN",
@@ -172,6 +184,7 @@ def main() -> None:
     print(json.dumps({
         "status": "passed",
         "release_id": values["HAHA_RELEASE_ID"],
+        "git_sha": values["HAHA_GIT_SHA"],
         "public_api_url": values["HAHA_PUBLIC_API_URL"],
         "public_web_origin": values["HAHA_PUBLIC_WEB_ORIGIN"],
         "images_pinned": True,

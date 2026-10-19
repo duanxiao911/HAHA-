@@ -25,9 +25,11 @@ RUN test -n "${NEXT_PUBLIC_API_BASE_URL}" \
 FROM ${NODE_BASE_IMAGE} AS runner
 ARG NEXT_PUBLIC_API_BASE_URL
 ARG NEXT_PUBLIC_AUTH_MODE=jwt
+ARG VCS_REF=unknown
 ENV NODE_ENV=production
 LABEL io.haha.web.api-base-url=$NEXT_PUBLIC_API_BASE_URL \
-      io.haha.web.auth-mode=$NEXT_PUBLIC_AUTH_MODE
+      io.haha.web.auth-mode=$NEXT_PUBLIC_AUTH_MODE \
+      org.opencontainers.image.revision=$VCS_REF
 WORKDIR /app
 COPY --from=builder --chown=65532:65532 /app/.next/standalone ./
 COPY --from=builder --chown=65532:65532 /app/.next/static ./.next/static
