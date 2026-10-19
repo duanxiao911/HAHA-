@@ -100,6 +100,14 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 )
             )
 
+        async def click_when_ready(fragment: str, timeout: float = 15) -> bool:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if await click(fragment):
+                    return True
+                await asyncio.sleep(0.25)
+            return False
+
         async def click_in_article(article_text: str, button_text: str) -> bool:
             return bool(
                 await evaluate(
@@ -108,6 +116,28 @@ async def run(websocket_url: str) -> dict[str, Any]:
                         .find((item)=>(item.innerText||'').includes({json.dumps(article_text)}));
                       const button=article&&[...article.querySelectorAll('button,a')]
                         .find((item)=>(item.innerText||'').includes({json.dumps(button_text)})&&!item.disabled);
+                      if(!button) return false; button.click(); return true;
+                    }})()"""
+                )
+            )
+
+        async def click_in_article_when_ready(
+            article_text: str, button_text: str, timeout: float = 15
+        ) -> bool:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if await click_in_article(article_text, button_text):
+                    return True
+                await asyncio.sleep(0.25)
+            return False
+
+        async def click_in_confirmation(button_text: str) -> bool:
+            return bool(
+                await evaluate(
+                    f"""(() => {{
+                      const dialog=document.querySelector('[role=\"alertdialog\"]');
+                      const button=dialog&&[...dialog.querySelectorAll('button')]
+                        .find((item)=>(item.innerText||'').trim()==={json.dumps(button_text)}&&!item.disabled);
                       if(!button) return false; button.click(); return true;
                     }})()"""
                 )
@@ -171,10 +201,18 @@ async def run(websocket_url: str) -> dict[str, Any]:
             forged["status"] == 200 and forged["body"].get("role") == "viewer"
         )
 
-        assertions["role_menu_at_page_top"] = await click("切换身份")
-        assertions["identity_manager_opened"] = await click("管理身份与申请")
-        assertions["creator_activated"] = await click_in_article(
+        assertions["role_menu_at_page_top"] = await click_when_ready("切换身份")
+        await wait_for("管理与开通身份")
+        assertions["identity_manager_opened"] = await click_when_ready(
+            "管理与开通身份"
+        )
+        await wait_for("切换与开通是两件事")
+        assertions["creator_activated"] = await click_in_article_when_ready(
             "开通创作者", "开通身份"
+        )
+        await wait_for("开通创作者身份？")
+        assertions["creator_activation_confirmed"] = await click_in_confirmation(
+            "确认开通"
         )
         await wait_for("创作者已开通")
         assertions["creator_switched"] = await click_in_article("创作者", "切换")
@@ -187,20 +225,24 @@ async def run(websocket_url: str) -> dict[str, Any]:
         )
         assertions["creator_project_created"] = project["status"] == 201
         await command("Page.reload")
-        await wait_for("今天从这里继续")
-        await click("创作者工作台")
         body = await wait_for("G4 真实浏览器创作项目")
         assertions["creator_project_restored"] = "创作项目" in body
 
-        await click("当前身份")
-        await click("管理身份与申请")
-        assertions["learner_activated"] = await click_in_article(
+        await click_when_ready("当前身份")
+        await wait_for("管理与开通身份")
+        await click_when_ready("管理与开通身份")
+        await wait_for("切换与开通是两件事")
+        assertions["learner_activated"] = await click_in_article_when_ready(
             "开通学习者", "开通身份"
+        )
+        await wait_for("开通学习者身份？")
+        assertions["learner_activation_confirmed"] = await click_in_confirmation(
+            "确认开通"
         )
         await wait_for("学习者已开通")
         assertions["learner_switched"] = await click_in_article("学习者", "切换")
-        # Learning remains a Gate C1 account capability on Today; the full
-        # learning-growth workspace belongs to Gate C3 and must not be faked.
+        # Learning is a real Gate C3 workspace. The tutor boundary depends on
+        # whether a real model and versioned source retrieval are configured.
         await wait_for("学习者能力状态")
         learned = await api(
             "/api/backend/api/user-center/library/want_to_learn/g4-heritage",
@@ -211,19 +253,22 @@ async def run(websocket_url: str) -> dict[str, Any]:
         await wait_for("今天从这里继续")
         body = await wait_for("G4 非遗学习样本")
         assertions["learner_boundary_visible"] = (
-            "AI 非遗老师" in body and "等待真实模型 API" in body
+            "AI 非遗老师" in body
+            and ("等待真实模型 API" in body or "版本化来源" in body)
         )
         learner = await api("/api/backend/api/identity/workbench?role=admin")
         assertions["persisted_context_authoritative"] = (
             learner["status"] == 200 and learner["body"].get("role") == "learner"
         )
 
-        await click("当前身份")
-        await click("管理身份与申请")
-        assertions["buyer_switched"] = await click_in_article("买家", "切换")
+        await click_when_ready("当前身份")
+        await wait_for("管理与开通身份")
+        await click_when_ready("管理与开通身份")
+        await wait_for("切换与开通是两件事")
+        assertions["buyer_switched"] = await click_in_article_when_ready("买家", "切换")
         body = await wait_for("买家能力状态")
-        assertions["commerce_is_honestly_blocked"] = (
-            "订单与履约" in body and "电商订单领域尚未接入" in body
+        assertions["commerce_sandbox_boundary_visible"] = (
+            "订单与履约" in body and "仅限内部沙盒订单与模拟履约" in body
         )
         await shot("multi-role-workbench.png")
 

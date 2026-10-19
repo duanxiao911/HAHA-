@@ -183,7 +183,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 "Emulation.setDeviceMetricsOverride",
                 {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width <= 768},
             )
-            body = await navigate("/", "让手艺继续发生")
+            body = await navigate("/community", "让手艺继续发生")
             await wait_for_rendered_feed()
             metrics = await evaluate("""(() => ({
               viewport: window.innerWidth,
