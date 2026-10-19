@@ -150,14 +150,34 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["achievements_visible"] = all(
             label in body for label in ("第一步", "有据可查", "检验理解")
         )
-        tutor_filled = await evaluate("""(() => {const field=document.querySelector('#tutor-question'); if(!field)return false; const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; setter.call(field,'中国剪纸有哪些主要特点？'); field.dispatchEvent(new Event('input',{bubbles:true})); return true;})()""")
-        assertions["tutor_question_filled"] = bool(tutor_filled)
-        await click("提问")
-        body = await wait_for("真实模型回答")
-        assertions["real_tutor_answer_visible"] = "[F-096] 中国剪纸" in body and "打开来源入口" in body
-        await command("Page.reload")
-        body = await wait_for("真实模型回答")
-        assertions["tutor_history_restored"] = "[F-096] 中国剪纸" in body
+        tutor_available = bool(
+            await evaluate("Boolean(document.querySelector('[data-testid=ai-tutor]'))")
+        )
+        if tutor_available:
+            tutor_filled = await evaluate("""(() => {const field=document.querySelector('#tutor-question'); if(!field)return false; const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; setter.call(field,'中国剪纸有哪些主要特点？'); field.dispatchEvent(new Event('input',{bubbles:true})); return true;})()""")
+            assertions["tutor_question_filled"] = bool(tutor_filled)
+            await click("提问")
+            body = await wait_for("真实模型回答")
+            assertions["real_tutor_answer_visible"] = (
+                "[F-096] 中国剪纸" in body and "打开来源入口" in body
+            )
+            await command("Page.reload")
+            body = await wait_for("真实模型回答")
+            assertions["tutor_history_restored"] = "[F-096] 中国剪纸" in body
+        else:
+            body = str(await evaluate("document.body?.innerText || ''"))
+            assertions["tutor_blocked_without_credentials"] = all(
+                text in body
+                for text in ("BLOCKED", "AI 非遗老师尚未接通", "真实 DeepSeek 模型凭据")
+            )
+            assertions["blocked_tutor_has_no_fake_controls_or_answer"] = not bool(
+                await evaluate(
+                    "Boolean(document.querySelector('#tutor-question, [data-testid=ai-tutor]'))"
+                )
+            )
+            await command("Page.reload")
+            body = await wait_for("AI 非遗老师尚未接通")
+            assertions["blocked_tutor_boundary_restored"] = "BLOCKED" in body
         await click("查看用户中心成长汇总")
         body = await wait_for("文化足迹与成长状态")
         assertions["growth_deep_link"] = "tab=archive" in str(await evaluate("location.search"))
