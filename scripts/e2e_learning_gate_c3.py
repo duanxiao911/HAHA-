@@ -67,43 +67,67 @@ def exercise() -> dict[str, object]:
         "POST", "/api/identity/roles/learner/activate", user_id, workspace_id
     )[0] == 200
     status, snapshot = request("GET", "/api/learning", user_id, workspace_id)
+    tutor_runtime_status = (
+        str(snapshot["ai_tutor"]["status"]) if status == 200 else "unknown"
+    )
     assertions["catalog_is_honest"] = (
         status == 200
-        and snapshot["ai_tutor"]["status"] == "available"
+        and tutor_runtime_status in {"available", "blocked"}
         and snapshot["paths"][0]["verification_status"] == "demo_only"
     )
-    status, tutor_answer = request(
-        "POST", "/api/learning/tutor/questions", user_id, workspace_id,
-        {"question": "中国剪纸有哪些主要特点？"}, "c3-api-tutor-000001",
-    )
-    tutor_result = tutor_answer.get("last_tutor_result", {}) if status == 200 else {}
-    assertions["real_tutor_grounded"] = (
-        status == 200
-        and tutor_result.get("mode") == "grounded_model"
-        and tutor_result.get("request_id")
-        and tutor_result.get("input_tokens", 0) > 0
-        and any(item.get("source_id") == "F-096" for item in tutor_result.get("citations", []))
-    )
-    _, tutor_replay = request(
-        "POST", "/api/learning/tutor/questions", user_id, workspace_id,
-        {"question": "中国剪纸有哪些主要特点？"}, "c3-api-tutor-000001",
-    )
-    assertions["tutor_idempotent_retry"] = (
-        tutor_replay.get("last_tutor_result", {}).get("id") == tutor_result.get("id")
-    )
-    assertions["tutor_idempotency_conflict"] = request(
-        "POST", "/api/learning/tutor/questions", user_id, workspace_id,
-        {"question": "昆曲的表演特点是什么？"}, "c3-api-tutor-000001",
-    )[0] == 409
-    status, no_source = request(
-        "POST", "/api/learning/tutor/questions", user_id, workspace_id,
-        {"question": "一个知识库里不存在的技艺是什么？"}, "c3-api-tutor-nosource",
-    )
-    assertions["tutor_unknown_entity_fail_closed"] = (
-        status == 200
-        and no_source.get("last_tutor_result", {}).get("mode") == "no_sources"
-        and no_source.get("last_tutor_result", {}).get("input_tokens") == 0
-    )
+    if tutor_runtime_status == "available":
+        status, tutor_answer = request(
+            "POST", "/api/learning/tutor/questions", user_id, workspace_id,
+            {"question": "中国剪纸有哪些主要特点？"}, "c3-api-tutor-000001",
+        )
+        tutor_result = tutor_answer.get("last_tutor_result", {}) if status == 200 else {}
+        assertions["real_tutor_grounded"] = (
+            status == 200
+            and tutor_result.get("mode") == "grounded_model"
+            and tutor_result.get("request_id")
+            and tutor_result.get("input_tokens", 0) > 0
+            and any(
+                item.get("source_id") == "F-096"
+                for item in tutor_result.get("citations", [])
+            )
+        )
+        _, tutor_replay = request(
+            "POST", "/api/learning/tutor/questions", user_id, workspace_id,
+            {"question": "中国剪纸有哪些主要特点？"}, "c3-api-tutor-000001",
+        )
+        assertions["tutor_idempotent_retry"] = (
+            tutor_replay.get("last_tutor_result", {}).get("id")
+            == tutor_result.get("id")
+        )
+        assertions["tutor_idempotency_conflict"] = request(
+            "POST", "/api/learning/tutor/questions", user_id, workspace_id,
+            {"question": "昆曲的表演特点是什么？"}, "c3-api-tutor-000001",
+        )[0] == 409
+        status, no_source = request(
+            "POST", "/api/learning/tutor/questions", user_id, workspace_id,
+            {"question": "一个知识库里不存在的技艺是什么？"},
+            "c3-api-tutor-nosource",
+        )
+        assertions["tutor_unknown_entity_fail_closed"] = (
+            status == 200
+            and no_source.get("last_tutor_result", {}).get("mode") == "no_sources"
+            and no_source.get("last_tutor_result", {}).get("input_tokens") == 0
+        )
+    else:
+        blocked_status, blocked = request(
+            "POST", "/api/learning/tutor/questions", user_id, workspace_id,
+            {"question": "中国剪纸有哪些主要特点？"}, "c3-api-tutor-blocked",
+        )
+        assertions["tutor_blocked_without_credentials"] = (
+            blocked_status == 503
+            and "真实 DeepSeek 模型凭据" in str(blocked.get("detail", ""))
+        )
+        status, blocked_snapshot = request(
+            "GET", "/api/learning", user_id, workspace_id
+        )
+        assertions["blocked_tutor_does_not_fake_history"] = (
+            status == 200 and not blocked_snapshot["tutor_history"]
+        )
     path = snapshot["paths"][0]
     lesson = next(item for item in path["units"] if item["kind"] == "lesson")
     quiz_unit = next(item for item in path["units"] if item["kind"] == "quiz")
@@ -167,6 +191,7 @@ def exercise() -> dict[str, object]:
     state = {
         "user_id": user_id,
         "workspace_id": workspace_id,
+        "tutor_runtime_status": tutor_runtime_status,
         "exercise_assertions": assertions,
     }
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -179,6 +204,7 @@ def verify() -> dict[str, object]:
     state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     user_id = state["user_id"]
     workspace_id = state["workspace_id"]
+    tutor_runtime_status = state["tutor_runtime_status"]
     status, snapshot = request("GET", "/api/learning", user_id, workspace_id)
     center_status, center = request("GET", "/api/user-center", user_id, workspace_id)
     assertions = {
@@ -193,10 +219,19 @@ def verify() -> dict[str, object]:
             and center["growth"]["completed_units"] == 2
             and center["growth"]["achievements"] == 3
         ),
-        "ai_teacher_available": snapshot["ai_tutor"]["status"] == "available",
+        "ai_teacher_runtime_restored": (
+            snapshot["ai_tutor"]["status"] == tutor_runtime_status
+        ),
         "tutor_history_restored": (
-            len(snapshot["tutor_history"]) == 2
-            and any(item["mode"] == "grounded_model" for item in snapshot["tutor_history"])
+            (
+                len(snapshot["tutor_history"]) == 2
+                and any(
+                    item["mode"] == "grounded_model"
+                    for item in snapshot["tutor_history"]
+                )
+            )
+            if tutor_runtime_status == "available"
+            else not snapshot["tutor_history"]
         ),
     }
     if not all(assertions.values()):
