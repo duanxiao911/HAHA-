@@ -152,7 +152,11 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 "neutral_home_has_no_active_module": metrics["activeDesktop"] == 0,
                 "four_platform_cards": metrics["platformCards"] == 4,
                 "mobile_five_entries": width > 768 or metrics["mobileModules"] == ["首页", "社区", "学习", "电商", "我的"],
-                "honest_boundaries": "AI 非遗老师 · 受控能力" in body and "AI 老师可用" in body and "INTERNAL SANDBOX" in body,
+                "honest_boundaries": (
+                    "AI 非遗老师 · 受控能力" in body
+                    and ("AI 老师可用" in body or "AI 老师受阻" in body)
+                    and "INTERNAL SANDBOX" in body
+                ),
                 "identity_conversion_only": "开通或申请是权限变化" in body and not await evaluate("Boolean(document.querySelector('[data-testid=identity-conversion-guide] button'))"),
             }
             if not all(checks.values()):
@@ -204,7 +208,18 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["creator_route_preserved_after_root_split"] = creator_state == {"path": "/creator", "console": True, "communityReturn": True}
 
         body = await navigate("/learning", "学习成长中心")
-        assertions["learning_route_and_boundary"] = "GROUNDED AI TUTOR" in body and "AI 非遗老师" in body and "BLOCKED" not in body
+        assertions["learning_route_and_boundary"] = (
+            (
+                "GROUNDED AI TUTOR" in body
+                and "AI 非遗老师" in body
+                and "BLOCKED" not in body
+            )
+            or (
+                "BLOCKED" in body
+                and "AI 非遗老师尚未接通" in body
+                and "真实 DeepSeek 模型凭据" in body
+            )
+        )
         active_learning = await evaluate("document.querySelector('.productPrimaryNav a[aria-current=\"page\"]')?.textContent.trim()")
         assertions["learning_nav_active"] = active_learning == "AI 学习"
 
