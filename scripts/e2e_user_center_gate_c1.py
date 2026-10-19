@@ -93,6 +93,20 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 await asyncio.sleep(0.25)
             raise TimeoutError(f"Timed out waiting for selector {selector!r}")
 
+        async def wait_for_value(
+            expression: str, expected: Any, timeout: float = 25
+        ) -> Any:
+            deadline = time.monotonic() + timeout
+            value = None
+            while time.monotonic() < deadline:
+                value = await evaluate(expression)
+                if value == expected:
+                    return value
+                await asyncio.sleep(0.25)
+            raise TimeoutError(
+                f"Timed out waiting for {expected!r}; last value was {value!r}"
+            )
+
         async def click(text: str) -> bool:
             deadline = time.monotonic() + 12
             while time.monotonic() < deadline:
@@ -210,15 +224,16 @@ async def run(websocket_url: str) -> dict[str, Any]:
         await wait_for("消息已删除")
         assertions["notification_removed"] = "没有系统消息" in str(await evaluate("document.body.innerText"))
         await navigate("/search", "搜索与发现")
-        assertions["search_submitted"] = bool(await evaluate("""(() => {const input=document.querySelector('#community-search-query'); const form=input?.closest('form'); if(!input||!form)return false; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'苗绣'); input.dispatchEvent(new Event('input',{bubbles:true})); form.requestSubmit(); return true;})()"""))
+        assertions["search_submitted"] = bool(await evaluate("""(async () => {const input=document.querySelector('#community-search-query'); const form=input?.closest('form'); if(!input||!form)return false; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'苗绣'); input.dispatchEvent(new Event('input',{bubbles:true})); await new Promise(resolve=>setTimeout(resolve,0)); form.requestSubmit(); return true;})()"""))
         await wait_for("“苗绣”的结果")
-        assertions["search_url_synced"] = str(await evaluate("new URLSearchParams(location.search).get('q')")) == "苗绣"
+        await wait_for_value("new URLSearchParams(location.search).get('q')", "苗绣")
+        assertions["search_url_synced"] = True
         assertions["search_scope_selected"] = await click("人物")
-        await asyncio.sleep(0.4)
-        assertions["search_scope_url_synced"] = str(await evaluate("new URLSearchParams(location.search).get('type')")) == "person"
+        await wait_for_value("new URLSearchParams(location.search).get('type')", "person")
+        assertions["search_scope_url_synced"] = True
         assertions["search_sort_selected"] = bool(await evaluate("""(() => {const select=document.querySelector('.productSectionHead select'); if(!select)return false; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,'popular'); select.dispatchEvent(new Event('change',{bubbles:true})); return true;})()"""))
-        await asyncio.sleep(0.4)
-        assertions["search_sort_url_synced"] = str(await evaluate("new URLSearchParams(location.search).get('sort')")) == "popular"
+        await wait_for_value("new URLSearchParams(location.search).get('sort')", "popular")
+        assertions["search_sort_url_synced"] = True
         assertions["search_clear_requested"] = await click("清空最近搜索")
         await wait_for("清空最近搜索？")
         assertions["search_clear_cancelled"] = await click("取消")
