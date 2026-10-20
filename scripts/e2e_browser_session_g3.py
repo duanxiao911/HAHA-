@@ -93,6 +93,13 @@ async def run(websocket_url: str) -> dict[str, Any]:
               if(!node) return false; node.click(); return true;
             }})()"""))
 
+        async def click_selector(selector: str) -> bool:
+            return bool(await evaluate(f"""(() => {{
+              const node=document.querySelector({json.dumps(selector)});
+              if(!node || node.disabled) return false;
+              node.click(); return true;
+            }})()"""))
+
         async def click_dialog(fragment: str) -> bool:
             return bool(await evaluate(f"""(() => {{
               const text={json.dumps(fragment)};
@@ -133,7 +140,11 @@ async def run(websocket_url: str) -> dict[str, Any]:
 
         await fill("input[type=email]", EMAIL)
         await fill("input[type=password]", PASSWORD)
-        assertions["login_submitted"] = await click("登录")
+        # The header also contains a login link. Target the form submit button
+        # so this acceptance cannot silently click the current page link.
+        assertions["login_submitted"] = await click_selector(
+            ".authLoginForm button[type=submit]"
+        )
         await wait_for("今天从这里继续")
 
         browser_storage = await evaluate("""({

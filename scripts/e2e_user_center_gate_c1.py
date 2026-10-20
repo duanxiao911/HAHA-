@@ -140,7 +140,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
             metrics = await evaluate("({viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth,nav:[...document.querySelectorAll('.identityViewNav button')].map(x=>x.innerText)})")
             checks = {
                 "loaded": "今天从这里继续" in body,
-                "core_views": metrics["nav"] == ["今日", "文化资产", "消息与任务 1", "设置"],
+                "core_views": metrics["nav"] == ["概览", "我的内容", "消息 1", "设置"],
                 "identity_removed_from_main_nav": "身份与工作台" not in metrics["nav"],
                 "top_role_menu": bool(await evaluate("Boolean(document.querySelector('.identityProfileTrigger'))")),
                 "no_overflow": metrics["scrollWidth"] <= metrics["viewport"] + 1,
@@ -181,7 +181,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
             raise RuntimeError("Could not click creator follow button")
         await wait_for("已关注并同步到文化账户")
         await navigate("/identity", "今天从这里继续")
-        assertions["archive_opened"] = await click("文化资产")
+        assertions["archive_opened"] = await click("我的内容")
         body = await wait_for("收藏、想学与稍后看已保存到服务端")
         assertions["archive_url_synced"] = "tab=archive" in str(await evaluate("location.search"))
         assertions["assets_restored"] = int(await evaluate("document.querySelectorAll('.identityTaskList li').length")) >= 3
@@ -201,11 +201,11 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["profile_submitted"] = await click("保存账户资料")
         await wait_for("账户资料已保存")
         await command("Page.reload")
-        body = await wait_for("真实浏览器体验员的文化账户")
+        body = await wait_for("你好，真实浏览器体验员")
         assertions["profile_persisted"] = "贵州" in body
 
-        assertions["inbox_opened"] = await click("消息与任务")
-        await wait_for("系统消息与身份任务")
+        assertions["inbox_opened"] = await click("消息")
+        await wait_for("系统消息与专业工作台任务")
         if "标记已读" in str(await evaluate("document.body.innerText")):
             assertions["notification_read"] = await click("标记已读")
             await wait_for("消息已读")
