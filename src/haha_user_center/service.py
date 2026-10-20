@@ -78,10 +78,7 @@ class UserCenterService:
         history = self.repository.list_watch_history(user_id, workspace_id)
         notifications = self.repository.list_user_notifications(user_id, workspace_id)
         unread = sum(1 for item in notifications if not item.read_at)
-        active_roles = [
-            item for item in identity["roles"]
-            if isinstance(item, dict) and item.get("status") == "active"
-        ]
+        professional_roles = identity.get("professional_roles", [])
         completed_tasks = sum(
             1 for item in identity["tasks"]
             if isinstance(item, dict) and item.get("status") == "completed"
@@ -140,7 +137,7 @@ class UserCenterService:
                 "latest_activity_at": max(activity_times) if activity_times else "",
             },
             "growth": {
-                "active_roles": len(active_roles),
+                "active_roles": len(professional_roles),
                 "completed_tasks": completed_tasks,
                 "open_tasks": open_tasks,
                 "has_cultural_footprint": bool(activity_times),

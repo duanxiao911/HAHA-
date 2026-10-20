@@ -40,9 +40,11 @@ from haha_api.auth import (
 from haha_api.observability import log_event, metrics, request_id_context
 from haha_auth.service import (
     AccountLockedError,
+    AccountRegistrationError,
     AuthService,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
+    RegistrationDisabledError,
 )
 from haha_commerce.bootstrap import build_commerce_repository
 from haha_commerce.domain import (
@@ -194,7 +196,14 @@ class AuthLoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=1, max_length=256)
-    workspace_id: str = Field(min_length=1, max_length=100)
+    workspace_id: str = Field(default="", max_length=100)
+
+
+class AuthRegistrationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str = Field(min_length=2, max_length=40)
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=12, max_length=256)
 
 
 class AuthRefreshRequest(BaseModel):
@@ -508,10 +517,26 @@ def create_app(
         )
         profile = snapshot["profile"]
         account = snapshot["account"]
+        roles = snapshot["roles"]
         assert isinstance(profile, dict)
         assert isinstance(account, dict)
+        assert isinstance(roles, list)
+        active_grants = {
+            str(item.get("role", ""))
+            for item in roles
+            if isinstance(item, dict) and item.get("status") == "active"
+        }
+        active_context = str(profile.get("active_role", "viewer"))
+        # Internal review authority is a server-side employee grant, never a
+        # public context switch. It takes precedence for community moderation.
+        actor_role = (
+            "admin" if "admin" in active_grants
+            else "reviewer" if "reviewer" in active_grants
+            else active_context if active_context in {"creator", "contributor"}
+            else "viewer"
+        )
         return (
-            str(profile.get("active_role", "viewer")),
+            actor_role,
             str(account.get("display_name", principal.user_id)),
         )
 
@@ -948,6 +973,19 @@ def create_app(
                 status_code=429, detail=str(exc), headers={"Retry-After": "900"}
             ) from exc
         metrics.add("haha_auth_login_success_total")
+        return result
+
+    @application.post("/api/auth/register", status_code=status.HTTP_201_CREATED)
+    def register_account(payload: AuthRegistrationRequest) -> dict[str, object]:
+        try:
+            result = auth_service.register(**payload.model_dump())
+        except RegistrationDisabledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except AccountRegistrationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        metrics.add("haha_auth_registration_success_total")
         return result
 
     @application.post("/api/auth/refresh")

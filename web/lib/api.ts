@@ -121,15 +121,32 @@ export type AuthSession = {
   account: { user_id: string; workspace_id: string; role: string };
 };
 
-export async function loginAccount(email: string, password: string, workspaceId: string): Promise<AuthSession> {
+export async function loginAccount(email: string, password: string): Promise<AuthSession> {
   const response = await fetch("/api/session/login", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, workspace_id: workspaceId }),
+    body: JSON.stringify({ email, password }),
     cache: "no-store",
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: "登录失败" }));
     throw new Error(String(payload.detail ?? `登录失败：${response.status}`));
+  }
+  const session = await response.json() as AuthSession;
+  setAuthState("authenticated");
+  return session;
+}
+
+export async function registerAccount(
+  displayName: string, email: string, password: string,
+): Promise<AuthSession> {
+  const response = await fetch("/api/session/register", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ display_name: displayName, email, password }),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "注册失败" }));
+    throw new Error(String(payload.detail ?? `注册失败：${response.status}`));
   }
   const session = await response.json() as AuthSession;
   setAuthState("authenticated");
@@ -263,6 +280,8 @@ export type IdentitySnapshot = {
     self_activate: BusinessRole[];
     apply: BusinessRole[];
   };
+  consumer_capabilities: BusinessRole[];
+  professional_roles: BusinessRole[];
 };
 
 export type UserCenterLibraryItem = {

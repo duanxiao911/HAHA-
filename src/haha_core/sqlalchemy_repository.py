@@ -14,6 +14,7 @@ from sqlalchemy import (
     Column,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     MetaData,
     String,
@@ -111,6 +112,11 @@ auth_credentials = Table(
     Column("created_at", String(40), nullable=False),
     Column("updated_at", String(40), nullable=False),
     UniqueConstraint("email", "workspace_id", name="uq_auth_credential_email_workspace"),
+)
+Index(
+    "uq_auth_credential_email_lower",
+    func.lower(auth_credentials.c.email),
+    unique=True,
 )
 
 auth_sessions = Table(
@@ -812,6 +818,63 @@ class SQLAlchemyCreatorRepository:
                 .first()
             )
         return AuthCredential(**row) if row else None
+
+    def get_auth_credential_by_email(self, email: str) -> AuthCredential | None:
+        with self.engine.connect() as connection:
+            row = (
+                connection.execute(
+                    select(auth_credentials).where(
+                        func.lower(auth_credentials.c.email) == email.lower()
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return AuthCredential(**row) if row else None
+
+    def create_personal_account(
+        self, credential: AuthCredential, *, workspace_name: str, display_name: str
+    ) -> bool:
+        now = credential.created_at
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(
+                    users.insert().values(
+                        id=credential.user_id,
+                        email=credential.email,
+                        created_at=now,
+                    )
+                )
+                connection.execute(
+                    workspaces.insert().values(
+                        id=credential.workspace_id,
+                        name=workspace_name,
+                        created_at=now,
+                    )
+                )
+                connection.execute(
+                    memberships.insert().values(
+                        user_id=credential.user_id,
+                        workspace_id=credential.workspace_id,
+                        role="owner",
+                        created_at=now,
+                    )
+                )
+                connection.execute(
+                    user_profiles.insert().values(
+                        user_id=credential.user_id,
+                        workspace_id=credential.workspace_id,
+                        display_name=display_name,
+                        active_role="viewer",
+                        personalization_enabled=0,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                connection.execute(auth_credentials.insert().values(**asdict(credential)))
+        except IntegrityError:
+            return False
+        return True
 
     def save_auth_credential(self, credential: AuthCredential) -> None:
         values = asdict(credential)

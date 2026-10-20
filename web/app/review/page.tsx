@@ -87,9 +87,9 @@ export default function ReviewPage() {
       ) : snapshot.runtime.recoveryNotice ? (
         <StateNotice kind="offline" title="审核队列暂时不可用" description={snapshot.runtime.recoveryNotice} />
       ) : !canReview ? (
-        <StateNotice kind="forbidden" title="当前身份不能进入审核工作台" description="请使用经过授权的审核员或管理员身份；创作者不能审核自己的投稿。" actionLabel="前往身份中心" actionHref="/identity" />
+        <StateNotice kind="forbidden" title="当前账户没有审核权限" description="审核员和管理员由平台内部邀请并授权；创作者不能审核自己的投稿。" actionLabel="返回用户中心" actionHref="/identity" />
       ) : !drafts.length ? (
-        <StateNotice kind="empty" title="当前没有待审核投稿" description={apiMode ? "服务端队列中没有当前身份可处理的投稿。" : "先完成一份投稿并提交，本地审核任务会出现在这里。"} actionLabel="进入投稿向导" actionHref="/creator/submissions/new" />
+        <StateNotice kind="empty" title="当前没有待审核投稿" description={apiMode ? "服务端队列中没有当前账户可处理的投稿。" : "先完成一份投稿并提交，本地审核任务会出现在这里。"} actionLabel="进入投稿向导" actionHref="/creator/submissions/new" />
       ) : (
         <div className="productReviewLayout">
           <ul className="productDraftList" aria-label="投稿列表">

@@ -64,7 +64,7 @@ def test_library_follow_and_history_are_durable_and_idempotent() -> None:
         "first_activity_at": snapshot["footprint"]["first_activity_at"],
         "latest_activity_at": snapshot["footprint"]["latest_activity_at"],
     }
-    assert snapshot["growth"]["active_roles"] == 2
+    assert snapshot["growth"]["active_roles"] == 0
     assert snapshot["growth"]["has_cultural_footprint"] is True
     assert snapshot["summary"]["following"] == 1
     assert snapshot["summary"]["history"] == 1

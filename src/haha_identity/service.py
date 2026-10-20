@@ -10,7 +10,9 @@ from uuid import uuid4
 from haha_identity.domain import (
     APPLICATION_ROLES,
     BASE_ROLES,
+    CONSUMER_ROLES,
     CONTROLLED_ROLES,
+    PUBLIC_PROFESSIONAL_ROLES,
     SELF_ACTIVATABLE_ROLES,
     BusinessRole,
     IdentityAuditEvent,
@@ -60,6 +62,8 @@ class IdentityService:
         self.repository = repository
 
     def bootstrap(self, user_id: str, workspace_id: str) -> dict[str, object]:
+        if not self.repository.get_membership_role(user_id, workspace_id):
+            raise IdentityPermissionError("当前账户不属于该工作空间")
         profile = self.repository.ensure_user_profile(user_id, workspace_id)
         grants = self.repository.list_role_grants(user_id, workspace_id)
         active_roles = {BusinessRole(item.role) for item in grants if item.status == "active"}
@@ -67,7 +71,10 @@ class IdentityService:
             self._grant(user_id, workspace_id, role, actor_user_id="system")
         grants = self.repository.list_role_grants(user_id, workspace_id)
         active_values = {item.role for item in grants if item.status == "active"}
-        if profile.active_role not in active_values:
+        if (
+            profile.active_role not in active_values
+            or BusinessRole(profile.active_role) not in PUBLIC_PROFESSIONAL_ROLES
+        ):
             profile = replace(profile, active_role=BusinessRole.VIEWER.value, updated_at=_now())
             self.repository.save_user_profile(profile)
         return self.snapshot(user_id, workspace_id)
@@ -94,6 +101,15 @@ class IdentityService:
                 "self_activate": [role.value for role in sorted(SELF_ACTIVATABLE_ROLES - {BusinessRole(value) for value in active_roles})],
                 "apply": [role.value for role in sorted(APPLICATION_ROLES - {BusinessRole(value) for value in active_roles})],
             },
+            "consumer_capabilities": [
+                role.value for role in sorted(CONSUMER_ROLES)
+            ],
+            "professional_roles": [
+                item.role
+                for item in grants
+                if item.status == "active"
+                and BusinessRole(item.role) in PUBLIC_PROFESSIONAL_ROLES
+            ],
         }
 
     def activate_role(self, user_id: str, workspace_id: str, role_value: str) -> dict[str, object]:
@@ -171,6 +187,10 @@ class IdentityService:
 
     def switch_context(self, user_id: str, workspace_id: str, role_value: str) -> dict[str, object]:
         role = self._parse_role(role_value)
+        if role in CONSUMER_ROLES:
+            raise IdentityPermissionError("浏览、学习和购物是账户默认能力，无需切换身份")
+        if role in CONTROLLED_ROLES:
+            raise IdentityPermissionError("内部员工权限不能通过公众用户中心切换")
         grants = self.repository.list_role_grants(user_id, workspace_id)
         if not any(item.role == role.value and item.status == "active" for item in grants):
             raise IdentityPermissionError("当前账户未获得该身份授权")

@@ -140,3 +140,76 @@ def test_login_error_does_not_reveal_account_existence(monkeypatch: pytest.Monke
     missing_account = client.post("/api/auth/login", json={"email": "missing@haha.local", "password": "wrong", "workspace_id": "auth-workspace"})
     assert wrong_password.status_code == missing_account.status_code == 401
     assert wrong_password.json()["detail"] == missing_account.json()["detail"]
+
+
+def test_public_registration_creates_one_personal_account_and_logs_in_without_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HAHA_ENVIRONMENT", "development")
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_SELF_REGISTRATION_ENABLED", "true")
+    monkeypatch.setenv("HAHA_JWT_SECRET", "registration-test-jwt-secret-long-enough-2026")
+    monkeypatch.setenv("HAHA_PASSWORD_PBKDF2_ITERATIONS", "1000")
+    repository = SQLiteCreatorRepository(":memory:")
+    client = TestClient(create_app(repository))
+
+    registered = client.post(
+        "/api/auth/register",
+        json={
+            "display_name": "新成员",
+            "email": "New.Member@HAHA.local",
+            "password": "Strong-Register-Password-2026",
+        },
+    )
+    assert registered.status_code == 201
+    account = registered.json()["account"]
+    assert account["user_id"].startswith("user_")
+    assert account["workspace_id"].startswith("personal_")
+    assert account["role"] == "owner"
+
+    identity = client.get(
+        "/api/identity/me",
+        headers={"Authorization": f"Bearer {registered.json()['access_token']}"},
+    )
+    assert identity.status_code == 200
+    assert identity.json()["profile"]["display_name"] == "新成员"
+    assert {item["role"] for item in identity.json()["roles"]} == {
+        "viewer", "buyer", "learner"
+    }
+
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "new.member@haha.local", "password": "Strong-Register-Password-2026"},
+    )
+    assert login.status_code == 200
+    assert login.json()["account"] == account
+
+    duplicate = client.post(
+        "/api/auth/register",
+        json={
+            "display_name": "重复成员",
+            "email": "NEW.MEMBER@HAHA.LOCAL",
+            "password": "Another-Strong-Password-2026",
+        },
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "暂时无法使用该邮箱创建账户"
+
+
+def test_public_registration_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HAHA_SELF_REGISTRATION_ENABLED", raising=False)
+    monkeypatch.setenv("HAHA_JWT_SECRET", "registration-disabled-secret-long-enough-2026")
+    repository = SQLiteCreatorRepository(":memory:")
+    client = TestClient(create_app(repository))
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "display_name": "未开放成员",
+            "email": "member@haha.local",
+            "password": "Strong-Register-Password-2026",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "自助注册当前未开放"

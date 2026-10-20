@@ -42,15 +42,15 @@ def find_chrome() -> Path:
     raise RuntimeError("Chrome or Chromium was not found")
 
 
-def activate_learner() -> None:
+def prepare_account() -> None:
     call = urllib.request.Request(
-        f"{API_URL}/api/identity/roles/learner/activate",
+        f"{API_URL}/api/identity/me",
         headers=HEADERS,
-        method="POST",
+        method="GET",
     )
     with urllib.request.urlopen(call, timeout=20) as response:
         if response.status != 200:
-            raise RuntimeError(f"Learner activation failed: {response.status}")
+            raise RuntimeError(f"Account preparation failed: {response.status}")
 
 
 async def run(websocket_url: str) -> dict[str, Any]:
@@ -192,7 +192,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
 
 def main() -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    activate_learner()
+    prepare_account()
     with tempfile.TemporaryDirectory(prefix="haha-c3-e2e-", ignore_cleanup_errors=True) as profile:
         process = subprocess.Popen([str(find_chrome()), "--headless=new", f"--remote-debugging-port={DEBUG_PORT}", "--remote-allow-origins=*", f"--user-data-dir={profile}", "--disable-extensions", "--no-first-run", "--hide-scrollbars", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:

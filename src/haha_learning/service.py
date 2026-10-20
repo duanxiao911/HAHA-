@@ -9,6 +9,7 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from haha_identity.service import IdentityPermissionError, IdentityService
 from haha_learning.domain import (
     EnrollmentStatus,
     KnowledgeCard,
@@ -82,6 +83,7 @@ class LearningService:
         tutor_request_limit: int | None = None,
     ) -> None:
         self.repository = repository
+        self.identity = IdentityService(repository)
         self.tutor = tutor or HeritageTutor()
         self.tutor_request_limit = tutor_request_limit or int(
             os.getenv("HAHA_TUTOR_REQUEST_LIMIT_24H", "20")
@@ -742,11 +744,15 @@ class LearningService:
         }
 
     def _require_learner(self, user_id: str, workspace_id: str) -> None:
+        try:
+            self.identity.bootstrap(user_id, workspace_id)
+        except IdentityPermissionError as exc:
+            raise LearningPermissionError("当前账户没有学习中心访问权限") from exc
         if not any(
             item.role == "learner" and item.status == "active"
             for item in self.repository.list_role_grants(user_id, workspace_id)
         ):
-            raise LearningPermissionError("当前账户未开通学习者身份")
+            raise LearningPermissionError("当前账户没有学习中心访问权限")
 
     @staticmethod
     def _require_matching_idempotency(

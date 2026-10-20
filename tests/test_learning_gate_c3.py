@@ -20,12 +20,7 @@ def _repository() -> SQLiteCreatorRepository:
     repository.ensure_identity("learner-a", "workspace-a", role="owner")
     repository.ensure_identity("member-b", "workspace-a", role="viewer")
     IdentityService(repository).bootstrap("learner-a", "workspace-a")
-    IdentityService(repository).bootstrap("member-b", "workspace-a")
     return repository
-
-
-def _activate(repository: SQLiteCreatorRepository, user_id: str) -> None:
-    IdentityService(repository).activate_role(user_id, "workspace-a", "learner")
 
 
 def _correct_answers(snapshot: dict[str, object]) -> dict[str, int]:
@@ -40,25 +35,26 @@ def _correct_answers(snapshot: dict[str, object]) -> dict[str, int]:
     return {item["id"]: 1 for item in quiz_unit["quiz"]["questions"]}
 
 
-def test_learning_requires_persisted_learner_grant(
+def test_learning_requires_workspace_membership_and_grants_default_capability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     repository = _repository()
     service = LearningService(repository)
 
-    with pytest.raises(LearningPermissionError, match="未开通学习者"):
-        service.bootstrap("member-b", "workspace-a")
+    with pytest.raises(LearningPermissionError, match="没有学习中心访问权限"):
+        service.bootstrap("outsider", "workspace-a")
 
-    _activate(repository, "member-b")
     snapshot = service.bootstrap("member-b", "workspace-a")
+    assert "learner" in {
+        item.role for item in repository.list_role_grants("member-b", "workspace-a")
+    }
     assert snapshot["ai_tutor"]["status"] == "blocked"
     assert snapshot["paths"][0]["verification_status"] == "demo_only"
 
 
 def test_complete_learning_loop_is_durable_idempotent_and_auditable() -> None:
     repository = _repository()
-    _activate(repository, "learner-a")
     center = UserCenterService(repository)
     center.bootstrap("learner-a", "workspace-a")
     center.set_library_item(
@@ -164,8 +160,6 @@ def test_complete_learning_loop_is_durable_idempotent_and_auditable() -> None:
 
 def test_card_versions_and_learning_candidate_ownership_fail_closed() -> None:
     repository = _repository()
-    _activate(repository, "learner-a")
-    _activate(repository, "member-b")
     center = UserCenterService(repository)
     center.bootstrap("learner-a", "workspace-a")
     center.bootstrap("member-b", "workspace-a")
@@ -213,11 +207,10 @@ def test_learning_api_permission_idempotency_and_server_grading(
     repository = _repository()
     client = TestClient(create_app(repository))
     headers_a = {"X-User-ID": "learner-a", "X-Workspace-ID": "workspace-a"}
-    headers_b = {"X-User-ID": "member-b", "X-Workspace-ID": "workspace-a"}
+    ordinary_account = {"X-User-ID": "ordinary", "X-Workspace-ID": "workspace-a"}
 
-    assert client.get("/api/learning?role=learner", headers=headers_b).status_code == 403
-    assert client.post(
-        "/api/identity/roles/learner/activate", headers=headers_a
+    assert client.get(
+        "/api/learning?role=learner", headers=ordinary_account
     ).status_code == 200
     snapshot = client.get("/api/learning", headers=headers_a)
     assert snapshot.status_code == 200
@@ -257,7 +250,6 @@ def test_sqlalchemy_learning_adapter_persists_the_same_transactional_loop() -> N
     repository.ensure_identity("sa-learner", "sa-workspace", role="owner")
     identity = IdentityService(repository)
     identity.bootstrap("sa-learner", "sa-workspace")
-    identity.activate_role("sa-learner", "sa-workspace", "learner")
     service = LearningService(repository)
 
     service.bootstrap("sa-learner", "sa-workspace")

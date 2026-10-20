@@ -56,15 +56,11 @@ def exercise() -> dict[str, object]:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     suffix = uuid4().hex[:10]
     user_id = f"c3-learner-{suffix}"
-    outsider = f"c3-outsider-{suffix}"
     workspace_id = f"c3-learning-{suffix}"
     assertions: dict[str, bool] = {}
 
-    assertions["non_learner_denied"] = request(
-        "GET", "/api/learning", outsider, workspace_id
-    )[0] == 403
-    assertions["learner_activated"] = request(
-        "POST", "/api/identity/roles/learner/activate", user_id, workspace_id
+    assertions["ordinary_account_gets_learner_capability"] = request(
+        "GET", "/api/learning", user_id, workspace_id
     )[0] == 200
     status, snapshot = request("GET", "/api/learning", user_id, workspace_id)
     tutor_runtime_status = (

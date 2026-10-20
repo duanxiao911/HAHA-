@@ -119,10 +119,10 @@ async def run(websocket_url: str) -> dict[str, Any]:
             await command("Emulation.setDeviceMetricsOverride", {
                 "width": width, "height": 900, "deviceScaleFactor": 1, "mobile": width <= 768,
             })
-            body = await navigate("/login", "登录你的 HAHA 文化账户")
+            body = await navigate("/login", "登录 HAHA")
             metrics = await evaluate("({viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth})")
             checks = {
-                "form_visible": "安全登录" in body,
+                "form_visible": "欢迎回来" in body,
                 "no_overflow": metrics["scrollWidth"] <= metrics["viewport"] + 1,
             }
             if not all(checks.values()):
@@ -133,14 +133,13 @@ async def run(websocket_url: str) -> dict[str, Any]:
         await command("Emulation.setDeviceMetricsOverride", {
             "width": 1280, "height": 900, "deviceScaleFactor": 1, "mobile": False,
         })
-        await navigate("/identity", "请先登录文化账户")
+        await navigate("/identity", "登录后查看用户中心")
         assertions["protected_center_guides_to_login"] = await click("前往登录")
-        await wait_for("登录你的 HAHA 文化账户")
+        await wait_for("登录 HAHA")
 
         await fill("input[type=email]", EMAIL)
-        await fill("input[autocomplete=organization]", WORKSPACE)
         await fill("input[type=password]", PASSWORD)
-        assertions["login_submitted"] = await click("安全登录")
+        assertions["login_submitted"] = await click("登录")
         await wait_for("今天从这里继续")
         token_state = await evaluate("({access:Boolean(sessionStorage.getItem('haha_access_token')),refresh:Boolean(sessionStorage.getItem('haha_refresh_token'))})")
         assertions["session_stored_in_tab"] = bool(token_state["access"] and token_state["refresh"])
@@ -155,9 +154,9 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["refresh_token_rotated"] = bool(rotated["refresh"] and rotated["refresh"] != old_refresh)
 
         active_refresh = rotated["refresh"]
-        await navigate("/login", "当前标签页已有登录会话")
+        await navigate("/login", "你已经登录")
         assertions["logout_submitted"] = await click("退出当前会话")
-        await wait_for("登录你的 HAHA 文化账户")
+        await wait_for("登录 HAHA")
         cleared = await evaluate("!sessionStorage.getItem('haha_access_token')&&!sessionStorage.getItem('haha_refresh_token')")
         assertions["browser_session_cleared"] = bool(cleared)
         refresh_body = json.dumps({"refresh_token": active_refresh})
@@ -168,11 +167,10 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["server_refresh_revoked"] = revoked_status == 401
 
         await fill("input[type=email]", EMAIL)
-        await fill("input[autocomplete=organization]", WORKSPACE)
         await fill("input[type=password]", "deliberately-wrong-password")
-        await click("安全登录")
-        body = await wait_for("邮箱、密码或工作空间不正确")
-        assertions["generic_invalid_login_error"] = "邮箱、密码或工作空间不正确" in body
+        await click("登录")
+        body = await wait_for("邮箱或密码不正确")
+        assertions["generic_invalid_login_error"] = "邮箱或密码不正确" in body
         await shot("invalid-login.png")
 
         browser_errors = [

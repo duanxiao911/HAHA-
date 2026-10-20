@@ -42,24 +42,15 @@ def find_chrome() -> Path:
     raise RuntimeError("Chrome or Chromium was not found")
 
 
-def activate_learner() -> None:
+def prepare_account() -> None:
     request = urllib.request.Request(
-        f"{API_URL}/api/identity/roles/learner/activate",
+        f"{API_URL}/api/identity/me",
         headers=HEADERS,
-        method="POST",
+        method="GET",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
         if response.status != 200:
-            raise RuntimeError(f"Learner activation failed: {response.status}")
-    switch = urllib.request.Request(
-        f"{API_URL}/api/identity/context",
-        data=json.dumps({"role": "learner"}).encode("utf-8"),
-        headers={**HEADERS, "Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(switch, timeout=20) as response:
-        if response.status != 200:
-            raise RuntimeError(f"Learner context switch failed: {response.status}")
+            raise RuntimeError(f"Account preparation failed: {response.status}")
 
 
 async def run(websocket_url: str) -> dict[str, Any]:
@@ -136,7 +127,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
         for width in (390, 768, 1440):
             await command("Emulation.setDeviceMetricsOverride", {"width": width, "height": 920, "deviceScaleFactor": 1, "mobile": width <= 768})
             body = await navigate("/", "四大板块，一处进入")
-            body = await wait_for("当前使用“学习者”视角")
+            body = await wait_for("一个账户连接观看、学习、收藏与购物")
             metrics = await evaluate("""(() => ({
               viewport: innerWidth,
               scrollWidth: document.documentElement.scrollWidth,
@@ -146,7 +137,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
               platformCards: document.querySelectorAll('.platformModuleCard').length
             }))()""")
             checks = {
-                "loaded_real_summary": "当前使用“学习者”视角" in body,
+                "loaded_real_summary": "一个账户连接观看、学习、收藏与购物" in body,
                 "no_overflow": metrics["scrollWidth"] <= metrics["viewport"] + 1,
                 "desktop_four_modules": metrics["desktopModules"] == ["视频社区", "非遗电商", "AI 学习", "用户中心"],
                 "neutral_home_has_no_active_module": metrics["activeDesktop"] == 0,
@@ -157,7 +148,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
                     and ("AI 老师可用" in body or "AI 老师受阻" in body)
                     and "INTERNAL SANDBOX" in body
                 ),
-                "identity_conversion_only": "开通或申请是权限变化" in body and not await evaluate("Boolean(document.querySelector('[data-testid=identity-conversion-guide] button'))"),
+                "professional_workbench_only": "浏览、学习与购物不需要切换身份" in body and not await evaluate("Boolean(document.querySelector('[data-testid=identity-conversion-guide] button'))"),
             }
             if not all(checks.values()):
                 raise RuntimeError({"viewport": width, "checks": checks, "metrics": metrics})
@@ -228,16 +219,16 @@ async def run(websocket_url: str) -> dict[str, Any]:
         active_commerce = await evaluate("document.querySelector('.productPrimaryNav a[aria-current=\"page\"]')?.textContent.trim()")
         assertions["commerce_nav_active"] = active_commerce == "非遗电商"
 
-        await navigate("/identity?manage=roles", "切换与开通是两件事")
+        await navigate("/identity?manage=roles", "普通功能不需要切换身份")
         identity_state = await evaluate("""(() => ({
           active: document.querySelector('.productPrimaryNav a[aria-current="page"]')?.textContent.trim(),
           duplicateCards: document.querySelectorAll('.platformModuleCard').length,
-          currentRole: document.querySelector('.productIdentityCopy strong')?.textContent.trim(),
+          accountName: document.querySelector('.productIdentityCopy strong')?.textContent.trim(),
           managerOpen: Boolean(document.querySelector('[data-testid="identity-manager"]')),
-          separatesPermissions: document.querySelector('[data-testid="identity-manager"]')?.innerText.includes('切换与开通是两件事')
+          separatesPermissions: document.querySelector('[data-testid="identity-manager"]')?.innerText.includes('内部权限不会出现在这里')
         }))()""")
         assertions["identity_is_distinct_not_duplicate_home"] = identity_state["active"] == "用户中心" and identity_state["duplicateCards"] == 0
-        assertions["header_displays_active_role"] = identity_state["currentRole"] == "学习者"
+        assertions["header_displays_account_not_role"] = bool(identity_state["accountName"])
         assertions["identity_center_is_primary_management_entry"] = identity_state["managerOpen"] and identity_state["separatesPermissions"]
         await shot("identity-manager.png")
 
@@ -255,11 +246,17 @@ async def run(websocket_url: str) -> dict[str, Any]:
         await click_selector(".productIdentityTrigger")
         menu_state = await evaluate("""(() => ({
           open: document.querySelector('.productIdentityTrigger')?.getAttribute('aria-expanded'),
-          labels: [...document.querySelectorAll('.productIdentityPopover button')].map(node => node.textContent.trim()),
+          labels: [...document.querySelectorAll('.productIdentityPopover a')].map(node => node.textContent.trim()),
           hint: document.querySelector('.productIdentityPopoverHint')?.innerText || '',
-          manageHref: document.querySelector('.productIdentityPopover a')?.getAttribute('href')
+          hrefs: [...document.querySelectorAll('.productIdentityPopover a')].map(node => node.getAttribute('href'))
         }))()""")
-        assertions["identity_menu_discoverable"] = menu_state["open"] == "true" and any("浏览者" in label for label in menu_state["labels"]) and "不会新增权限" in menu_state["hint"] and menu_state["manageHref"] == "/identity?manage=roles"
+        assertions["account_menu_discoverable"] = (
+            menu_state["open"] == "true"
+            and "用户中心" in menu_state["labels"]
+            and "专业工作台" in menu_state["labels"]
+            and "专业工作台" in menu_state["hint"]
+            and "/identity?manage=roles" in menu_state["hrefs"]
+        )
         await shot("identity-menu.png")
 
         await command("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Escape", "code": "Escape"})
@@ -269,12 +266,10 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["identity_menu_escape_restores_focus"] = True
 
         await click_selector(".productIdentityTrigger")
-        await click_selector('.productIdentityPopover button[data-role="viewer"]')
-        await wait_for_value("document.querySelector('.productIdentityCopy strong')?.textContent.trim()", "浏览者")
-        await click_selector(".productIdentityTrigger")
-        await click_selector('.productIdentityPopover button[data-role="learner"]')
-        await wait_for_value("document.querySelector('.productIdentityCopy strong')?.textContent.trim()", "学习者")
-        assertions["quick_switch_round_trip_is_server_authoritative"] = True
+        ordinary_switches = await evaluate(
+            "document.querySelectorAll('.productIdentityPopover button[data-role=viewer],.productIdentityPopover button[data-role=learner],.productIdentityPopover button[data-role=buyer]').length"
+        )
+        assertions["ordinary_role_switches_are_absent"] = ordinary_switches == 0
 
         browser_errors = [item for item in events if item.get("method") in {"Runtime.exceptionThrown", "Log.entryAdded"}]
         assertions["no_browser_exceptions"] = not browser_errors
@@ -288,7 +283,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
 
 def main() -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    activate_learner()
+    prepare_account()
     with tempfile.TemporaryDirectory(prefix="haha-gate-e-e2e-", ignore_cleanup_errors=True) as profile:
         process = subprocess.Popen(
             [str(find_chrome()), "--headless=new", f"--remote-debugging-port={DEBUG_PORT}", "--remote-allow-origins=*", f"--user-data-dir={profile}", "--disable-extensions", "--no-first-run", "--hide-scrollbars", "about:blank"],

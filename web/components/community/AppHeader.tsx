@@ -14,7 +14,6 @@ import {
   IdentitySnapshot,
   initializeAuthSession,
   subscribeAuthSession,
-  switchIdentityContext,
 } from "@/lib/api";
 import { useCommunity } from "@/lib/community/provider";
 
@@ -27,7 +26,7 @@ const primaryNavigation = [
   { href: "/community", label: "视频社区", paths: ["/community", "/content", "/search", "/map", "/heritage-projects", "/inheritors", "/topics", "/events", "/creator"] },
   { href: "/commerce", label: "非遗电商", paths: ["/commerce"] },
   { href: "/learning", label: "AI 学习", paths: ["/learning"] },
-  { href: "/identity", label: "用户中心", paths: ["/identity", "/profile", "/notifications", "/login"] },
+  { href: "/identity", label: "用户中心", paths: ["/identity", "/profile", "/notifications", "/login", "/register"] },
 ] as const;
 
 const roleLabels: Record<BusinessRole, string> = {
@@ -60,8 +59,6 @@ export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
   const [query, setQuery] = useState(initialQuery);
   const [identity, setIdentity] = useState<IdentitySnapshot | null>(null);
   const [identityMenuOpen, setIdentityMenuOpen] = useState(false);
-  const [switchingRole, setSwitchingRole] = useState<BusinessRole | null>(null);
-  const [identityError, setIdentityError] = useState("");
   const identityMenuRef = useRef<HTMLDivElement>(null);
   const identityTriggerRef = useRef<HTMLButtonElement>(null);
   const authState = useSyncExternalStore(subscribeAuthSession, getAuthSessionSnapshot, getServerAuthSessionSnapshot);
@@ -96,23 +93,12 @@ export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
     router.push(cleanQuery ? `/search?q=${encodeURIComponent(cleanQuery)}` : "/search");
   }
 
-  async function changeRole(role: BusinessRole) {
-    if (!identity || role === identity.profile.active_role || switchingRole) return;
-    setSwitchingRole(role); setIdentityError("");
-    try {
-      const nextIdentity = await switchIdentityContext(role);
-      setIdentity(nextIdentity); setIdentityMenuOpen(false);
-      globalThis.location.reload();
-    } catch (cause) {
-      setIdentityError(cause instanceof Error ? cause.message : "身份切换失败，请稍后重试。");
-    } finally { setSwitchingRole(null); }
-  }
-
   const visibleIdentity = AUTH_REQUIRED && !signedIn ? null : identity;
-  const activeRole = visibleIdentity?.profile.active_role;
   const displayName = DEMO_MODE ? snapshot.viewer.displayName : visibleIdentity?.profile.display_name || "账户";
-  const activeRoleLabel = DEMO_MODE ? snapshot.viewer.roleLabel : activeRole ? roleLabels[activeRole] : "读取中";
-  const activeRoles = visibleIdentity?.roles.filter((item) => item.status === "active") ?? [];
+  const professionalRoles = visibleIdentity?.professional_roles ?? [];
+  const professionalSummary = professionalRoles.length
+    ? professionalRoles.map((role) => roleLabels[role]).join("、")
+    : "按需开通";
 
   return <header className="productHeader"><div className="productHeaderMain">
     <Link className="productBrand" href="/" aria-label="HAHA 平台首页"><span>HA</span>HA</Link>
@@ -130,14 +116,16 @@ export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
       <Link className="productMessageAction" href="/notifications" aria-label="消息与通知" aria-current={pathMatches(pathname, "/notifications") ? "page" : undefined}><MessageIcon /><span>消息</span></Link>
       <div className="productIdentityMenu" ref={identityMenuRef}>
         {signedIn || !AUTH_REQUIRED ? <button className="productIdentityTrigger" ref={identityTriggerRef} type="button" aria-haspopup="menu" aria-expanded={identityMenuOpen} aria-controls="product-identity-menu" onClick={() => setIdentityMenuOpen((open) => !open)}>
-          <span className="productIdentityAvatar" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span><span className="productIdentityCopy"><small>当前身份</small><strong>{activeRoleLabel}</strong></span><b aria-hidden="true">⌄</b>
+          <span className="productIdentityAvatar" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span><span className="productIdentityCopy"><small>我的 HAHA</small><strong>{displayName}</strong></span><b aria-hidden="true">⌄</b>
         </button> : <Link className="productLoginAction" href="/login">登录</Link>}
         {identityMenuOpen ? <div className="productIdentityPopover" id="product-identity-menu" role="menu">
           <div className="productIdentityPopoverHead"><small>当前账户</small><strong>{displayName}</strong></div>
-          <div className="productIdentityPopoverHint" role="presentation"><strong>切换已开通身份</strong><span>只改变当前操作视角，不会新增权限。</span></div>
-          {activeRoles.map((item) => <button type="button" role="menuitem" data-role={item.role} className={item.role === activeRole ? "current" : ""} disabled={item.role === activeRole || Boolean(switchingRole)} onClick={() => void changeRole(item.role)} key={item.id}><span>{item.label}</span><em>{item.role === activeRole ? "当前" : switchingRole === item.role ? "切换中…" : "切换"}</em></button>)}
-          {identityError ? <p role="alert">{identityError}</p> : null}
-          <Link role="menuitem" href={DEMO_MODE ? "/profile/demo-user" : "/identity?manage=roles"} onClick={() => setIdentityMenuOpen(false)}>{DEMO_MODE ? "查看本地演示档案" : "管理与开通身份"}</Link>
+          <div className="productIdentityPopoverHint" role="presentation"><strong>专业工作台</strong><span>{professionalSummary}</span></div>
+          <Link role="menuitem" href={DEMO_MODE ? "/profile/demo-user" : "/identity"} onClick={() => setIdentityMenuOpen(false)}>{DEMO_MODE ? "查看本地演示档案" : "用户中心"}</Link>
+          {!DEMO_MODE ? <Link role="menuitem" href="/identity?tab=assets" onClick={() => setIdentityMenuOpen(false)}>我的内容</Link> : null}
+          {!DEMO_MODE ? <Link role="menuitem" href="/identity?manage=roles" onClick={() => setIdentityMenuOpen(false)}>专业工作台</Link> : null}
+          <Link role="menuitem" href="/notifications" onClick={() => setIdentityMenuOpen(false)}>消息与通知</Link>
+          {!DEMO_MODE ? <Link role="menuitem" href="/identity?tab=settings" onClick={() => setIdentityMenuOpen(false)}>设置与安全</Link> : null}
         </div> : null}
       </div>
     </nav>

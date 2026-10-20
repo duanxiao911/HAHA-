@@ -68,11 +68,10 @@ def _repository() -> SQLiteCreatorRepository:
     identity = IdentityService(repository)
     identity.bootstrap("learner-a", "workspace-a")
     identity.bootstrap("viewer-b", "workspace-a")
-    identity.activate_role("learner-a", "workspace-a", "learner")
     return repository
 
 
-def test_tutor_is_grounded_persisted_idempotent_and_learner_only() -> None:
+def test_tutor_is_grounded_persisted_idempotent_and_available_to_accounts() -> None:
     repository = _repository()
     router = FakeTutorRouter()
     client = TestClient(create_app(repository, learning_tutor=HeritageTutor(router)))
@@ -81,21 +80,12 @@ def test_tutor_is_grounded_persisted_idempotent_and_learner_only() -> None:
     write = {**learner, "Idempotency-Key": "tutor-question-0001"}
 
     assert client.get("/api/learning", headers=learner).json()["ai_tutor"]["status"] == "available"
-    assert client.post(
-        "/api/identity/context", headers=learner, json={"role": "learner"}
-    ).status_code == 200
-    workbench = client.get("/api/identity/workbench", headers=learner).json()
-    tutor_capability = next(
-        item for item in workbench["capabilities"] if item["key"] == "ai_tutor"
-    )
-    assert tutor_capability["status"] == "available"
-    assert tutor_capability["href"] == "/learning#ai-tutor"
-    denied = client.post(
+    ordinary_account = client.post(
         "/api/learning/tutor/questions",
         headers={**viewer, "Idempotency-Key": "viewer-question-01"},
         json={"question": "中国剪纸有哪些特点？"},
     )
-    assert denied.status_code == 403
+    assert ordinary_account.status_code == 200
 
     response = client.post(
         "/api/learning/tutor/questions",
@@ -116,7 +106,7 @@ def test_tutor_is_grounded_persisted_idempotent_and_learner_only() -> None:
     )
     assert repeated.status_code == 200
     assert repeated.json()["last_tutor_result"]["id"] == result["id"]
-    assert router.calls == 1
+    assert router.calls == 2
 
     conflict = client.post(
         "/api/learning/tutor/questions",
@@ -259,7 +249,6 @@ def test_sqlalchemy_tutor_interaction_survives_service_recreation() -> None:
     repository.ensure_identity("sa-learner", "sa-workspace", role="owner")
     identity = IdentityService(repository)
     identity.bootstrap("sa-learner", "sa-workspace")
-    identity.activate_role("sa-learner", "sa-workspace", "learner")
     router = FakeTutorRouter()
     tutor = HeritageTutor(router)
     first_client = TestClient(create_app(repository, learning_tutor=tutor))

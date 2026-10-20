@@ -9,6 +9,7 @@ type ProductFrameProps = {
   mainClassName?: string;
   initialQuery?: string;
   demoLabel?: string;
+  hideMobileNavigation?: boolean;
 };
 
 export function ProductFrame({
@@ -17,6 +18,7 @@ export function ProductFrame({
   mainClassName = "",
   initialQuery,
   demoLabel,
+  hideMobileNavigation = false,
 }: ProductFrameProps) {
   const frameClassName = ["productFrame", className].filter(Boolean).join(" ");
   const contentClassName = ["productFrameContent", mainClassName].filter(Boolean).join(" ");
@@ -27,7 +29,7 @@ export function ProductFrame({
       <main className={contentClassName} id="main-content">
         {children}
       </main>
-      <MobileBottomNav />
+      {hideMobileNavigation ? null : <MobileBottomNav />}
     </div>
   );
 }

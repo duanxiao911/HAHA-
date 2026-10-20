@@ -138,15 +138,18 @@ Phase D 已在不新增普通后端技术栈的前提下，完成社区侧的本
 本地演示，尚未接入真实媒体存储、审核后台或内容 API。详见
 [`docs/reports/phase-d-community-loop-2026-10-12.md`](docs/reports/phase-d-community-loop-2026-10-12.md)。
 
-User Center Gate C1 已收口多身份上下文、账户资料、隐私偏好、收藏、想学、稍后看、关注、
-观看历史、文化足迹聚合和站内消息。身份切换已移到顶部账户菜单，专业工作台只对相应身份显示；
+User Center Gate C1 已收口账户资料、隐私偏好、收藏、想学、稍后看、关注、观看历史、文化足迹
+聚合和站内消息。后续账户体验重构将浏览、学习和购物归为统一账户默认能力，不再要求普通用户
+切换身份；创作、商家和知识贡献作为独立专业工作台，审核员与管理员仅由平台内部授予；
 学习路径、测验和成就由独立 Gate C3 在同一账户体系中实现，不在 C1 验收证据中回填。FastAPI + PostgreSQL 主链已完成
 390/768/1440 三档真实浏览器验收，并覆盖首次并发建号。开发环境仍为显式 opt-in 的本机身份，
 不等于正式上线；收口证据见 `docs/reports/2026-10-15_user-center-gate-c1-closeout/`。
 
-Account Session G2 已提供仅限内部测试的真实账户闭环：PBKDF2 密码摘要、短期 JWT、服务端
-刷新会话、原子单次轮换、退出撤销、失败锁定、认证审计和 `/login` 真实表单。账户不开放公众
-注册，授权仍以 PostgreSQL membership 为准。创建或轮换内部账户时只通过环境变量传入密码：
+Account Session G2 已提供真实账户闭环：PBKDF2 密码摘要、短期 JWT、服务端刷新会话、原子单次
+轮换、退出撤销、失败锁定、认证审计和 `/login` 真实表单。后续账户体验重构增加受配置开关控制的
+邮箱密码自助注册；注册自动创建个人 Workspace，登录不再要求用户理解或填写 Workspace。
+生产环境默认关闭自助注册，授权仍以 PostgreSQL membership 为准。创建或轮换内部账户时只通过
+环境变量传入密码：
 
 ```powershell
 $env:HAHA_BOOTSTRAP_PASSWORD = "至少 12 位的本地测试密码"
@@ -158,6 +161,8 @@ docker compose exec -T -e HAHA_BOOTSTRAP_PASSWORD=$env:HAHA_BOOTSTRAP_PASSWORD a
 
 设计与运行证据见
 [`docs/reports/2026-10-14_account-session-g2/FUNCTION_ACCEPTANCE_REPORT.md`](docs/reports/2026-10-14_account-session-g2/FUNCTION_ACCEPTANCE_REPORT.md)。
+当前账户体验架构与生产阻断见
+[`docs/architecture/account-experience-refactor.md`](docs/architecture/account-experience-refactor.md)。
 
 Browser Session G3 已将 G2 的浏览器令牌从 `sessionStorage` 迁移到 Next.js 同源 BFF 管理的
 HttpOnly/SameSite Cookie；所有变更请求校验同源 Origin 与 CSRF Token，刷新令牌只在服务端

@@ -22,7 +22,6 @@ ARTIFACTS = ROOT / "artifacts" / "e2e" / "role-workbench-g4"
 WEB_URL = os.getenv("HAHA_E2E_WEB_URL", "http://127.0.0.1:3000").rstrip("/")
 DEBUG_PORT = int(os.getenv("HAHA_G4_E2E_DEBUG_PORT", "9364"))
 EMAIL = os.getenv("HAHA_G4_E2E_EMAIL", "g4-e2e@haha.local")
-WORKSPACE = os.getenv("HAHA_G4_E2E_WORKSPACE", "g4-e2e")
 PASSWORD = os.getenv("HAHA_G4_E2E_PASSWORD", "")
 
 
@@ -182,40 +181,40 @@ async def run(websocket_url: str) -> dict[str, Any]:
             {"width": 1440, "height": 1000, "deviceScaleFactor": 1, "mobile": False},
         )
         await command("Page.navigate", {"url": f"{WEB_URL}/identity"})
-        await wait_for("请先登录文化账户")
+        await wait_for("登录后查看用户中心")
         assertions["protected_entry"] = await click("前往登录")
-        await wait_for("登录你的 HAHA 文化账户")
+        await wait_for("登录 HAHA")
         await fill("input[type=email]", EMAIL)
-        await fill("input[autocomplete=organization]", WORKSPACE)
         await fill("input[type=password]", PASSWORD)
-        assertions["login"] = await click("安全登录")
+        assertions["login"] = await click("登录")
         await wait_for("今天从这里继续")
 
-        body = await wait_for("浏览者能力状态")
-        assertions["viewer_context_on_today"] = "浏览者能力状态" in body
-        assertions["viewer_boundary_visible"] = (
-            "社区内容仍含本地适配数据" in body and "有限可用" in body
+        body = await wait_for("账户默认能力")
+        assertions["ordinary_capabilities_are_default"] = (
+            "看、学、买，不需要身份切换" in body
+            and "学习成长" in body
+            and "购物服务" in body
         )
         forged = await api("/api/backend/api/identity/workbench?role=admin")
         assertions["query_role_cannot_escalate"] = (
             forged["status"] == 200 and forged["body"].get("role") == "viewer"
         )
 
-        assertions["role_menu_at_page_top"] = await click_when_ready("切换身份")
-        await wait_for("管理与开通身份")
-        assertions["identity_manager_opened"] = await click_when_ready(
-            "管理与开通身份"
+        assertions["professional_manager_opened"] = await click_when_ready(
+            "专业工作台"
         )
-        await wait_for("切换与开通是两件事")
+        await wait_for("普通功能不需要切换身份")
         assertions["creator_activated"] = await click_in_article_when_ready(
-            "开通创作者", "开通身份"
+            "开通创作者工作台", "开始创作"
         )
-        await wait_for("开通创作者身份？")
+        await wait_for("开通创作者工作台？")
         assertions["creator_activation_confirmed"] = await click_in_confirmation(
             "确认开通"
         )
-        await wait_for("创作者已开通")
-        assertions["creator_switched"] = await click_in_article("创作者", "切换")
+        await wait_for("创作者工作台已开通")
+        assertions["creator_workbench_entered"] = await click_in_article(
+            "创作者工作台", "进入"
+        )
         await wait_for("创作者工作台")
         assertions["professional_workbench_entry"] = await click("创作者工作台")
         await wait_for("ACTIVE ROLE WORKBENCH")
@@ -228,47 +227,21 @@ async def run(websocket_url: str) -> dict[str, Any]:
         body = await wait_for("G4 真实浏览器创作项目")
         assertions["creator_project_restored"] = "创作项目" in body
 
-        await click_when_ready("当前身份")
-        await wait_for("管理与开通身份")
-        await click_when_ready("管理与开通身份")
-        await wait_for("切换与开通是两件事")
-        assertions["learner_activated"] = await click_in_article_when_ready(
-            "开通学习者", "开通身份"
-        )
-        await wait_for("开通学习者身份？")
-        assertions["learner_activation_confirmed"] = await click_in_confirmation(
-            "确认开通"
-        )
-        await wait_for("学习者已开通")
-        assertions["learner_switched"] = await click_in_article("学习者", "切换")
-        # Learning is a real Gate C3 workspace. The tutor boundary depends on
-        # whether a real model and versioned source retrieval are configured.
-        await wait_for("学习者能力状态")
         learned = await api(
             "/api/backend/api/user-center/library/want_to_learn/g4-heritage",
             "{method:'PUT',body:JSON.stringify({title:'G4 非遗学习样本',target_href:'/search'})}",
         )
         assertions["learning_asset_saved"] = learned["status"] == 200
-        await command("Page.reload")
+        await command("Page.navigate", {"url": f"{WEB_URL}/identity"})
         await wait_for("今天从这里继续")
         body = await wait_for("G4 非遗学习样本")
-        assertions["learner_boundary_visible"] = (
-            "AI 非遗老师" in body
-            and ("等待真实模型 API" in body or "版本化来源" in body)
+        assertions["ordinary_learning_does_not_require_switch"] = (
+            "看、学、买，不需要身份切换" not in body
+            and "G4 非遗学习样本" in body
         )
-        learner = await api("/api/backend/api/identity/workbench?role=admin")
+        creator = await api("/api/backend/api/identity/workbench?role=admin")
         assertions["persisted_context_authoritative"] = (
-            learner["status"] == 200 and learner["body"].get("role") == "learner"
-        )
-
-        await click_when_ready("当前身份")
-        await wait_for("管理与开通身份")
-        await click_when_ready("管理与开通身份")
-        await wait_for("切换与开通是两件事")
-        assertions["buyer_switched"] = await click_in_article_when_ready("买家", "切换")
-        body = await wait_for("买家能力状态")
-        assertions["commerce_sandbox_boundary_visible"] = (
-            "订单与履约" in body and "仅限内部沙盒订单与模拟履约" in body
+            creator["status"] == 200 and creator["body"].get("role") == "creator"
         )
         await shot("multi-role-workbench.png")
 

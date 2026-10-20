@@ -255,7 +255,7 @@ export function SubmissionWizard({
   }
 
   if (!canCreate) {
-    return <ProductFrame><StateNotice kind="forbidden" title="当前身份不能创建投稿" description="请先开通并切换到创作者或知识贡献者身份。" actionLabel="前往身份中心" actionHref="/identity" /></ProductFrame>;
+    return <ProductFrame><StateNotice kind="forbidden" title="尚未开通投稿权限" description="请先在用户中心开通创作工作台，或通过知识贡献者资格审核。" actionLabel="查看专业工作台" actionHref="/identity?manage=roles" /></ProductFrame>;
   }
 
   if (initialDraftId && !currentDraft) {

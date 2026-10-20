@@ -64,6 +64,7 @@ services:
       HAHA_JWT_SECRET: ${HAHA_JWT_SECRET:-}
       HAHA_JWT_ISSUER: ${HAHA_JWT_ISSUER:-haha-auth}
       HAHA_JWT_AUDIENCE: ${HAHA_JWT_AUDIENCE:-haha-api}
+      HAHA_SELF_REGISTRATION_ENABLED: ${HAHA_SELF_REGISTRATION_ENABLED:-true}
       HAHA_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       HAHA_MEDIA_ROOT: /var/lib/haha/community-media
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}

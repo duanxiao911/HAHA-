@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from haha_auth.service import AuthService, InvalidRefreshTokenError
+from haha_auth.service import AccountRegistrationError, AuthService, InvalidRefreshTokenError
 from haha_commerce.domain import CommerceConflictError
 from haha_commerce.service import CommerceService
 from haha_commerce.sqlalchemy_repository import SQLAlchemyCommerceRepository
@@ -88,8 +88,8 @@ def test_postgres_identity_roles_applications_and_context_are_durable(repository
     repository.ensure_identity("identity-reviewer", "pg-workspace", role="owner")
     service = IdentityService(repository)
     service.bootstrap("identity-user", "pg-workspace")
-    service.activate_role("identity-user", "pg-workspace", "learner")
-    service.switch_context("identity-user", "pg-workspace", "learner")
+    service.activate_role("identity-user", "pg-workspace", "creator")
+    service.switch_context("identity-user", "pg-workspace", "creator")
     application = service.apply_for_role(
         "identity-user", "pg-workspace", "seller", "PostgreSQL 身份申请集成测试"
     )
@@ -100,11 +100,12 @@ def test_postgres_identity_roles_applications_and_context_are_durable(repository
     reloaded = IdentityService(SQLAlchemyCreatorRepository(POSTGRES_URL)).snapshot(
         "identity-user", "pg-workspace"
     )
-    assert reloaded["profile"]["active_role"] == "learner"
+    assert reloaded["profile"]["active_role"] == "creator"
     assert {item["role"] for item in reloaded["roles"] if item["status"] == "active"} == {
         "viewer",
         "buyer",
         "learner",
+        "creator",
         "seller",
     }
     assert reloaded["applications"][0]["status"] == "approved"
@@ -159,7 +160,6 @@ def test_postgres_learning_loop_is_durable_server_graded_and_idempotent(
     repository.ensure_identity("learning-user", "pg-workspace", role="owner")
     identity = IdentityService(repository)
     identity.bootstrap("learning-user", "pg-workspace")
-    identity.activate_role("learning-user", "pg-workspace", "learner")
     service = LearningService(repository)
     initial = service.bootstrap("learning-user", "pg-workspace")
     assert initial["ai_tutor"]["status"] == "blocked"
@@ -321,6 +321,7 @@ def test_postgres_parallel_workbench_bootstrap_is_idempotent(repository) -> None
     assert {item.role for item in grants if item.status == "active"} == {
         "viewer",
         "buyer",
+        "learner",
     }
     notifications = repository.list_user_notifications("parallel-user", "pg-workspace")
     assert len(notifications) == 1
@@ -500,6 +501,39 @@ def test_postgres_refresh_rotation_is_atomic(repository) -> None:
     with ThreadPoolExecutor(max_workers=2) as executor:
         outcomes = list(executor.map(lambda _: refresh_once(), range(2)))
     assert sorted(outcomes) == ["rejected", "rotated"]
+
+
+def test_postgres_public_registration_is_transactional_unique_and_restorable(
+    repository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HAHA_SELF_REGISTRATION_ENABLED", "true")
+    email = "pg-public-registration@haha.local"
+    password = "Postgres-Registration-Password-2026"
+
+    def register_once() -> str:
+        try:
+            result = AuthService(
+                SQLAlchemyCreatorRepository(POSTGRES_URL)
+            ).register(email=email, password=password, display_name="PostgreSQL 新成员")
+        except AccountRegistrationError:
+            return "duplicate"
+        return str(result["account"]["workspace_id"])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: register_once(), range(2)))
+
+    created = [item for item in outcomes if item != "duplicate"]
+    assert len(created) == 1
+    assert outcomes.count("duplicate") == 1
+    restored = AuthService(SQLAlchemyCreatorRepository(POSTGRES_URL)).login(
+        email=email, password=password
+    )
+    assert restored["account"]["workspace_id"] == created[0]
+    assert restored["account"]["role"] == "owner"
+    profile = SQLAlchemyCreatorRepository(POSTGRES_URL).ensure_user_profile(
+        str(restored["account"]["user_id"]), created[0]
+    )
+    assert profile.display_name == "PostgreSQL 新成员"
 
 
 def test_postgres_worker_claim_and_expired_lease(repository) -> None:
@@ -699,7 +733,6 @@ def test_postgres_learning_tutor_is_durable_and_idempotent(repository) -> None:
     repository.ensure_identity("pg-tutor-user", "pg-workspace", role="owner")
     identity = IdentityService(repository)
     identity.bootstrap("pg-tutor-user", "pg-workspace")
-    identity.activate_role("pg-tutor-user", "pg-workspace", "learner")
     router = _PostgresTutorRouter()
     tutor = HeritageTutor(router)
     service = LearningService(repository, tutor)

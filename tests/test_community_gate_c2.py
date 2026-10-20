@@ -48,8 +48,7 @@ def _grant_controlled_role(
     role: str,
 ) -> None:
     repository.ensure_identity(user_id, WORKSPACE, role="owner")
-    service = IdentityService(repository)
-    service.bootstrap(user_id, WORKSPACE)
+    IdentityService(repository).bootstrap(user_id, WORKSPACE)
     now = datetime.now(UTC).isoformat(timespec="milliseconds")
     repository.save_role_grant(RoleGrant(
         id=f"grant_{uuid4().hex}",
@@ -62,7 +61,6 @@ def _grant_controlled_role(
         created_at=now,
         revoked_at="",
     ))
-    service.switch_context(user_id, WORKSPACE, role)
 
 
 def _activate_creator(client: TestClient, user_id: str) -> None:

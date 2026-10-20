@@ -127,14 +127,13 @@ async def run(websocket_url: str) -> dict[str, Any]:
         await command("Emulation.setDeviceMetricsOverride", {
             "width": 1280, "height": 900, "deviceScaleFactor": 1, "mobile": False,
         })
-        await navigate("/identity", "请先登录文化账户")
+        await navigate("/identity", "登录后查看用户中心")
         assertions["protected_center_guides_to_login"] = await click("前往登录")
-        await wait_for("登录你的 HAHA 文化账户")
+        await wait_for("登录 HAHA")
 
         await fill("input[type=email]", EMAIL)
-        await fill("input[autocomplete=organization]", WORKSPACE)
         await fill("input[type=password]", PASSWORD)
-        assertions["login_submitted"] = await click("安全登录")
+        assertions["login_submitted"] = await click("登录")
         await wait_for("今天从这里继续")
 
         browser_storage = await evaluate("""({
@@ -193,14 +192,14 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["revoke_all_clicked"] = await click("退出全部设备")
         await wait_for("退出全部设备？")
         assertions["revoke_all_confirmed"] = await click_dialog("退出全部设备")
-        await wait_for("登录你的 HAHA 文化账户")
+        await wait_for("登录 HAHA")
         final_cookies = (await command("Network.getAllCookies"))["cookies"]
         final_names = {item["name"] for item in final_cookies if item.get("domain") in {"127.0.0.1", "localhost"}}
         assertions["credentials_cleared_after_revoke_all"] = not {"haha_access", "haha_refresh"}.intersection(final_names)
 
         login_contract = await evaluate(f"""fetch('/api/session/login', {{
           method:'POST',headers:{{'Content-Type':'application/json'}},
-          body:JSON.stringify({{email:{json.dumps(EMAIL)},password:{json.dumps(PASSWORD)},workspace_id:{json.dumps(WORKSPACE)}}})
+          body:JSON.stringify({{email:{json.dumps(EMAIL)},password:{json.dumps(PASSWORD)}}})
         }}).then(async (response)=>({{status:response.status,body:await response.json()}}))""")
         assertions["login_response_has_no_tokens"] = (
             login_contract["status"] == 200

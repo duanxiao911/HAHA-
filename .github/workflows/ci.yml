@@ -347,6 +347,8 @@ jobs:
         run: python scripts/e2e_browser_session_g3.py
       - name: Run G4 multi-role workbench acceptance
         run: python scripts/e2e_role_workbench_g4.py
+      - name: Run unified account experience acceptance
+        run: python scripts/e2e_account_experience.py
       - name: Capture secure-account service logs on failure
         if: failure()
         shell: bash

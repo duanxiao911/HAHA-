@@ -30,10 +30,16 @@ class TaskStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-BASE_ROLES = frozenset({BusinessRole.VIEWER, BusinessRole.BUYER})
-SELF_ACTIVATABLE_ROLES = frozenset({BusinessRole.LEARNER, BusinessRole.CREATOR})
+CONSUMER_ROLES = frozenset({
+    BusinessRole.VIEWER,
+    BusinessRole.BUYER,
+    BusinessRole.LEARNER,
+})
+BASE_ROLES = CONSUMER_ROLES
+SELF_ACTIVATABLE_ROLES = frozenset({BusinessRole.CREATOR})
 APPLICATION_ROLES = frozenset({BusinessRole.CONTRIBUTOR, BusinessRole.SELLER})
 CONTROLLED_ROLES = frozenset({BusinessRole.REVIEWER, BusinessRole.ADMIN})
+PUBLIC_PROFESSIONAL_ROLES = SELF_ACTIVATABLE_ROLES | APPLICATION_ROLES
 
 
 @dataclass(frozen=True, slots=True)

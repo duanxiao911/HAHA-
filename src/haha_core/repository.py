@@ -132,6 +132,7 @@ class SQLiteCreatorRepository:
         self.path = str(path)
         self._failed_job_retry_lock = Lock()
         self._auth_session_rotation_lock = Lock()
+        self._account_registration_lock = Lock()
         self._memory_uri = ""
         self._memory_keeper: sqlite3.Connection | None = None
         if self.path == ":memory:":
@@ -488,6 +489,16 @@ class SQLiteCreatorRepository:
                 );
                 """
             )
+            try:
+                connection.execute(
+                    """CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_credential_email_lower
+                       ON auth_credentials(lower(email))"""
+                )
+            except sqlite3.IntegrityError:
+                # Legacy local databases can contain the same internal email in
+                # multiple workspaces. Public registration stays serialized and
+                # fail-closed until those demo credentials are reconciled.
+                pass
             existing_columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()
             }
@@ -552,6 +563,63 @@ class SQLiteCreatorRepository:
                 (email, workspace_id),
             ).fetchone()
         return AuthCredential(**dict(row)) if row else None
+
+    def get_auth_credential_by_email(self, email: str) -> AuthCredential | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM auth_credentials WHERE lower(email) = lower(?) LIMIT 1",
+                (email,),
+            ).fetchone()
+        return AuthCredential(**dict(row)) if row else None
+
+    def create_personal_account(
+        self, credential: AuthCredential, *, workspace_name: str, display_name: str
+    ) -> bool:
+        with self._account_registration_lock:
+            try:
+                with closing(self._connect()) as connection, connection:
+                    if connection.execute(
+                        "SELECT 1 FROM auth_credentials WHERE lower(email) = lower(?)",
+                        (credential.email,),
+                    ).fetchone():
+                        return False
+                    connection.execute(
+                        "INSERT INTO users(id, email, created_at) VALUES (?, ?, ?)",
+                        (credential.user_id, credential.email, credential.created_at),
+                    )
+                    connection.execute(
+                        "INSERT INTO workspaces(id, name, created_at) VALUES (?, ?, ?)",
+                        (credential.workspace_id, workspace_name, credential.created_at),
+                    )
+                    connection.execute(
+                        """INSERT INTO memberships(user_id, workspace_id, role, created_at)
+                           VALUES (?, ?, 'owner', ?)""",
+                        (
+                            credential.user_id,
+                            credential.workspace_id,
+                            credential.created_at,
+                        ),
+                    )
+                    connection.execute(
+                        """INSERT INTO user_profiles(
+                               user_id, workspace_id, display_name, active_role,
+                               personalization_enabled, created_at, updated_at
+                           ) VALUES (?, ?, ?, 'viewer', 0, ?, ?)""",
+                        (
+                            credential.user_id,
+                            credential.workspace_id,
+                            display_name,
+                            credential.created_at,
+                            credential.created_at,
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO auth_credentials VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        tuple(asdict(credential).values()),
+                    )
+            except sqlite3.IntegrityError:
+                return False
+        return True
 
     def save_auth_credential(self, credential: AuthCredential) -> None:
         with closing(self._connect()) as connection, connection:

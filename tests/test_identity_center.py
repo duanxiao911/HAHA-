@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from haha_api.main import create_app
@@ -18,20 +19,23 @@ def test_one_account_activates_and_switches_multiple_business_roles() -> None:
     service = IdentityService(repository)
 
     initial = service.bootstrap("member-a", "workspace-a")
-    assert {item["role"] for item in initial["roles"]} == {"viewer", "buyer"}
+    assert {item["role"] for item in initial["roles"]} == {
+        "viewer", "buyer", "learner"
+    }
+    assert initial["consumer_capabilities"] == ["buyer", "learner", "viewer"]
     assert initial["profile"]["active_role"] == "viewer"
 
     service.activate_role("member-a", "workspace-a", "creator")
-    service.activate_role("member-a", "workspace-a", "learner")
     repeated = service.activate_role("member-a", "workspace-a", "creator")
     switched = service.switch_context("member-a", "workspace-a", "creator")
 
     assert {item["role"] for item in switched["roles"]} == {
-        "viewer", "buyer", "creator", "learner"
+        "viewer", "buyer", "learner", "creator"
     }
+    assert switched["professional_roles"] == ["creator"]
     assert switched["profile"]["active_role"] == "creator"
-    assert len([task for task in switched["tasks"] if task["status"] == "open"]) == 2
-    assert len([task for task in repeated["tasks"] if task["status"] == "open"]) == 2
+    assert len([task for task in switched["tasks"] if task["status"] == "open"]) == 1
+    assert len([task for task in repeated["tasks"] if task["status"] == "open"]) == 1
 
 
 def test_business_role_context_cannot_be_forged() -> None:
@@ -42,9 +46,17 @@ def test_business_role_context_cannot_be_forged() -> None:
     try:
         service.switch_context("member-a", "workspace-a", "admin")
     except IdentityPermissionError as exc:
-        assert "未获得" in str(exc)
+        assert "内部员工权限" in str(exc)
     else:
         raise AssertionError("ungranted admin context must be rejected")
+
+    for role in ("viewer", "buyer", "learner"):
+        with pytest.raises(IdentityPermissionError, match="默认能力"):
+            service.switch_context("member-a", "workspace-a", role)
+
+    for role in ("reviewer", "admin"):
+        with pytest.raises(IdentityPermissionError, match="不能通过此申请入口"):
+            service.apply_for_role("member-a", "workspace-a", role, "public request")
 
 
 def test_role_application_requires_another_authorized_reviewer() -> None:
@@ -79,7 +91,9 @@ def test_identity_api_persists_roles_tasks_and_rejects_privilege_escalation() ->
 
     initial = client.get("/api/identity/me", headers=headers)
     assert initial.status_code == 200
-    assert {item["role"] for item in initial.json()["roles"]} == {"viewer", "buyer"}
+    assert {item["role"] for item in initial.json()["roles"]} == {
+        "viewer", "buyer", "learner"
+    }
 
     assert client.post("/api/identity/roles/creator/activate", headers=headers).status_code == 200
     switched = client.post(
@@ -109,7 +123,7 @@ def test_identity_task_is_owner_scoped_and_completion_is_idempotent() -> None:
     client = TestClient(create_app(repository))
     headers_a = {"X-User-ID": "member-a", "X-Workspace-ID": "workspace-a"}
     headers_b = {"X-User-ID": "member-b", "X-Workspace-ID": "workspace-a"}
-    activated = client.post("/api/identity/roles/learner/activate", headers=headers_a).json()
+    activated = client.post("/api/identity/roles/creator/activate", headers=headers_a).json()
     task_id = activated["tasks"][0]["id"]
 
     assert client.post(f"/api/identity/tasks/{task_id}/complete", headers=headers_b).status_code == 404

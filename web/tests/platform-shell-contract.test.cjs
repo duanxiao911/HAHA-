@@ -17,10 +17,11 @@ test("desktop shell exposes exactly the four governed platform modules", () => {
     ["/identity", "用户中心"],
   ]);
   assert.doesNotMatch(primaryBlock, /href: "\/"/);
-  assert.match(source, /当前身份/);
-  assert.match(source, /switchIdentityContext/);
-  assert.match(source, /切换已开通身份/);
-  assert.match(source, /管理与开通身份/);
+  assert.match(source, /我的 HAHA/);
+  assert.match(source, /专业工作台/);
+  assert.doesNotMatch(source, /switchIdentityContext/);
+  assert.doesNotMatch(source, /切换已开通身份/);
+  assert.doesNotMatch(source, /管理与开通身份/);
   assert.match(source, /搜索非遗内容、项目、人物和地区/);
   assert.doesNotMatch(source, /搜索非遗内容、项目、人物和商品/);
   assert.match(source, /identityTriggerRef\.current\?\.focus\(\)/);
@@ -52,18 +53,20 @@ test("root is a neutral platform home and community reuses the shared shell", ()
   assert.match(home, /AI 老师受阻/);
   assert.match(home, /非遗电商 · INTERNAL SANDBOX/);
   assert.match(home, /identity-conversion-guide/);
-  assert.match(home, /开通或申请是权限变化/);
+  assert.match(home, /浏览、学习与购物不需要切换身份/);
   assert.doesNotMatch(home, /switchIdentityContext/);
   assert.match(community, /<ProductFrame className="communityV2"/);
   assert.doesNotMatch(community, /className="globalHeader"/);
   assert.doesNotMatch(community, /href="\/creator">AI 学习/);
 });
 
-test("identity management separates context switching from permission changes", () => {
+test("account center separates ordinary capabilities from professional workbenches", () => {
   const source = read("app/identity/IdentityCenter.tsx");
-  assert.match(source, /身份与权限/);
-  assert.match(source, /切换与开通是两件事/);
+  assert.match(source, /专业工作台/);
+  assert.match(source, /普通功能不需要切换身份/);
+  assert.match(source, /内部权限不会出现在这里/);
+  assert.match(source, /审核员和管理员由平台内部邀请/);
+  assert.match(source, /const professionalRoles = new Set<BusinessRole>\(\[\s*"creator", "contributor", "seller",\s*\]\)/);
   assert.match(source, /searchParams\.get\("manage"\) === "roles"/);
-  assert.match(source, /目前不能自行移除/);
   assert.match(source, /confirmLabel: "确认开通"/);
 });
