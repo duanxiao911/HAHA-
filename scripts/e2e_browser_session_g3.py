@@ -20,7 +20,7 @@ import websockets
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts" / "e2e" / "browser-session-g3"
 WEB_URL = os.getenv("HAHA_E2E_WEB_URL", "http://127.0.0.1:3000").rstrip("/")
-DEBUG_PORT = int(os.getenv("HAHA_G3_E2E_DEBUG_PORT", "9363"))
+DEBUG_PORT = int(os.getenv("HAHA_G3_E2E_DEBUG_PORT", "0"))
 EMAIL = os.getenv("HAHA_G3_E2E_EMAIL", "g3-e2e@haha.local")
 WORKSPACE = os.getenv("HAHA_G3_E2E_WORKSPACE", "g3-e2e")
 PASSWORD = os.getenv("HAHA_G3_E2E_PASSWORD", "")
@@ -249,15 +249,32 @@ def main() -> None:
     with tempfile.TemporaryDirectory(
         prefix="haha-g3-auth-e2e-", ignore_cleanup_errors=True
     ) as profile:
-        process = subprocess.Popen([
-            str(find_chrome()), "--headless=new", f"--remote-debugging-port={DEBUG_PORT}",
-            "--remote-allow-origins=*", f"--user-data-dir={profile}", "--disable-extensions",
-            "--no-first-run", "--hide-scrollbars", "about:blank",
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stderr_path = ARTIFACTS / "chrome-stderr.log"
+        with stderr_path.open("wb") as stderr_stream:
+            process = subprocess.Popen([
+                str(find_chrome()), "--headless=new", f"--remote-debugging-port={DEBUG_PORT}",
+                "--remote-allow-origins=*", f"--user-data-dir={profile}", "--disable-extensions",
+                "--no-first-run", "--hide-scrollbars", "about:blank",
+            ], stdout=subprocess.DEVNULL, stderr=stderr_stream)
         try:
-            endpoint = f"http://127.0.0.1:{DEBUG_PORT}/json/new?{urllib.parse.quote(WEB_URL, safe=':/?=&')}"
+            debug_port = DEBUG_PORT
             target = None
-            for _ in range(100):
+            for _ in range(200):
+                if process.poll() is not None:
+                    break
+                if not debug_port:
+                    active_port = Path(profile) / "DevToolsActivePort"
+                    if active_port.is_file():
+                        lines = active_port.read_text(encoding="utf-8").splitlines()
+                        if lines:
+                            debug_port = int(lines[0])
+                if not debug_port:
+                    time.sleep(0.15)
+                    continue
+                endpoint = (
+                    f"http://127.0.0.1:{debug_port}/json/new?"
+                    f"{urllib.parse.quote(WEB_URL, safe=':/?=&')}"
+                )
                 try:
                     with urllib.request.urlopen(urllib.request.Request(endpoint, method="PUT"), timeout=2) as response:
                         target = json.load(response)
@@ -265,15 +282,20 @@ def main() -> None:
                 except OSError:
                     time.sleep(0.15)
             if not target:
-                raise RuntimeError("Chrome debug endpoint did not start")
+                diagnostics = stderr_path.read_text(encoding="utf-8", errors="replace")[-2000:]
+                raise RuntimeError(
+                    f"Chrome debug endpoint did not start; exit={process.poll()}; "
+                    f"stderr={diagnostics}"
+                )
             report = asyncio.run(run(target["webSocketDebuggerUrl"]))
             (ARTIFACTS / "report.json").write_text(
                 json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8",
             )
             print(json.dumps(report, ensure_ascii=False, indent=2))
         finally:
-            process.terminate()
-            process.wait(timeout=10)
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
 
 
 if __name__ == "__main__":

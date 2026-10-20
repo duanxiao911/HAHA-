@@ -135,7 +135,8 @@ def grant_controlled_role(
             created_at=now,
             revoked_at="",
         ))
-    service.switch_context(user_id, WORKSPACE, role)
+    # reviewer/admin are internal grants, not public switchable contexts.
+    # Community authorization reads the persisted grant directly.
 
 
 def main() -> None:
