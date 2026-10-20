@@ -322,7 +322,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["archive_trust_downgraded"] = "草稿" in body and "已发布（演示）" not in body
         await screenshot("archive-migration-server-state.png")
 
-        body = await navigate("/review", "当前身份不能进入审核工作台")
+        body = await navigate("/review", "当前账户没有审核权限")
         assertions["reviewer_role_boundary_ui"] = "创作者不能审核自己的投稿" in body
 
         await navigate("/creator/submissions/new?type=article", "选择内容类型")
