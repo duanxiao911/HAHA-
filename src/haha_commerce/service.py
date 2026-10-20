@@ -2,23 +2,31 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 from dataclasses import asdict, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+from haha_commerce.advisor import ShoppingAdvisor
 from haha_commerce.domain import (
     AfterSale,
     CartItem,
+    CommerceAdvisorRateLimitError,
+    CommerceAdvisorUnavailableError,
     CommerceConflictError,
     CommerceNotFoundError,
     CommercePermissionError,
     Inventory,
     Product,
+    ShoppingAdvisorInteraction,
 )
 from haha_commerce.repository import CommerceRepository
 from haha_identity.domain import RoleGrant
 from haha_identity.service import IdentityService
+from haha_media.model_router import ModelCallError
 from haha_user_center.service import UserCenterService
 
 
@@ -43,11 +51,23 @@ def _key(value: str) -> str:
 
 
 class CommerceService:
-    def __init__(self, repository: CommerceRepository, identity_repository: Any) -> None:
+    def __init__(
+        self,
+        repository: CommerceRepository,
+        identity_repository: Any,
+        advisor: ShoppingAdvisor | None = None,
+        advisor_request_limit: int | None = None,
+    ) -> None:
         self.repository = repository
         self.identity_repository = identity_repository
         self.identity_service = IdentityService(identity_repository)
         self.user_center = UserCenterService(identity_repository)
+        self.advisor = advisor or ShoppingAdvisor()
+        self.advisor_request_limit = advisor_request_limit or int(
+            os.getenv("COMMERCE_ADVISOR_REQUEST_LIMIT_24H", "30")
+        )
+        if not 1 <= self.advisor_request_limit <= 100:
+            raise ValueError("AI 导购 24 小时请求上限必须在 1 至 100 之间")
 
     def snapshot(self, user_id: str, workspace_id: str) -> dict[str, object]:
         roles = self._roles(user_id, workspace_id)
@@ -74,11 +94,27 @@ class CommerceService:
             product_id: self.repository.get_inventory(product_id, workspace_id)
             for product_id in product_ids
         }
+        categories = {item.id: item for item in self.repository.list_categories()}
 
         def product_payload(item: Product) -> dict[str, object]:
             stock = inventory.get(item.id)
             return {
                 **asdict(item),
+                "category": asdict(categories[item.category_id])
+                if item.category_id in categories
+                else None,
+                "media": [
+                    asdict(media)
+                    for media in self.repository.list_product_media(item.id, workspace_id)
+                ],
+                "variants": [
+                    asdict(variant)
+                    for variant in self.repository.list_product_variants(item.id, workspace_id)
+                ],
+                "heritage_links": [
+                    asdict(link)
+                    for link in self.repository.list_product_heritage_links(item.id, workspace_id)
+                ],
                 "inventory": asdict(stock) if stock else {
                     "available_qty": 0, "sold_qty": 0, "version": 0, "updated_at": "",
                 },
@@ -114,6 +150,7 @@ class CommerceService:
             "seller_orders": [order_payload(item) for item in seller_orders],
             "buyer_after_sales": [asdict(item) for item in self.repository.list_after_sales(workspace_id, buyer_user_id=user_id)],
             "seller_after_sales": [asdict(item) for item in self.repository.list_after_sales(workspace_id, seller_user_id=user_id)] if "seller" in roles else [],
+            "categories": [asdict(item) for item in categories.values()],
             "sandbox": {
                 "status": "internal_test_only",
                 "payment_provider": "internal_sandbox",
@@ -128,7 +165,21 @@ class CommerceService:
         self.repository.ensure_store(user_id, workspace_id, _clean(name, "店铺名称", 200))
         return self.snapshot(user_id, workspace_id)
 
-    def create_product(self, user_id: str, workspace_id: str, *, title: str, summary: str, price_cents: int, source_note: str, idempotency_key: str) -> dict[str, object]:
+    def create_product(
+        self,
+        user_id: str,
+        workspace_id: str,
+        *,
+        title: str,
+        summary: str,
+        price_cents: int,
+        source_note: str,
+        idempotency_key: str,
+        category_slug: str = "other",
+        craft_type: str = "",
+        origin_region: str = "",
+        season_tag: str = "",
+    ) -> dict[str, object]:
         self._require_role(user_id, workspace_id, "seller")
         creation_key = _key(idempotency_key)
         if not 1 <= price_cents <= 10_000_000:
@@ -139,6 +190,14 @@ class CommerceService:
         cleaned_title = _clean(title, "商品名称", 200)
         cleaned_summary = _clean(summary, "商品说明", 2000)
         cleaned_source = _clean(source_note, "来源与授权说明", 1000)
+        categories = {item.slug: item for item in self.repository.list_categories()}
+        cleaned_category = _clean(category_slug, "商品类目", 80).casefold()
+        category = categories.get(cleaned_category)
+        if not category:
+            raise ValueError("商品类目不存在或已停用")
+        cleaned_craft = _clean(craft_type, "工艺类型", 120, required=False)
+        cleaned_region = _clean(origin_region, "来源地区", 120, required=False)
+        cleaned_season = _clean(season_tag, "季节主题", 80, required=False)
         existing = self.repository.find_product_by_creation_key(
             user_id, workspace_id, creation_key
         )
@@ -148,6 +207,10 @@ class CommerceService:
                 or existing.summary != cleaned_summary
                 or existing.price_cents != price_cents
                 or existing.source_note != cleaned_source
+                or existing.category_id != category.id
+                or existing.craft_type != cleaned_craft
+                or existing.origin_region != cleaned_region
+                or existing.season_tag != cleaned_season
             ):
                 raise CommerceConflictError("幂等键已用于不同的商品草稿")
             return self.snapshot(user_id, workspace_id)
@@ -156,6 +219,7 @@ class CommerceService:
             f"product_{uuid4().hex}", workspace_id, store.id, user_id,
             cleaned_title, cleaned_summary, price_cents, "CNY", cleaned_source,
             "seller_supplied_unverified", creation_key, "draft", 1, "", "", now, now,
+            category.id, cleaned_craft, cleaned_region, cleaned_season,
         )
         if not self.repository.create_product(product):
             existing = self.repository.find_product_by_creation_key(
@@ -166,9 +230,266 @@ class CommerceService:
                 or existing.summary != cleaned_summary
                 or existing.price_cents != price_cents
                 or existing.source_note != cleaned_source
+                or existing.category_id != category.id
+                or existing.craft_type != cleaned_craft
+                or existing.origin_region != cleaned_region
+                or existing.season_tag != cleaned_season
             ):
                 raise CommerceConflictError("商品草稿创建发生并发冲突")
         return self.snapshot(user_id, workspace_id)
+
+    def catalog(
+        self,
+        user_id: str,
+        workspace_id: str,
+        *,
+        query: str = "",
+        category: str = "",
+        craft_type: str = "",
+        origin_region: str = "",
+        season_tag: str = "",
+        sort: str = "newest",
+        page: int = 1,
+        page_size: int = 24,
+    ) -> dict[str, object]:
+        self._require_role(user_id, workspace_id, "buyer")
+        cleaned_query = _clean(query, "搜索词", 200, required=False)
+        cleaned_category = _clean(category, "商品类目", 80, required=False).casefold()
+        cleaned_craft = _clean(craft_type, "工艺类型", 120, required=False)
+        cleaned_region = _clean(origin_region, "来源地区", 120, required=False)
+        cleaned_season = _clean(season_tag, "季节主题", 80, required=False)
+        if sort not in {"newest", "price_asc", "price_desc"}:
+            raise ValueError("商品排序方式无效")
+        if not 1 <= page <= 10_000 or not 1 <= page_size <= 60:
+            raise ValueError("商品分页参数无效")
+        items, total = self.repository.search_catalog(
+            workspace_id,
+            query=cleaned_query,
+            category_slug=cleaned_category,
+            craft_type=cleaned_craft,
+            origin_region=cleaned_region,
+            season_tag=cleaned_season,
+            sort=sort,
+            offset=(page - 1) * page_size,
+            limit=page_size,
+        )
+        return {
+            "items": [self._catalog_product_payload(item, workspace_id) for item in items],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_more": page * page_size < total,
+            "categories": [asdict(item) for item in self.repository.list_categories()],
+            "filters": {
+                "query": cleaned_query,
+                "category": cleaned_category,
+                "craft_type": cleaned_craft,
+                "origin_region": cleaned_region,
+                "season_tag": cleaned_season,
+                "sort": sort,
+            },
+        }
+
+    def product_detail(
+        self, user_id: str, workspace_id: str, product_id: str
+    ) -> dict[str, object]:
+        self._require_role(user_id, workspace_id, "buyer")
+        product = self._product(product_id, workspace_id)
+        roles = self._roles(user_id, workspace_id)
+        may_preview = product.seller_user_id == user_id or bool(
+            roles & {"reviewer", "admin"}
+        )
+        if product.status != "listed" and not may_preview:
+            raise CommerceNotFoundError("商品不存在或当前不可查看")
+        return self._catalog_product_payload(product, workspace_id)
+
+    def advisor_snapshot(self, user_id: str, workspace_id: str) -> dict[str, object]:
+        self._require_role(user_id, workspace_id, "buyer")
+        return {
+            "advisor": {
+                **self.advisor.status(),
+                "request_limit_24h": self.advisor_request_limit,
+                "authority": "recommend_only",
+            },
+            "history": [
+                self._advisor_payload(item, workspace_id)
+                for item in self.repository.list_advisor_interactions(
+                    user_id, workspace_id, limit=20
+                )
+                if item.status == "completed"
+            ],
+        }
+
+    def ask_advisor(
+        self,
+        user_id: str,
+        workspace_id: str,
+        *,
+        question: str,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        self._require_role(user_id, workspace_id, "buyer")
+        clean_question = _clean(question, "导购问题", 1000)
+        clean_key = _key(idempotency_key)
+        request_hash = hashlib.sha256(clean_question.encode("utf-8")).hexdigest()
+        existing = self.repository.find_advisor_interaction(
+            user_id, workspace_id, clean_key
+        )
+        if existing:
+            if existing.request_hash != request_hash:
+                raise CommerceConflictError("幂等键已用于不同的导购问题")
+            if existing.status == "completed":
+                result = self.advisor_snapshot(user_id, workspace_id)
+                result["last_result"] = self._advisor_payload(existing, workspace_id)
+                return result
+            raise CommerceConflictError("相同导购请求正在处理或此前已失败，请更换请求键重试")
+        status = self.advisor.status()
+        if status["status"] != "available":
+            raise CommerceAdvisorUnavailableError(str(status["reason"]))
+        created_after = (datetime.now(UTC) - timedelta(hours=24)).isoformat(
+            timespec="milliseconds"
+        )
+        if self.repository.count_advisor_interactions_since(
+            user_id, workspace_id, created_after
+        ) >= self.advisor_request_limit:
+            raise CommerceAdvisorRateLimitError(
+                f"当前账户 24 小时内最多提交 {self.advisor_request_limit} 次 AI 导购请求"
+            )
+        now = _now()
+        pending = ShoppingAdvisorInteraction(
+            id=f"advisor_{uuid4().hex}",
+            user_id=user_id,
+            workspace_id=workspace_id,
+            question=clean_question,
+            answer="",
+            recommendations_json="[]",
+            suggestions_json="[]",
+            status="pending",
+            mode="pending",
+            model=str(status["model"]),
+            provider="",
+            request_id="",
+            input_tokens=0,
+            output_tokens=0,
+            error_code="",
+            idempotency_key=clean_key,
+            request_hash=request_hash,
+            created_at=now,
+            updated_at=now,
+        )
+        if not self.repository.create_advisor_interaction(pending):
+            raise CommerceConflictError("导购请求发生并发冲突，请重试")
+        products, _ = self.repository.search_catalog(workspace_id, limit=30)
+        try:
+            answer = self.advisor.answer(clean_question, products)
+        except ModelCallError as exc:
+            evidence = exc.evidence
+            failed = replace(
+                pending,
+                status="failed",
+                mode="model_error",
+                provider=evidence.provider if evidence else "",
+                request_id=evidence.request_id if evidence else "",
+                input_tokens=evidence.input_tokens if evidence else 0,
+                output_tokens=evidence.output_tokens if evidence else 0,
+                error_code=type(exc).__name__,
+                updated_at=_now(),
+            )
+            self.repository.update_advisor_interaction(failed, "pending")
+            raise CommerceAdvisorUnavailableError(str(exc)) from exc
+        evidence = answer.evidence
+        completed = replace(
+            pending,
+            answer=answer.answer,
+            recommendations_json=json.dumps(
+                [asdict(item) for item in answer.recommendations],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            suggestions_json=json.dumps(
+                list(answer.suggestions), ensure_ascii=False, separators=(",", ":")
+            ),
+            status="completed",
+            mode=answer.mode,
+            provider=evidence.provider if evidence else "server",
+            request_id=evidence.request_id if evidence else "",
+            input_tokens=evidence.input_tokens if evidence else 0,
+            output_tokens=evidence.output_tokens if evidence else 0,
+            updated_at=_now(),
+        )
+        if not self.repository.update_advisor_interaction(completed, "pending"):
+            raise CommerceConflictError("导购结果保存发生并发冲突")
+        result = self.advisor_snapshot(user_id, workspace_id)
+        result["last_result"] = self._advisor_payload(completed, workspace_id)
+        return result
+
+    def _advisor_payload(
+        self, interaction: ShoppingAdvisorInteraction, workspace_id: str
+    ) -> dict[str, object]:
+        raw_recommendations = json.loads(interaction.recommendations_json)
+        recommendations: list[dict[str, object]] = []
+        for item in raw_recommendations:
+            product = self.repository.get_product(item["product_id"], workspace_id)
+            if product and product.status == "listed":
+                recommendations.append({
+                    "product": self._catalog_product_payload(product, workspace_id),
+                    "reason": item["reason"],
+                })
+        return {
+            "id": interaction.id,
+            "question": interaction.question,
+            "answer": interaction.answer,
+            "recommendations": recommendations,
+            "suggestions": json.loads(interaction.suggestions_json),
+            "mode": interaction.mode,
+            "model": interaction.model,
+            "provider": interaction.provider,
+            "request_id": interaction.request_id,
+            "input_tokens": interaction.input_tokens,
+            "output_tokens": interaction.output_tokens,
+            "created_at": interaction.created_at,
+        }
+
+    def _catalog_product_payload(
+        self, product: Product, workspace_id: str
+    ) -> dict[str, object]:
+        category = next(
+            (
+                item
+                for item in self.repository.list_categories()
+                if item.id == product.category_id
+            ),
+            None,
+        )
+        stock = self.repository.get_inventory(product.id, workspace_id)
+        return {
+            **asdict(product),
+            "category": asdict(category) if category else None,
+            "media": [
+                asdict(item)
+                for item in self.repository.list_product_media(product.id, workspace_id)
+            ],
+            "variants": [
+                asdict(item)
+                for item in self.repository.list_product_variants(product.id, workspace_id)
+            ],
+            "heritage_links": [
+                asdict(item)
+                for item in self.repository.list_product_heritage_links(
+                    product.id, workspace_id
+                )
+            ],
+            "inventory": asdict(stock)
+            if stock
+            else {"available_qty": 0, "sold_qty": 0, "version": 0, "updated_at": ""},
+            "trust": {
+                "status": product.provenance,
+                "label": "商家提供，待独立核验"
+                if product.provenance == "seller_supplied_unverified"
+                else product.provenance,
+                "platform_endorsement": False,
+            },
+        }
 
     def submit_product(self, user_id: str, workspace_id: str, product_id: str, expected_version: int) -> dict[str, object]:
         product = self._owned_product(user_id, workspace_id, product_id)

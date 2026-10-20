@@ -18,6 +18,8 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     delete,
+    func,
+    or_,
     select,
     update,
 )
@@ -39,6 +41,11 @@ from haha_commerce.domain import (
     OrderItem,
     Payment,
     Product,
+    ProductCategory,
+    ProductHeritageLink,
+    ProductMedia,
+    ProductVariant,
+    ShoppingAdvisorInteraction,
     Store,
 )
 
@@ -76,6 +83,10 @@ commerce_products = Table(
     Column("reviewed_by", String(200), nullable=False),
     Column("created_at", String(40), nullable=False),
     Column("updated_at", String(40), nullable=False),
+    Column("category_id", String(64), nullable=False, default="category-other"),
+    Column("craft_type", String(120), nullable=False, default=""),
+    Column("origin_region", String(120), nullable=False, default=""),
+    Column("season_tag", String(80), nullable=False, default=""),
     UniqueConstraint(
         "seller_user_id",
         "workspace_id",
@@ -85,6 +96,99 @@ commerce_products = Table(
 )
 Index("ix_commerce_product_catalog", commerce_products.c.workspace_id, commerce_products.c.status, commerce_products.c.updated_at)
 Index("ix_commerce_product_seller", commerce_products.c.workspace_id, commerce_products.c.seller_user_id, commerce_products.c.updated_at)
+Index("ix_commerce_product_discovery", commerce_products.c.workspace_id, commerce_products.c.status, commerce_products.c.category_id, commerce_products.c.updated_at)
+
+commerce_categories = Table(
+    "commerce_categories", commerce_metadata,
+    Column("id", String(64), primary_key=True),
+    Column("slug", String(80), nullable=False, unique=True),
+    Column("name", String(120), nullable=False),
+    Column("description", String(500), nullable=False),
+    Column("sort_order", Integer, nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+)
+Index("ix_commerce_category_status_sort", commerce_categories.c.status, commerce_categories.c.sort_order)
+
+commerce_product_media = Table(
+    "commerce_product_media", commerce_metadata,
+    Column("id", String(64), primary_key=True),
+    Column("product_id", String(64), nullable=False),
+    Column("workspace_id", String(100), nullable=False),
+    Column("media_type", String(20), nullable=False),
+    Column("storage_key", String(500), nullable=False),
+    Column("alt_text", String(300), nullable=False),
+    Column("source_note", String(1000), nullable=False),
+    Column("rights_status", String(32), nullable=False),
+    Column("sort_order", Integer, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("product_id", "workspace_id", "storage_key", name="uq_commerce_product_media_key"),
+)
+Index("ix_commerce_product_media_product", commerce_product_media.c.workspace_id, commerce_product_media.c.product_id, commerce_product_media.c.sort_order)
+
+commerce_product_variants = Table(
+    "commerce_product_variants", commerce_metadata,
+    Column("id", String(64), primary_key=True),
+    Column("product_id", String(64), nullable=False),
+    Column("workspace_id", String(100), nullable=False),
+    Column("sku", String(120), nullable=False),
+    Column("name", String(200), nullable=False),
+    Column("attributes_json", String(2000), nullable=False),
+    Column("price_cents", Integer, nullable=False),
+    Column("currency", String(3), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("is_default", Integer, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("workspace_id", "sku", name="uq_commerce_variant_workspace_sku"),
+)
+Index("ix_commerce_variant_product", commerce_product_variants.c.workspace_id, commerce_product_variants.c.product_id, commerce_product_variants.c.status)
+
+commerce_product_heritage_links = Table(
+    "commerce_product_heritage_links", commerce_metadata,
+    Column("id", String(64), primary_key=True),
+    Column("product_id", String(64), nullable=False),
+    Column("workspace_id", String(100), nullable=False),
+    Column("heritage_ref", String(200), nullable=False),
+    Column("relation_type", String(32), nullable=False),
+    Column("claim_status", String(32), nullable=False),
+    Column("source_note", String(1000), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("product_id", "workspace_id", "heritage_ref", "relation_type", name="uq_commerce_product_heritage_link"),
+)
+Index("ix_commerce_heritage_link_product", commerce_product_heritage_links.c.workspace_id, commerce_product_heritage_links.c.product_id)
+
+commerce_advisor_interactions = Table(
+    "commerce_advisor_interactions", commerce_metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), nullable=False),
+    Column("workspace_id", String(100), nullable=False),
+    Column("question", String(1000), nullable=False),
+    Column("answer", String(4000), nullable=False),
+    Column("recommendations_json", String(12000), nullable=False),
+    Column("suggestions_json", String(2000), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("mode", String(40), nullable=False),
+    Column("model", String(120), nullable=False),
+    Column("provider", String(80), nullable=False),
+    Column("request_id", String(200), nullable=False),
+    Column("input_tokens", Integer, nullable=False),
+    Column("output_tokens", Integer, nullable=False),
+    Column("error_code", String(120), nullable=False),
+    Column("idempotency_key", String(200), nullable=False),
+    Column("request_hash", String(64), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    UniqueConstraint("user_id", "workspace_id", "idempotency_key", name="uq_commerce_advisor_key"),
+)
+Index("ix_commerce_advisor_history", commerce_advisor_interactions.c.user_id, commerce_advisor_interactions.c.workspace_id, commerce_advisor_interactions.c.created_at)
 
 commerce_inventory = Table(
     "commerce_inventory", commerce_metadata,
@@ -221,11 +325,22 @@ def _url_from_path(path: str | Path) -> str:
     return f"sqlite+pysqlite:///{Path(path).resolve().as_posix()}"
 
 
+_DEFAULT_CATEGORIES = (
+    ("category-weaving", "weaving", "织绣与编织", "织造、刺绣、染色与编织相关作品。", 10),
+    ("category-ceramics", "ceramics", "陶瓷与烧造", "陶瓷、琉璃及相关烧造作品。", 20),
+    ("category-woodwork", "woodwork", "木作与雕刻", "木作、雕刻、漆艺及相关作品。", 30),
+    ("category-metalwork", "metalwork", "金工与首饰", "金属工艺、首饰及相关作品。", 40),
+    ("category-gifts", "gifts", "文创与礼赠", "适合日常使用或礼赠的文化创意商品。", 50),
+    ("category-other", "other", "其他作品", "尚未归入专门类目的作品。", 999),
+)
+
+
 class SQLAlchemyCommerceRepository:
     def __init__(self, database_url: str, *, create_schema: bool = False) -> None:
         self.engine = _engine(database_url)
         if create_schema:
             commerce_metadata.create_all(self.engine)
+            self._seed_categories()
 
     @classmethod
     def for_sqlite_path(cls, path: str | Path) -> SQLAlchemyCommerceRepository:
@@ -234,6 +349,34 @@ class SQLAlchemyCommerceRepository:
     def ping(self) -> bool:
         with self.engine.connect() as connection:
             return connection.scalar(select(1)) == 1
+
+    def _seed_categories(self) -> None:
+        now = _now()
+        with self.engine.begin() as connection:
+            for category_id, slug, name, description, sort_order in _DEFAULT_CATEGORIES:
+                values = {
+                    "id": category_id,
+                    "slug": slug,
+                    "name": name,
+                    "description": description,
+                    "sort_order": sort_order,
+                    "status": "active",
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                if connection.dialect.name == "sqlite":
+                    connection.execute(
+                        sqlite_insert(commerce_categories)
+                        .values(**values)
+                        .on_conflict_do_nothing(index_elements=[commerce_categories.c.slug])
+                    )
+                elif connection.dialect.name == "postgresql":
+                    connection.execute(
+                        postgresql_insert(commerce_categories)
+                        .values(**values)
+                        .on_conflict_do_nothing(index_elements=[commerce_categories.c.slug])
+                    )
 
     @staticmethod
     def _row(model: type[Any], row: Any) -> Any:
@@ -275,6 +418,187 @@ class SQLAlchemyCommerceRepository:
                 commerce_products.c.id == product_id,
                 commerce_products.c.workspace_id == workspace_id,
             )).first())
+
+    def list_categories(self) -> list[ProductCategory]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(commerce_categories)
+                .where(commerce_categories.c.status == "active")
+                .order_by(commerce_categories.c.sort_order, commerce_categories.c.name)
+            )
+            return [self._row(ProductCategory, row) for row in rows]
+
+    def list_product_media(self, product_id: str, workspace_id: str) -> list[ProductMedia]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(commerce_product_media)
+                .where(
+                    commerce_product_media.c.product_id == product_id,
+                    commerce_product_media.c.workspace_id == workspace_id,
+                )
+                .order_by(commerce_product_media.c.sort_order, commerce_product_media.c.created_at)
+            )
+            return [self._row(ProductMedia, row) for row in rows]
+
+    def list_product_variants(self, product_id: str, workspace_id: str) -> list[ProductVariant]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(commerce_product_variants)
+                .where(
+                    commerce_product_variants.c.product_id == product_id,
+                    commerce_product_variants.c.workspace_id == workspace_id,
+                )
+                .order_by(commerce_product_variants.c.is_default.desc(), commerce_product_variants.c.created_at)
+            )
+            return [self._row(ProductVariant, row) for row in rows]
+
+    def list_product_heritage_links(
+        self, product_id: str, workspace_id: str
+    ) -> list[ProductHeritageLink]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(commerce_product_heritage_links)
+                .where(
+                    commerce_product_heritage_links.c.product_id == product_id,
+                    commerce_product_heritage_links.c.workspace_id == workspace_id,
+                )
+                .order_by(commerce_product_heritage_links.c.created_at)
+            )
+            return [self._row(ProductHeritageLink, row) for row in rows]
+
+    def find_advisor_interaction(
+        self, user_id: str, workspace_id: str, idempotency_key: str
+    ) -> ShoppingAdvisorInteraction | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(commerce_advisor_interactions).where(
+                    commerce_advisor_interactions.c.user_id == user_id,
+                    commerce_advisor_interactions.c.workspace_id == workspace_id,
+                    commerce_advisor_interactions.c.idempotency_key == idempotency_key,
+                )
+            ).first()
+            return self._row(ShoppingAdvisorInteraction, row)
+
+    def list_advisor_interactions(
+        self, user_id: str, workspace_id: str, *, limit: int = 20
+    ) -> list[ShoppingAdvisorInteraction]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(commerce_advisor_interactions)
+                .where(
+                    commerce_advisor_interactions.c.user_id == user_id,
+                    commerce_advisor_interactions.c.workspace_id == workspace_id,
+                )
+                .order_by(commerce_advisor_interactions.c.created_at.desc())
+                .limit(limit)
+            )
+            return [self._row(ShoppingAdvisorInteraction, row) for row in rows]
+
+    def count_advisor_interactions_since(
+        self, user_id: str, workspace_id: str, created_after: str
+    ) -> int:
+        with self.engine.connect() as connection:
+            return int(connection.scalar(
+                select(func.count()).select_from(commerce_advisor_interactions).where(
+                    commerce_advisor_interactions.c.user_id == user_id,
+                    commerce_advisor_interactions.c.workspace_id == workspace_id,
+                    commerce_advisor_interactions.c.created_at >= created_after,
+                )
+            ) or 0)
+
+    def create_advisor_interaction(self, interaction: ShoppingAdvisorInteraction) -> bool:
+        values = asdict(interaction)
+        columns = [
+            commerce_advisor_interactions.c.user_id,
+            commerce_advisor_interactions.c.workspace_id,
+            commerce_advisor_interactions.c.idempotency_key,
+        ]
+        with self.engine.begin() as connection:
+            if connection.dialect.name == "postgresql":
+                inserted_id = connection.scalar(
+                    postgresql_insert(commerce_advisor_interactions)
+                    .values(**values)
+                    .on_conflict_do_nothing(index_elements=columns)
+                    .returning(commerce_advisor_interactions.c.id)
+                )
+                return inserted_id is not None
+            elif connection.dialect.name == "sqlite":
+                result = connection.execute(sqlite_insert(commerce_advisor_interactions).values(**values).on_conflict_do_nothing(index_elements=columns))
+            else:
+                try:
+                    result = connection.execute(commerce_advisor_interactions.insert().values(**values))
+                except IntegrityError:
+                    return False
+            return result.rowcount == 1
+
+    def update_advisor_interaction(
+        self, interaction: ShoppingAdvisorInteraction, expected_status: str
+    ) -> bool:
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                update(commerce_advisor_interactions)
+                .where(
+                    commerce_advisor_interactions.c.id == interaction.id,
+                    commerce_advisor_interactions.c.status == expected_status,
+                )
+                .values(**asdict(interaction))
+            )
+            return result.rowcount == 1
+
+    def search_catalog(
+        self,
+        workspace_id: str,
+        *,
+        query: str = "",
+        category_slug: str = "",
+        craft_type: str = "",
+        origin_region: str = "",
+        season_tag: str = "",
+        sort: str = "newest",
+        offset: int = 0,
+        limit: int = 24,
+    ) -> tuple[list[Product], int]:
+        base = select(commerce_products).where(
+            commerce_products.c.workspace_id == workspace_id,
+            commerce_products.c.status == "listed",
+        )
+        count_query = select(func.count()).select_from(commerce_products).where(
+            commerce_products.c.workspace_id == workspace_id,
+            commerce_products.c.status == "listed",
+        )
+        filters: list[Any] = []
+        if query:
+            pattern = f"%{query.casefold()}%"
+            filters.append(or_(
+                func.lower(commerce_products.c.title).like(pattern),
+                func.lower(commerce_products.c.summary).like(pattern),
+                func.lower(commerce_products.c.craft_type).like(pattern),
+                func.lower(commerce_products.c.origin_region).like(pattern),
+            ))
+        if category_slug:
+            category_id = select(commerce_categories.c.id).where(
+                commerce_categories.c.slug == category_slug,
+                commerce_categories.c.status == "active",
+            ).scalar_subquery()
+            filters.append(commerce_products.c.category_id == category_id)
+        if craft_type:
+            filters.append(func.lower(commerce_products.c.craft_type) == craft_type.casefold())
+        if origin_region:
+            filters.append(func.lower(commerce_products.c.origin_region) == origin_region.casefold())
+        if season_tag:
+            filters.append(func.lower(commerce_products.c.season_tag) == season_tag.casefold())
+        if filters:
+            base = base.where(*filters)
+            count_query = count_query.where(*filters)
+        order = {
+            "newest": commerce_products.c.updated_at.desc(),
+            "price_asc": commerce_products.c.price_cents.asc(),
+            "price_desc": commerce_products.c.price_cents.desc(),
+        }[sort]
+        with self.engine.connect() as connection:
+            total = int(connection.scalar(count_query) or 0)
+            rows = connection.execute(base.order_by(order, commerce_products.c.id).offset(offset).limit(limit))
+            return [self._row(Product, row) for row in rows], total
 
     def find_product_by_creation_key(self, user_id: str, workspace_id: str, creation_key: str) -> Product | None:
         with self.engine.connect() as connection:
@@ -319,6 +643,22 @@ class SQLAlchemyCommerceRepository:
                 result = connection.execute(commerce_products.insert().values(**values))
             if result.rowcount != 1:
                 return False
+            variant = ProductVariant(
+                id=f"variant_{product.id}",
+                product_id=product.id,
+                workspace_id=product.workspace_id,
+                sku=f"DEFAULT-{product.id[-12:].upper()}",
+                name="默认规格",
+                attributes_json="{}",
+                price_cents=product.price_cents,
+                currency=product.currency,
+                status="active",
+                is_default=1,
+                version=1,
+                created_at=product.created_at,
+                updated_at=product.updated_at,
+            )
+            connection.execute(commerce_product_variants.insert().values(**asdict(variant)))
             self._event(connection, actor=product.seller_user_id, workspace_id=product.workspace_id, event_type="product.created", entity_type="product", entity_id=product.id, key=f"product-create:{product.id}")
             return True
 

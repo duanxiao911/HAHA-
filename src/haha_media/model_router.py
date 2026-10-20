@@ -16,6 +16,7 @@ TaskType = Literal[
     "storyboard",
     "publish_pack",
     "learning_tutor",
+    "shopping_advisor",
     "image",
 ]
 
@@ -82,7 +83,7 @@ class ModelRouter:
     """Route creative tasks without exposing provider details to business code."""
 
     TEXT_TASKS = frozenset(
-        {"creation_judgement", "master_script", "storyboard", "publish_pack", "learning_tutor"}
+        {"creation_judgement", "master_script", "storyboard", "publish_pack", "learning_tutor", "shopping_advisor"}
     )
 
     def __init__(self) -> None:

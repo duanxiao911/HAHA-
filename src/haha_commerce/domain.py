@@ -17,6 +17,14 @@ class CommerceConflictError(RuntimeError):
     """A state, version, inventory, or idempotency invariant was violated."""
 
 
+class CommerceAdvisorUnavailableError(RuntimeError):
+    """The real shopping advisor is unavailable or returned an unsafe result."""
+
+
+class CommerceAdvisorRateLimitError(RuntimeError):
+    """The account exhausted its rolling shopping-advisor allowance."""
+
+
 @dataclass(frozen=True, slots=True)
 class Store:
     id: str
@@ -46,6 +54,93 @@ class Product:
     version: int
     reviewer_note: str
     reviewed_by: str
+    created_at: str
+    updated_at: str
+    category_id: str = "category-other"
+    craft_type: str = ""
+    origin_region: str = ""
+    season_tag: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ProductCategory:
+    id: str
+    slug: str
+    name: str
+    description: str
+    sort_order: int
+    status: str
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProductMedia:
+    id: str
+    product_id: str
+    workspace_id: str
+    media_type: str
+    storage_key: str
+    alt_text: str
+    source_note: str
+    rights_status: str
+    sort_order: int
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProductVariant:
+    id: str
+    product_id: str
+    workspace_id: str
+    sku: str
+    name: str
+    attributes_json: str
+    price_cents: int
+    currency: str
+    status: str
+    is_default: int
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProductHeritageLink:
+    id: str
+    product_id: str
+    workspace_id: str
+    heritage_ref: str
+    relation_type: str
+    claim_status: str
+    source_note: str
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ShoppingAdvisorInteraction:
+    id: str
+    user_id: str
+    workspace_id: str
+    question: str
+    answer: str
+    recommendations_json: str
+    suggestions_json: str
+    status: str
+    mode: str
+    model: str
+    provider: str
+    request_id: str
+    input_tokens: int
+    output_tokens: int
+    error_code: str
+    idempotency_key: str
+    request_hash: str
     created_at: str
     updated_at: str
 

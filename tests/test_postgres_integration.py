@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from haha_auth.service import AccountRegistrationError, AuthService, InvalidRefreshTokenError
-from haha_commerce.domain import CommerceConflictError
+from haha_commerce.domain import CommerceConflictError, ShoppingAdvisorInteraction
 from haha_commerce.service import CommerceService
 from haha_commerce.sqlalchemy_repository import SQLAlchemyCommerceRepository
 from haha_community.domain import CommunityConflictError
@@ -326,6 +326,50 @@ def test_postgres_parallel_workbench_bootstrap_is_idempotent(repository) -> None
     notifications = repository.list_user_notifications("parallel-user", "pg-workspace")
     assert len(notifications) == 1
     assert notifications[0].title == "文化账户已启用"
+
+
+def test_postgres_commerce_advisor_insert_and_update_are_observable(repository) -> None:
+    workspace_id = "commerce-advisor-pg-workspace"
+    user_id = "commerce-advisor-pg-user"
+    repository.ensure_identity(user_id, workspace_id, role="owner")
+    IdentityService(repository).bootstrap(user_id, workspace_id)
+    commerce_repository = SQLAlchemyCommerceRepository(POSTGRES_URL)
+    now = "2026-10-20T00:00:00.000+00:00"
+    pending = ShoppingAdvisorInteraction(
+        id="advisor-pg-001",
+        user_id=user_id,
+        workspace_id=workspace_id,
+        question="想找一件日常礼物",
+        answer="",
+        recommendations_json="[]",
+        suggestions_json="[]",
+        status="pending",
+        mode="pending",
+        model="deepseek-flash",
+        provider="",
+        request_id="",
+        input_tokens=0,
+        output_tokens=0,
+        error_code="",
+        idempotency_key="advisor-pg-idempotency-001",
+        request_hash="a" * 64,
+        created_at=now,
+        updated_at=now,
+    )
+    assert commerce_repository.create_advisor_interaction(pending) is True
+    assert commerce_repository.create_advisor_interaction(pending) is False
+    completed = replace(
+        pending,
+        answer="当前目录没有可售商品。",
+        status="completed",
+        mode="no_catalog",
+    )
+    assert commerce_repository.update_advisor_interaction(completed, "pending") is True
+    restored = commerce_repository.find_advisor_interaction(
+        user_id, workspace_id, pending.idempotency_key
+    )
+    assert restored is not None
+    assert restored.status == "completed"
 
 
 def test_postgres_commerce_checkout_serializes_inventory(repository) -> None:

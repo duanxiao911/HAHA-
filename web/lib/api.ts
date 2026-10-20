@@ -387,9 +387,36 @@ export type CommerceProduct = {
   id: string; workspace_id: string; store_id: string; seller_user_id: string;
   title: string; summary: string; price_cents: number; currency: "CNY";
   source_note: string; provenance: string;
+  category_id: string; craft_type: string; origin_region: string; season_tag: string;
   status: "draft" | "submitted" | "approved" | "rejected" | "listed" | "delisted";
   version: number; reviewer_note: string; reviewed_by: string; updated_at: string;
+  category: null | { id: string; slug: string; name: string; description: string; sort_order: number; status: string };
+  media: { id: string; media_type: "image" | "video"; storage_key: string; alt_text: string; source_note: string; rights_status: string; sort_order: number; version: number }[];
+  variants: { id: string; sku: string; name: string; price_cents: number; attributes_json: string; is_default: 0 | 1; status: string; version: number }[];
+  heritage_links: { id: string; heritage_ref: string; relation_type: string; claim_status: string; source_note: string; version: number }[];
   inventory: { available_qty: number; sold_qty: number; version: number; updated_at: string };
+  trust?: { status: string; label: string; platform_endorsement: false };
+};
+
+export type CommerceCategory = { id: string; slug: string; name: string; description: string; sort_order: number; status: string };
+
+export type CommerceCatalog = {
+  items: CommerceProduct[]; total: number; page: number; page_size: number; has_more: boolean;
+  categories: CommerceCategory[];
+  filters: { query: string; category: string; craft_type: string; origin_region: string; season_tag: string; sort: string };
+};
+
+export type CommerceAdvisorResult = {
+  id: string; question: string; answer: string; mode: string; model: string; provider: string;
+  request_id: string; input_tokens: number; output_tokens: number; created_at: string;
+  suggestions: string[];
+  recommendations: { product: CommerceProduct; reason: string }[];
+};
+
+export type CommerceAdvisorSnapshot = {
+  advisor: { status: "available" | "blocked"; reason: string; model: string; request_limit_24h: number; authority: "recommend_only" };
+  history: CommerceAdvisorResult[];
+  last_result?: CommerceAdvisorResult;
 };
 
 export type CommerceOrder = {
@@ -412,6 +439,7 @@ export type CommerceSnapshot = {
   seller_orders: CommerceOrder[];
   buyer_after_sales: { id: string; order_id: string; reason: string; status: string; decision_note: string; version: number }[];
   seller_after_sales: { id: string; order_id: string; reason: string; status: string; decision_note: string; version: number }[];
+  categories: CommerceCategory[];
   sandbox: { status: "internal_test_only"; payment_provider: "internal_sandbox"; real_money_moved: false; notice: string; checkout_scope: "single_store" };
 };
 
@@ -556,10 +584,27 @@ export async function askLearningTutor(question: string): Promise<LearningSnapsh
 export async function getCommerceCenter(): Promise<CommerceSnapshot> {
   return request("/api/commerce", { headers: headers() });
 }
+export async function getCommerceCatalog(params: URLSearchParams = new URLSearchParams()): Promise<CommerceCatalog> {
+  const query = params.toString();
+  return request(`/api/commerce/catalog${query ? `?${query}` : ""}`, { headers: headers() });
+}
+export async function getCommerceProduct(productId: string): Promise<CommerceProduct> {
+  return request(`/api/commerce/products/${encodeURIComponent(productId)}`, { headers: headers() });
+}
+export async function getCommerceAdvisor(): Promise<CommerceAdvisorSnapshot> {
+  return request("/api/commerce/advisor", { headers: headers() });
+}
+export async function askCommerceAdvisor(question: string): Promise<CommerceAdvisorSnapshot> {
+  return request("/api/commerce/advisor/messages", {
+    method: "POST",
+    headers: headers(crypto.randomUUID()),
+    body: JSON.stringify({ question }),
+  });
+}
 export async function openCommerceStore(name: string): Promise<CommerceSnapshot> {
   return request("/api/commerce/stores", { method: "POST", headers: headers(), body: JSON.stringify({ name }) });
 }
-export async function createCommerceProduct(payload: { title: string; summary: string; price_cents: number; source_note: string }): Promise<CommerceSnapshot> {
+export async function createCommerceProduct(payload: { title: string; summary: string; price_cents: number; source_note: string; category_slug?: string; craft_type?: string; origin_region?: string; season_tag?: string }): Promise<CommerceSnapshot> {
   return request("/api/commerce/products", { method: "POST", headers: headers(crypto.randomUUID()), body: JSON.stringify(payload) });
 }
 export async function submitCommerceProduct(productId: string, expectedVersion: number): Promise<CommerceSnapshot> {

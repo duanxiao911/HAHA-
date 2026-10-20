@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { ConfirmDialog } from "@/components/community/ConfirmDialog";
@@ -11,6 +12,7 @@ import {
   cancelCommerceOrder,
   checkoutCommerceCart,
   CommerceOrder,
+  CommerceCatalog,
   CommerceProduct,
   CommerceSnapshot,
   confirmCommerceDelivery,
@@ -18,6 +20,7 @@ import {
   decideCommerceAfterSale,
   getAuthSessionSnapshot,
   getCommerceCenter,
+  getCommerceCatalog,
   getServerAuthSessionSnapshot,
   initializeAuthSession,
   openCommerceStore,
@@ -59,8 +62,11 @@ export function CommerceCenter() {
   const [feedback, setFeedback] = useState("");
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [storeName, setStoreName] = useState("");
-  const [product, setProduct] = useState({ title: "", summary: "", price: "", source: "" });
+  const [product, setProduct] = useState({ title: "", summary: "", price: "", source: "", category: "other", craft: "", region: "", season: "" });
   const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogCategory, setCatalogCategory] = useState("");
+  const [catalog, setCatalog] = useState<CommerceCatalog | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [cartQuantities, setCartQuantities] = useState<Record<string, string>>({});
   const [inventoryQuantities, setInventoryQuantities] = useState<Record<string, string>>({});
 
@@ -79,6 +85,20 @@ export function CommerceCenter() {
       .catch((cause: unknown) => { if (active) setError(errorText(cause)); });
     return () => { active = false; };
   }, [canLoad]);
+  useEffect(() => {
+    if (!canLoad || view !== "market") return;
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams();
+      if (catalogQuery.trim()) params.set("q", catalogQuery.trim());
+      if (catalogCategory) params.set("category", catalogCategory);
+      setCatalogLoading(true);
+      void getCommerceCatalog(params)
+        .then(setCatalog)
+        .catch((cause: unknown) => setError(errorText(cause)))
+        .finally(() => setCatalogLoading(false));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [canLoad, catalogCategory, catalogQuery, view]);
 
   function selectView(next: View) {
     const params = new URLSearchParams(searchParams.toString());
@@ -102,7 +122,7 @@ export function CommerceCenter() {
     event.preventDefault();
     const priceCents = Math.round(Number(product.price) * 100);
     if (!Number.isFinite(priceCents) || priceCents < 1) { setError("请输入有效的沙盒价格。"); return; }
-    if (await run(() => createCommerceProduct({ title: product.title, summary: product.summary, price_cents: priceCents, source_note: product.source }), "商品草稿已保存。")) setProduct({ title: "", summary: "", price: "", source: "" });
+    if (await run(() => createCommerceProduct({ title: product.title, summary: product.summary, price_cents: priceCents, source_note: product.source, category_slug: product.category, craft_type: product.craft, origin_region: product.region, season_tag: product.season }), "商品草稿已保存。")) setProduct({ title: "", summary: "", price: "", source: "", category: "other", craft: "", region: "", season: "" });
   }
 
   function saveCartQuantity(item: CommerceProduct, fallback: number, version: number) {
@@ -132,19 +152,16 @@ export function CommerceCenter() {
 
   const isSeller = snapshot.roles.includes("seller");
   const canReview = snapshot.roles.includes("reviewer") || snapshot.roles.includes("admin");
-  const normalizedQuery = catalogQuery.trim().toLocaleLowerCase("zh-CN");
-  const filteredCatalog = normalizedQuery
-    ? snapshot.catalog.filter((item) => [item.title, item.summary, item.source_note].some((value) => value.toLocaleLowerCase("zh-CN").includes(normalizedQuery)))
-    : snapshot.catalog;
+  const filteredCatalog = catalog?.items ?? snapshot.catalog;
   const nav: [View, string][] = [
     ["market", "商品"], ["cart", `购物车 ${snapshot.cart.length}`], ["orders", `我的订单 ${snapshot.buyer_orders.length}`],
     ...(isSeller ? [["seller", "卖家工作台"] as [View, string]] : []),
     ...(canReview ? [["review", `商品审核 ${snapshot.review_queue.length}`] as [View, string]] : []),
   ];
 
-  return <ProductFrame className="commerceFrame" mainClassName="commercePage" demoLabel="Gate D · INTERNAL SANDBOX">
+  return <ProductFrame className="commerceFrame" mainClassName="commercePage" demoLabel="INTERNAL COMMERCE PREVIEW">
     <section className="commerceHero">
-      <div><small>HAHA HERITAGE COMMERCE</small><h1>非遗交易沙盒</h1><p>商品审核、库存、订单、支付状态、履约与售后均由服务端持久化；常用操作按购买流程排列。</p></div>
+      <div><small>HAHA HERITAGE MARKET</small><h1>发现值得带回家的非遗好物</h1><p>按工艺与地区探索，由服务端保存购物状态。商品文化关联与来源信息分级展示，不把商家自述包装成权威认证。</p><div className="commerceHeroActions"><a className="productButton" href="#commerce-catalog">开始逛好物</a><Link className="productButtonSecondary" href="/commerce/advisor">问 AI 智能导购</Link></div></div>
       <div className="commerceSandboxBadge"><b>INTERNAL SANDBOX</b><span>不处理真实资金</span></div>
     </section>
     <div className="commerceBoundary" role="note"><strong>边界说明</strong><span>{snapshot.sandbox.notice} 当前仅支持单店结算。</span></div>
@@ -152,17 +169,18 @@ export function CommerceCenter() {
     {error ? <div className="commerceAlert" role="alert">{error}</div> : null}
     {feedback ? <div className="productToast" role="status">{feedback}</div> : null}
 
-    {view === "market" ? <section className="commerceSection">
-      <header><div><small>REVIEWED TEST LISTINGS</small><h2>沙盒商品</h2><p>这里只展示已审核且有库存的内部测试商品；来源说明仍需独立判断。</p></div><button className="productButtonSecondary" type="button" onClick={() => selectView("cart")}>查看购物车</button></header>
-      {snapshot.catalog.length ? <div className="commerceToolbar"><label htmlFor="commerce-search">搜索沙盒商品<input id="commerce-search" type="search" value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="搜索名称、说明或来源" /></label><span>显示 {filteredCatalog.length} / {snapshot.catalog.length}</span></div> : null}
+    {view === "market" ? <section className="commerceSection" id="commerce-catalog">
+      <header><div><small>CURATED DISCOVERY</small><h2>逛非遗好物</h2><p>从自然语言搜索或常见工艺分类开始；当前只展示已审核且有库存的内部测试商品。</p></div><button className="productButtonSecondary" type="button" onClick={() => selectView("cart")}>查看购物车</button></header>
+      <div className="commerceCategoryRail" aria-label="商品分类"><button type="button" className={!catalogCategory ? "active" : ""} onClick={() => setCatalogCategory("")}>全部</button>{snapshot.categories.map((item) => <button type="button" className={catalogCategory === item.slug ? "active" : ""} onClick={() => setCatalogCategory(item.slug)} key={item.id}>{item.name}</button>)}</div>
+      <div className="commerceToolbar"><label htmlFor="commerce-search">搜索商品<input id="commerce-search" type="search" value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="例如：送长辈的陶瓷茶具" /></label><span>{catalogLoading ? "正在搜索…" : `找到 ${catalog?.total ?? snapshot.catalog.length} 件`}</span></div>
       {filteredCatalog.length ? <div className="commerceProductGrid">{filteredCatalog.map((item) => {
         const cartLine = snapshot.cart.find((line) => line.product_id === item.id);
         return <article key={item.id}>
-        <span className="productStatusPill is-good">{statusLabels[item.status]}</span><h3>{item.title}</h3><p>{item.summary}</p>
+        <div className="commerceProductVisual" aria-hidden="true"><span>{item.category?.name ?? "非遗好物"}</span></div><span className="productStatusPill is-good">{item.category?.name ?? statusLabels[item.status]}</span><h3><Link href={`/commerce/products/${encodeURIComponent(item.id)}`}>{item.title}</Link></h3><p>{item.summary}</p>
         <dl><div><dt>沙盒价格</dt><dd>{money.format(item.price_cents / 100)}</dd></div><div><dt>可用库存</dt><dd>{item.inventory.available_qty}</dd></div></dl>
-        <details><summary>查看来源与审核边界</summary><p>{item.source_note}</p><small>{item.provenance === "seller_supplied_unverified" ? "卖家自述，非权威认证" : item.provenance}</small></details>
+        <details><summary>查看来源与可信边界</summary><p>{item.source_note}</p><small>{item.trust?.label ?? (item.provenance === "seller_supplied_unverified" ? "商家提供，待独立核验" : item.provenance)}</small></details>
         <div className="commerceQuantity"><label htmlFor={`catalog-quantity-${item.id}`}>数量<input id={`catalog-quantity-${item.id}`} type="number" min="1" max={Math.min(99, item.inventory.available_qty)} step="1" value={cartQuantities[item.id] ?? String(cartLine?.quantity ?? 1)} onChange={(event) => setCartQuantities({ ...cartQuantities, [item.id]: event.target.value })} /></label><button className="productButton" type="button" disabled={busy} onClick={() => saveCartQuantity(item, cartLine?.quantity ?? 1, cartLine?.version ?? 0)}>{cartLine ? "更新购物车" : "加入购物车"}</button></div>
-      </article>})}</div> : snapshot.catalog.length ? <StateNotice kind="empty" title="没有匹配的沙盒商品" description="换一个关键词，或清除搜索查看全部商品。" actionLabel="清除搜索" onAction={() => setCatalogQuery("")} /> : <StateNotice kind="empty" title="还没有可购买的沙盒商品" description="卖家商品通过独立审核并设置库存后才会出现在这里。" />}
+      </article>})}</div> : catalogLoading ? <StateNotice kind="loading" title="正在寻找合适的商品" description="从服务端目录读取结果。" /> : (catalogQuery || catalogCategory) ? <StateNotice kind="empty" title="没有找到匹配商品" description="换一个说法或分类再试试。" actionLabel="清除筛选" onAction={() => { setCatalogQuery(""); setCatalogCategory(""); }} /> : <StateNotice kind="empty" title="还没有可购买商品" description="卖家商品通过独立审核并设置库存后才会出现在这里。" />}
     </section> : null}
 
     {view === "cart" ? <section className="commerceSection">
@@ -182,13 +200,24 @@ export function CommerceCenter() {
 
     {view === "seller" && isSeller ? <section className="commerceSection">
       <header><div><small>SELLER WORKSPACE</small><h2>卖家工作台</h2><p>店铺、商品与库存归属当前已授权卖家账户。</p></div></header>
+      <div className="commerceSellerMetrics" aria-label="店铺经营概览">
+        <div><span>全部商品</span><strong>{snapshot.seller_products.length}</strong><small>当前店铺</small></div>
+        <div><span>待审核</span><strong>{snapshot.seller_products.filter((item) => item.status === "submitted").length}</strong><small>由独立审核员处理</small></div>
+        <div><span>沙盒在售</span><strong>{snapshot.seller_products.filter((item) => item.status === "listed").length}</strong><small>库存大于零</small></div>
+        <div><span>待履约</span><strong>{snapshot.seller_orders.filter((item) => item.status === "paid").length}</strong><small>仅内部状态演练</small></div>
+      </div>
+      <ol className="commerceSellerSteps"><li>保存结构化商品草稿</li><li>提交独立审核</li><li>审核通过后设置库存</li><li>处理订单与售后</li></ol>
       {!snapshot.store ? <form className="commerceForm" onSubmit={createStore}><label htmlFor="store-name">店铺名称<input id="store-name" value={storeName} onChange={(event) => setStoreName(event.target.value)} required maxLength={200} /></label><button className="productButton" disabled={busy}>创建内部测试店铺</button></form> : <>
         <div className="commerceStoreLine"><span>当前店铺</span><strong>{snapshot.store.name}</strong><small>内部测试 · {snapshot.store.status}</small></div>
         <form className="commerceForm commerceProductForm" onSubmit={createProduct}>
           <label htmlFor="product-title">商品名称<input id="product-title" value={product.title} onChange={(event) => setProduct({ ...product, title: event.target.value })} required /></label>
           <label htmlFor="product-price">沙盒价格（元）<input id="product-price" type="number" min="0.01" step="0.01" value={product.price} onChange={(event) => setProduct({ ...product, price: event.target.value })} required /></label>
+          <label htmlFor="product-category">商品分类<select id="product-category" value={product.category} onChange={(event) => setProduct({ ...product, category: event.target.value })}>{snapshot.categories.map((item) => <option value={item.slug} key={item.id}>{item.name}</option>)}</select></label>
+          <label htmlFor="product-craft">工艺类型<input id="product-craft" value={product.craft} onChange={(event) => setProduct({ ...product, craft: event.target.value })} placeholder="如：手工拉坯" maxLength={120} /></label>
+          <label htmlFor="product-region">来源地区<input id="product-region" value={product.region} onChange={(event) => setProduct({ ...product, region: event.target.value })} placeholder="如：江西景德镇" maxLength={120} /></label>
+          <label htmlFor="product-season">季节主题<input id="product-season" value={product.season} onChange={(event) => setProduct({ ...product, season: event.target.value })} placeholder="如：春日上新" maxLength={80} /></label>
           <label className="wide" htmlFor="product-summary">商品说明<textarea id="product-summary" value={product.summary} onChange={(event) => setProduct({ ...product, summary: event.target.value })} required /></label>
-          <label className="wide" htmlFor="product-source">来源与授权说明<textarea id="product-source" value={product.source} onChange={(event) => setProduct({ ...product, source: event.target.value })} placeholder="必须如实说明来源、授权范围与待核验事项" required /></label>
+          <label className="wide" htmlFor="product-source">来源与授权说明<textarea id="product-source" value={product.source} onChange={(event) => setProduct({ ...product, source: event.target.value })} placeholder="必须如实说明来源、授权范围与待核验事项；不得把商家自述写成权威认证" required /></label>
           <button className="productButton wide" disabled={busy}>保存商品草稿</button>
         </form>
       </>}

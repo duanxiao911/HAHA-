@@ -5,8 +5,8 @@ import { StateNotice } from "@/components/community/StateNotice";
 import { CommerceCenter } from "./CommerceCenter";
 
 export const metadata: Metadata = {
-  title: "非遗交易沙盒｜HAHA",
-  description: "内部验证商品审核、库存、订单、沙盒支付、履约与售后闭环。",
+  title: "非遗好物｜HAHA",
+  description: "发现非遗好物，查看清晰的来源与可信边界；交易功能当前处于内部沙盒。",
 };
 
 export default function CommercePage() {

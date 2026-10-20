@@ -46,8 +46,11 @@ from haha_auth.service import (
     InvalidRefreshTokenError,
     RegistrationDisabledError,
 )
+from haha_commerce.advisor import ShoppingAdvisor
 from haha_commerce.bootstrap import build_commerce_repository
 from haha_commerce.domain import (
+    CommerceAdvisorRateLimitError,
+    CommerceAdvisorUnavailableError,
     CommerceConflictError,
     CommerceNotFoundError,
     CommercePermissionError,
@@ -302,6 +305,15 @@ class CommerceProductCreate(BaseModel):
     summary: str = Field(min_length=1, max_length=2000)
     price_cents: int = Field(ge=1, le=10_000_000)
     source_note: str = Field(min_length=1, max_length=1000)
+    category_slug: str = Field(default="other", min_length=1, max_length=80)
+    craft_type: str = Field(default="", max_length=120)
+    origin_region: str = Field(default="", max_length=120)
+    season_tag: str = Field(default="", max_length=80)
+
+
+class CommerceAdvisorQuestionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question: str = Field(min_length=2, max_length=1000)
 
 
 class CommerceVersionRequest(BaseModel):
@@ -345,6 +357,7 @@ def create_app(
     commerce_repository: CommerceRepository | None = None,
     media_storage: FileSystemMediaStorage | None = None,
     learning_tutor: HeritageTutor | None = None,
+    commerce_advisor: ShoppingAdvisor | None = None,
 ) -> FastAPI:
     validate_security_configuration()
     active_repository = repository or build_repository()
@@ -364,7 +377,9 @@ def create_app(
     active_commerce_repository = commerce_repository or build_commerce_repository(
         active_repository
     )
-    commerce_service = CommerceService(active_commerce_repository, active_repository)
+    commerce_service = CommerceService(
+        active_commerce_repository, active_repository, commerce_advisor
+    )
     workbench_service = WorkbenchService(
         active_repository, active_commerce_repository, active_learning_tutor
     )  # type: ignore[arg-type]
@@ -468,6 +483,18 @@ def create_app(
         _request: Request, exc: CommerceConflictError
     ) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @application.exception_handler(CommerceAdvisorUnavailableError)
+    async def commerce_advisor_unavailable_handler(
+        _request: Request, exc: CommerceAdvisorUnavailableError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @application.exception_handler(CommerceAdvisorRateLimitError)
+    async def commerce_advisor_rate_limit_handler(
+        _request: Request, exc: CommerceAdvisorRateLimitError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=429, content={"detail": str(exc)})
 
     def resolve_membership(
         identity: Principal = Depends(authenticate),
@@ -1318,6 +1345,69 @@ def create_app(
     ) -> dict[str, object]:
         """Return account-scoped commerce state with explicit sandbox boundaries."""
         return commerce_service.snapshot(principal.user_id, principal.workspace_id)
+
+    @application.get("/api/commerce/catalog")
+    def search_commerce_catalog(
+        q: str = Query(default="", max_length=200),
+        category: str = Query(default="", max_length=80),
+        craft_type: str = Query(default="", max_length=120),
+        origin_region: str = Query(default="", max_length=120),
+        season_tag: str = Query(default="", max_length=80),
+        sort: str = Query(default="newest", pattern="^(newest|price_asc|price_desc)$"),
+        page: int = Query(default=1, ge=1, le=10_000),
+        page_size: int = Query(default=24, ge=1, le=60),
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.catalog(
+                principal.user_id,
+                principal.workspace_id,
+                query=q,
+                category=category,
+                craft_type=craft_type,
+                origin_region=origin_region,
+                season_tag=season_tag,
+                sort=sort,
+                page=page,
+                page_size=page_size,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.get("/api/commerce/products/{product_id}")
+    def get_commerce_product_detail(
+        product_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return commerce_service.product_detail(
+            principal.user_id, principal.workspace_id, product_id
+        )
+
+    @application.get("/api/commerce/advisor")
+    def get_commerce_advisor(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return commerce_service.advisor_snapshot(
+            principal.user_id, principal.workspace_id
+        )
+
+    @application.post("/api/commerce/advisor/messages")
+    def ask_commerce_advisor(
+        payload: CommerceAdvisorQuestionCreate,
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return commerce_service.ask_advisor(
+                principal.user_id,
+                principal.workspace_id,
+                question=payload.question,
+                idempotency_key=idempotency_key,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @application.post("/api/commerce/stores")
     def open_commerce_store(

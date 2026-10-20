@@ -281,3 +281,108 @@ def test_permissions_versions_inventory_and_order_isolation_fail_closed() -> Non
     assert cancelled.status_code == 200
     restored = client.get("/api/commerce", headers=buyer).json()["catalog"][0]
     assert restored["inventory"]["available_qty"] == 2
+
+
+def test_structured_catalog_search_and_detail_are_server_authoritative() -> None:
+    client, identity = _stack()
+    seller = _headers("seller-catalog")
+    reviewer = _headers("reviewer-catalog")
+    buyer = _headers("buyer-catalog")
+    _grant(identity, "seller-catalog", "commerce-ws", "seller")
+    _grant(identity, "reviewer-catalog", "commerce-ws", "reviewer")
+    identity.ensure_identity("buyer-catalog", "commerce-ws", role="owner")
+    IdentityService(identity).bootstrap("buyer-catalog", "commerce-ws")
+    assert client.post(
+        "/api/commerce/stores", headers=seller, json={"name": "目录测试店铺"}
+    ).status_code == 200
+
+    created = client.post(
+        "/api/commerce/products",
+        headers={**seller, "Idempotency-Key": "catalog-product-create-0001"},
+        json={
+            "title": "竹编收纳篮测试作品",
+            "summary": "用于验证结构化目录，不构成正式非遗认证。",
+            "price_cents": 8800,
+            "source_note": "卖家声明，来源待独立核验。",
+            "category_slug": "weaving",
+            "craft_type": "竹编",
+            "origin_region": "四川",
+            "season_tag": "新春礼赠",
+        },
+    )
+    assert created.status_code == 201
+    product = created.json()["seller_products"][0]
+    assert product["category"]["slug"] == "weaving"
+    assert product["variants"][0]["is_default"] == 1
+    assert product["variants"][0]["price_cents"] == 8800
+
+    submitted = client.post(
+        f"/api/commerce/products/{product['id']}/submit",
+        headers=seller,
+        json={"expected_version": product["version"]},
+    ).json()["seller_products"][0]
+    reviewed = client.post(
+        f"/api/commerce/products/{product['id']}/review",
+        headers=reviewer,
+        json={
+            "decision": "approved",
+            "note": "仅允许进入内部沙盒目录。",
+            "expected_version": submitted["version"],
+        },
+    ).json()
+    assert reviewed["review_queue"] == []
+    assert client.put(
+        f"/api/commerce/products/{product['id']}/inventory",
+        headers=seller,
+        json={"quantity": 4, "expected_version": 0},
+    ).status_code == 200
+
+    result = client.get(
+        "/api/commerce/catalog",
+        headers=buyer,
+        params={
+            "q": "竹编",
+            "category": "weaving",
+            "origin_region": "四川",
+            "season_tag": "新春礼赠",
+            "sort": "price_asc",
+        },
+    )
+    assert result.status_code == 200
+    body = result.json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == product["id"]
+    assert body["items"][0]["trust"] == {
+        "status": "seller_supplied_unverified",
+        "label": "商家提供，待独立核验",
+        "platform_endorsement": False,
+    }
+    assert body["filters"]["category"] == "weaving"
+
+    detail = client.get(
+        f"/api/commerce/products/{product['id']}", headers=buyer
+    )
+    assert detail.status_code == 200
+    assert detail.json()["inventory"]["available_qty"] == 4
+    assert detail.json()["media"] == []
+    assert detail.json()["heritage_links"] == []
+
+    empty = client.get(
+        "/api/commerce/catalog", headers=buyer, params={"q": "不存在的商品"}
+    )
+    assert empty.status_code == 200
+    assert empty.json()["total"] == 0
+    assert empty.json()["items"] == []
+
+    invalid_category = client.post(
+        "/api/commerce/products",
+        headers={**seller, "Idempotency-Key": "catalog-product-invalid-0001"},
+        json={
+            "title": "无效类目",
+            "summary": "验证服务端拒绝未知类目。",
+            "price_cents": 100,
+            "source_note": "内部测试。",
+            "category_slug": "unknown-category",
+        },
+    )
+    assert invalid_category.status_code == 400
