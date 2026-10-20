@@ -91,7 +91,7 @@ export function PlatformHome() {
     ? "学习可用 · AI 老师可用"
     : aiTutorCapability?.status === "blocked"
       ? "学习可用 · AI 老师受阻"
-      : "学习可用 · AI 按运行状态";
+      : "学习可用 · AI 老师受阻";
   const resumeItems = snapshot ? [
     snapshot.today.continue_watching ? {
       eyebrow: "视频社区", title: snapshot.today.continue_watching.title,
