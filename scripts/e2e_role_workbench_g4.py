@@ -107,6 +107,17 @@ async def run(websocket_url: str) -> dict[str, Any]:
                 await asyncio.sleep(0.25)
             return False
 
+        async def click_selector(selector: str) -> bool:
+            return bool(
+                await evaluate(
+                    f"""(() => {{
+                      const node=document.querySelector({json.dumps(selector)});
+                      if(!node || node.disabled) return false;
+                      node.click(); return true;
+                    }})()"""
+                )
+            )
+
         async def click_in_article(article_text: str, button_text: str) -> bool:
             return bool(
                 await evaluate(
@@ -186,7 +197,9 @@ async def run(websocket_url: str) -> dict[str, Any]:
         await wait_for("登录 HAHA")
         await fill("input[type=email]", EMAIL)
         await fill("input[type=password]", PASSWORD)
-        assertions["login"] = await click("登录")
+        assertions["login"] = await click_selector(
+            ".authLoginForm button[type=submit]"
+        )
         await wait_for("今天从这里继续")
 
         body = await wait_for("账户默认能力")
@@ -216,7 +229,9 @@ async def run(websocket_url: str) -> dict[str, Any]:
             "创作者工作台", "进入"
         )
         await wait_for("创作者工作台")
-        assertions["professional_workbench_entry"] = await click("创作者工作台")
+        assertions["professional_workbench_entry"] = await click_when_ready(
+            "进入专业工作台"
+        )
         await wait_for("ACTIVE ROLE WORKBENCH")
         project = await api(
             "/api/backend/api/projects",
