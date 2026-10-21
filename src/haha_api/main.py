@@ -311,6 +311,10 @@ class CommerceProductCreate(BaseModel):
     season_tag: str = Field(default="", max_length=80)
 
 
+class CommerceProductUpdate(CommerceProductCreate):
+    expected_version: int = Field(ge=1)
+
+
 class CommerceAdvisorQuestionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     question: str = Field(min_length=2, max_length=1000)
@@ -377,8 +381,10 @@ def create_app(
     active_commerce_repository = commerce_repository or build_commerce_repository(
         active_repository
     )
+    active_media_storage = media_storage or community_service.media_storage
     commerce_service = CommerceService(
-        active_commerce_repository, active_repository, commerce_advisor
+        active_commerce_repository, active_repository, commerce_advisor,
+        media_storage=active_media_storage,
     )
     workbench_service = WorkbenchService(
         active_repository, active_commerce_repository, active_learning_tutor
@@ -1438,6 +1444,86 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.put("/api/commerce/products/{product_id}")
+    def update_commerce_product(
+        product_id: str,
+        payload: CommerceProductUpdate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            values = payload.model_dump()
+            expected_version = values.pop("expected_version")
+            return commerce_service.update_product_details(
+                principal.user_id, principal.workspace_id, product_id,
+                expected_version=expected_version, **values,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.put("/api/commerce/products/{product_id}/images")
+    async def upload_commerce_product_image(
+        product_id: str,
+        request: Request,
+        expected_version: int = Query(ge=1),
+        original_name: str = Header(alias="X-Upload-Filename", min_length=1, max_length=255),
+        alt_text: str = Header(alias="X-Image-Alt", min_length=1, max_length=300),
+        source_note: str = Header(alias="X-Image-Source", min_length=1, max_length=1000),
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        maximum = 10 * 1024 * 1024
+        declared_length = request.headers.get("content-length", "")
+        try:
+            if declared_length and int(declared_length) > maximum:
+                raise HTTPException(status_code=413, detail="商品图片不能超过 10 MB")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Content-Length 无效") from exc
+        staged_path = commerce_service.media_storage.create_staging_path()
+        byte_size = 0
+        try:
+            with staged_path.open("wb") as handle:
+                async for chunk in request.stream():
+                    byte_size += len(chunk)
+                    if byte_size > maximum:
+                        raise HTTPException(status_code=413, detail="商品图片不能超过 10 MB")
+                    handle.write(chunk)
+            try:
+                return commerce_service.add_product_image(
+                    principal.user_id, principal.workspace_id, product_id,
+                    staged_path=staged_path, filename=unquote(original_name),
+                    declared_content_type=request.headers.get("content-type", "").split(";", 1)[0].strip().lower(),
+                    alt_text=unquote(alt_text), source_note=unquote(source_note),
+                    expected_version=expected_version,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            commerce_service.media_storage.discard(staged_path)
+
+    @application.delete("/api/commerce/products/{product_id}/images/{media_id}")
+    def delete_commerce_product_image(
+        product_id: str,
+        media_id: str,
+        expected_version: int = Query(ge=1),
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        return commerce_service.remove_product_image(
+            principal.user_id, principal.workspace_id, product_id, media_id,
+            expected_version,
+        )
+
+    @application.get("/api/commerce/media/{media_id}")
+    def get_commerce_product_image(
+        media_id: str,
+        principal: Principal = Depends(resolve_membership),
+    ) -> FileResponse:
+        path, content_type = commerce_service.product_image_path(
+            principal.user_id, principal.workspace_id, media_id
+        )
+        return FileResponse(
+            path, media_type=content_type, content_disposition_type="inline",
+            headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"},
+        )
 
     @application.post("/api/commerce/products/{product_id}/submit")
     def submit_commerce_product(

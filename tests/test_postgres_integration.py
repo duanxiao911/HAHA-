@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ from haha_commerce.domain import CommerceConflictError, ShoppingAdvisorInteracti
 from haha_commerce.service import CommerceService
 from haha_commerce.sqlalchemy_repository import SQLAlchemyCommerceRepository
 from haha_community.domain import CommunityConflictError
+from haha_community.media_storage import FileSystemMediaStorage
 from haha_community.service import CommunityService
 from haha_community.sqlalchemy_repository import SQLAlchemyCommunityRepository
 from haha_core.domain import RunStatus, ScriptVersion, new_id, utc_now
@@ -800,3 +802,48 @@ def test_postgres_learning_tutor_is_durable_and_idempotent(repository) -> None:
     )
     assert replayed["last_tutor_result"]["id"] == answered["last_tutor_result"]["id"]
     assert router.calls == 1
+
+
+def test_postgres_commerce_product_edit_and_media_are_durable(repository) -> None:
+    repository.ensure_identity("pg-media-seller", "pg-media-workspace", role="owner")
+    identity = IdentityService(repository)
+    identity.bootstrap("pg-media-seller", "pg-media-workspace")
+    repository.save_role_grant(RoleGrant(
+        id="pg-media-seller-grant", user_id="pg-media-seller",
+        workspace_id="pg-media-workspace", role="seller", status="active",
+        scope_json='{"workspace_id":"pg-media-workspace"}', granted_by="pg-test",
+        created_at=utc_now(), revoked_at="",
+    ))
+    commerce_repository = SQLAlchemyCommerceRepository(POSTGRES_URL)
+    storage = FileSystemMediaStorage(Path(".test-artifacts") / "postgres-commerce-media")
+    commerce = CommerceService(commerce_repository, repository, media_storage=storage)
+    commerce.open_store("pg-media-seller", "pg-media-workspace", "PostgreSQL 图片店铺")
+    created = commerce.create_product(
+        "pg-media-seller", "pg-media-workspace", title="原始商品",
+        summary="PostgreSQL 商品编辑与图片测试。", price_cents=8800,
+        source_note="测试卖家声明来源。", idempotency_key="pg-product-media-create-001",
+    )
+    product = created["seller_products"][0]
+    updated = commerce.update_product_details(
+        "pg-media-seller", "pg-media-workspace", product["id"],
+        title="已编辑商品", summary="编辑结果应持久化。", price_cents=9900,
+        source_note="更新后的测试来源说明。", category_slug="other",
+        craft_type="测试工艺", origin_region="测试地区", season_tag="秋季",
+        expected_version=product["version"],
+    )
+    product = updated["seller_products"][0]
+    staged = storage.create_staging_path()
+    staged.write_bytes(b"\x89PNG\r\n\x1a\npostgres-image")
+    uploaded = commerce.add_product_image(
+        "pg-media-seller", "pg-media-workspace", product["id"],
+        staged_path=staged, filename="postgres.png", declared_content_type="image/png",
+        alt_text="PostgreSQL 测试图片", source_note="测试生成，不作为正式商品素材。",
+        expected_version=product["version"],
+    )
+    media_id = uploaded["seller_products"][0]["media"][0]["id"]
+    reloaded = CommerceService(
+        SQLAlchemyCommerceRepository(POSTGRES_URL), repository, media_storage=storage
+    ).snapshot("pg-media-seller", "pg-media-workspace")
+    assert reloaded["seller_products"][0]["title"] == "已编辑商品"
+    assert reloaded["seller_products"][0]["price_cents"] == 9900
+    assert reloaded["seller_products"][0]["media"][0]["id"] == media_id

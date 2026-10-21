@@ -391,7 +391,7 @@ export type CommerceProduct = {
   status: "draft" | "submitted" | "approved" | "rejected" | "listed" | "delisted";
   version: number; reviewer_note: string; reviewed_by: string; updated_at: string;
   category: null | { id: string; slug: string; name: string; description: string; sort_order: number; status: string };
-  media: { id: string; media_type: "image" | "video"; storage_key: string; alt_text: string; source_note: string; rights_status: string; sort_order: number; version: number }[];
+  media: { id: string; media_type: "image" | "video"; url: string; alt_text: string; source_note: string; rights_status: string; sort_order: number; version: number }[];
   variants: { id: string; sku: string; name: string; price_cents: number; attributes_json: string; is_default: 0 | 1; status: string; version: number }[];
   heritage_links: { id: string; heritage_ref: string; relation_type: string; claim_status: string; source_note: string; version: number }[];
   inventory: { available_qty: number; sold_qty: number; version: number; updated_at: string };
@@ -440,7 +440,13 @@ export type CommerceSnapshot = {
   buyer_after_sales: { id: string; order_id: string; reason: string; status: string; decision_note: string; version: number }[];
   seller_after_sales: { id: string; order_id: string; reason: string; status: string; decision_note: string; version: number }[];
   categories: CommerceCategory[];
-  sandbox: { status: "internal_test_only"; payment_provider: "internal_sandbox"; real_money_moved: false; notice: string; checkout_scope: "single_store" };
+  seller_insights: null | {
+    product_status_counts: Record<string, number>; order_count: number;
+    completed_order_count: number; completed_revenue_cents: number;
+    actionable: { drafts_to_finish: number; orders_to_ship: number; after_sales_to_handle: number };
+    scope: "internal_sandbox_only"; generated_at: string;
+  };
+  sandbox: { status: "internal_test_only"; payment_provider: "internal_sandbox"; real_money_moved: false; notice: string; checkout_scope: "single_store"; production_gates: Record<"payment" | "logistics" | "public_release", { status: "blocked"; reason: string }> };
 };
 
 export async function createProject(title: string): Promise<{ id: string }> {
@@ -606,6 +612,27 @@ export async function openCommerceStore(name: string): Promise<CommerceSnapshot>
 }
 export async function createCommerceProduct(payload: { title: string; summary: string; price_cents: number; source_note: string; category_slug?: string; craft_type?: string; origin_region?: string; season_tag?: string }): Promise<CommerceSnapshot> {
   return request("/api/commerce/products", { method: "POST", headers: headers(crypto.randomUUID()), body: JSON.stringify(payload) });
+}
+export async function updateCommerceProduct(productId: string, payload: { title: string; summary: string; price_cents: number; source_note: string; category_slug: string; craft_type: string; origin_region: string; season_tag: string; expected_version: number }): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/products/${encodeURIComponent(productId)}`, { method: "PUT", headers: headers(), body: JSON.stringify(payload) });
+}
+export async function uploadCommerceProductImage(productId: string, file: File, altText: string, sourceNote: string, expectedVersion: number): Promise<CommerceSnapshot> {
+  const uploadHeaders = headers();
+  uploadHeaders["Content-Type"] = file.type;
+  uploadHeaders["X-Upload-Filename"] = encodeURIComponent(file.name);
+  uploadHeaders["X-Image-Alt"] = encodeURIComponent(altText);
+  uploadHeaders["X-Image-Source"] = encodeURIComponent(sourceNote);
+  const response = await fetch(`${API_BASE_URL}/api/commerce/products/${encodeURIComponent(productId)}/images?expected_version=${expectedVersion}`, {
+    method: "PUT", headers: uploadHeaders, body: file, credentials: "include",
+  });
+  if (!response.ok) throw new ApiRequestError(response.status, await response.text());
+  return response.json();
+}
+export async function deleteCommerceProductImage(productId: string, mediaId: string, expectedVersion: number): Promise<CommerceSnapshot> {
+  return request(`/api/commerce/products/${encodeURIComponent(productId)}/images/${encodeURIComponent(mediaId)}?expected_version=${expectedVersion}`, { method: "DELETE", headers: headers() });
+}
+export function commerceMediaUrl(mediaId: string): string {
+  return `${API_BASE_URL}/api/commerce/media/${encodeURIComponent(mediaId)}`;
 }
 export async function submitCommerceProduct(productId: string, expectedVersion: number): Promise<CommerceSnapshot> {
   return request(`/api/commerce/products/${encodeURIComponent(productId)}/submit`, { method: "POST", headers: headers(), body: JSON.stringify({ expected_version: expectedVersion }) });

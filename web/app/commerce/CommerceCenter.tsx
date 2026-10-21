@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { ConfirmDialog } from "@/components/community/ConfirmDialog";
@@ -11,12 +12,14 @@ import {
   AUTH_REQUIRED,
   cancelCommerceOrder,
   checkoutCommerceCart,
+  commerceMediaUrl,
   CommerceOrder,
   CommerceCatalog,
   CommerceProduct,
   CommerceSnapshot,
   confirmCommerceDelivery,
   createCommerceProduct,
+  deleteCommerceProductImage,
   decideCommerceAfterSale,
   getAuthSessionSnapshot,
   getCommerceCenter,
@@ -33,6 +36,8 @@ import {
   subscribeAuthSession,
   updateCommerceCart,
   updateCommerceInventory,
+  updateCommerceProduct,
+  uploadCommerceProductImage,
 } from "@/lib/api";
 
 type View = "market" | "cart" | "orders" | "seller" | "review";
@@ -164,7 +169,7 @@ export function CommerceCenter() {
       <div><small>HAHA HERITAGE MARKET</small><h1>发现值得带回家的非遗好物</h1><p>按工艺与地区探索，由服务端保存购物状态。商品文化关联与来源信息分级展示，不把商家自述包装成权威认证。</p><div className="commerceHeroActions"><a className="productButton" href="#commerce-catalog">开始逛好物</a><Link className="productButtonSecondary" href="/commerce/advisor">问 AI 智能导购</Link></div></div>
       <div className="commerceSandboxBadge"><b>INTERNAL SANDBOX</b><span>不处理真实资金</span></div>
     </section>
-    <div className="commerceBoundary" role="note"><strong>边界说明</strong><span>{snapshot.sandbox.notice} 当前仅支持单店结算。</span></div>
+    <div className="commerceBoundary" role="note"><strong>边界说明</strong><span>{snapshot.sandbox.notice} 当前仅支持单店结算。真实支付、物流和公开发布均处于 BLOCKED，完成持牌渠道、回调验签、对账退款、运单隐私及商家资质门禁前不会开放。</span></div>
     <nav className="commerceNav" aria-label="交易沙盒视图">{nav.map(([key, label]) => <button type="button" className={view === key ? "active" : ""} aria-current={view === key ? "page" : undefined} onClick={() => selectView(key)} key={key}>{label}</button>)}</nav>
     {error ? <div className="commerceAlert" role="alert">{error}</div> : null}
     {feedback ? <div className="productToast" role="status">{feedback}</div> : null}
@@ -204,8 +209,9 @@ export function CommerceCenter() {
         <div><span>全部商品</span><strong>{snapshot.seller_products.length}</strong><small>当前店铺</small></div>
         <div><span>待审核</span><strong>{snapshot.seller_products.filter((item) => item.status === "submitted").length}</strong><small>由独立审核员处理</small></div>
         <div><span>沙盒在售</span><strong>{snapshot.seller_products.filter((item) => item.status === "listed").length}</strong><small>库存大于零</small></div>
-        <div><span>待履约</span><strong>{snapshot.seller_orders.filter((item) => item.status === "paid").length}</strong><small>仅内部状态演练</small></div>
+        <div><span>待履约</span><strong>{snapshot.seller_insights?.actionable.orders_to_ship ?? 0}</strong><small>仅内部状态演练</small></div>
       </div>
+      {snapshot.seller_insights ? <div className="commerceBoundary" role="note"><strong>经营分析</strong><span>沙盒已完成 {snapshot.seller_insights.completed_order_count} 单，累计 {money.format(snapshot.seller_insights.completed_revenue_cents / 100)}；待完善商品 {snapshot.seller_insights.actionable.drafts_to_finish} 件，待处理售后 {snapshot.seller_insights.actionable.after_sales_to_handle} 项。数据只来自当前账户的内部交易记录。</span></div> : null}
       <ol className="commerceSellerSteps"><li>保存结构化商品草稿</li><li>提交独立审核</li><li>审核通过后设置库存</li><li>处理订单与售后</li></ol>
       {!snapshot.store ? <form className="commerceForm" onSubmit={createStore}><label htmlFor="store-name">店铺名称<input id="store-name" value={storeName} onChange={(event) => setStoreName(event.target.value)} required maxLength={200} /></label><button className="productButton" disabled={busy}>创建内部测试店铺</button></form> : <>
         <div className="commerceStoreLine"><span>当前店铺</span><strong>{snapshot.store.name}</strong><small>内部测试 · {snapshot.store.status}</small></div>
@@ -221,7 +227,7 @@ export function CommerceCenter() {
           <button className="productButton wide" disabled={busy}>保存商品草稿</button>
         </form>
       </>}
-      {snapshot.seller_products.length ? <ul className="commerceList">{snapshot.seller_products.map((item) => <li key={item.id}><div><span>{statusLabels[item.status] ?? item.status} · v{item.version}</span><h3>{item.title}</h3><p>{item.reviewer_note || item.source_note}</p></div><div className="commerceRowActions">{["draft", "rejected"].includes(item.status) ? <button className="productButton" type="button" disabled={busy} onClick={() => void run(() => submitCommerceProduct(item.id, item.version), "商品已提交审核。")}>提交审核</button> : null}{["approved", "delisted"].includes(item.status) ? <div className="commerceQuantity compact"><label htmlFor={`inventory-${item.id}`}>上架库存<input id={`inventory-${item.id}`} type="number" min="1" max="1000000" step="1" value={inventoryQuantities[item.id] ?? String(item.inventory.available_qty || 1)} onChange={(event) => setInventoryQuantities({ ...inventoryQuantities, [item.id]: event.target.value })} /></label><button className="productButtonSecondary" type="button" disabled={busy} onClick={() => saveInventory(item)}>{item.status === "delisted" ? "重新上架" : "设置库存并上架"}</button></div> : null}{item.status === "listed" ? <button className="productButtonQuiet identityDangerAction" type="button" disabled={busy} onClick={() => setConfirmation({ title: "下架这个商品？", description: "商品会立即从买家目录移除，可用库存归零；历史订单和审计记录会保留。", label: "确认下架", tone: "danger", action: () => updateCommerceInventory(item.id, 0, item.inventory.version) })}>下架商品</button> : null}</div></li>)}</ul> : null}
+      {snapshot.seller_products.length ? <div className="commerceSellerProducts">{snapshot.seller_products.map((item) => <SellerProductCard item={item} categories={snapshot.categories} busy={busy} key={item.id} run={run} inventoryValue={inventoryQuantities[item.id] ?? String(item.inventory.available_qty || 1)} onInventoryChange={(value) => setInventoryQuantities({ ...inventoryQuantities, [item.id]: value })} onSaveInventory={() => saveInventory(item)} onConfirm={setConfirmation} />)}</div> : null}
       {snapshot.seller_orders.length ? <div className="commerceSubsection"><h3>待履约订单</h3>{snapshot.seller_orders.map((order) => <OrderCard order={order} key={order.id} actions={order.status === "paid" ? <button className="productButton" type="button" disabled={busy} onClick={() => setConfirmation({ title: "确认标记为沙盒发货？", description: "订单会进入待收货状态。当前不会创建真实物流单或联系承运商。", label: "确认发货", tone: "primary", action: () => shipCommerceOrder(order.id, order.version, "内部沙盒履约记录，无真实物流单号。") })}>标记沙盒发货</button> : null} />)}</div> : null}
       {snapshot.seller_after_sales.some((item) => item.status === "requested") ? <div className="commerceSubsection"><h3>待处理售后</h3>{snapshot.seller_after_sales.filter((item) => item.status === "requested").map((item) => <div className="commerceDecision" key={item.id}><p>{item.reason}</p><button className="productButton" type="button" disabled={busy} onClick={() => setConfirmation({ title: "确认受理这项内部售后？", description: "只更新可审计售后状态，不代表已完成真实退款。", label: "确认受理", tone: "primary", action: () => decideCommerceAfterSale(item.id, item.version, "approved", "内部沙盒售后已受理，不代表真实退款完成。") })}>受理</button><button className="productButtonSecondary" type="button" disabled={busy} onClick={() => setConfirmation({ title: "确认驳回这项内部售后？", description: "售后状态将记录为已驳回，决定会同步给当前买家。", label: "确认驳回", tone: "danger", action: () => decideCommerceAfterSale(item.id, item.version, "rejected", "内部沙盒售后未通过。") })}>驳回</button></div>)}</div> : null}
     </section> : null}
@@ -237,4 +243,44 @@ export function CommerceCenter() {
 
 function OrderCard({ order, actions }: { order: CommerceOrder; actions: React.ReactNode }) {
   return <li><div><span className="productStatusPill is-warning">{statusLabels[order.status] ?? order.status}</span><h3>{order.items.map((item) => item.title_snapshot).join("、")}</h3><p>{money.format(order.total_cents / 100)} · 订单 {order.id.slice(-8)}</p>{order.payment ? <small>支付渠道：内部沙盒 · 不涉及真实资金</small> : null}{order.fulfillment ? <small>履约：{order.fulfillment.tracking_note}</small> : null}</div><div className="commerceRowActions">{actions}</div></li>;
+}
+
+function SellerProductCard({ item, categories, busy, run, inventoryValue, onInventoryChange, onSaveInventory, onConfirm }: {
+  item: CommerceProduct; categories: CommerceSnapshot["categories"]; busy: boolean;
+  run: (action: () => Promise<CommerceSnapshot>, message: string) => Promise<boolean>;
+  inventoryValue: string; onInventoryChange: (value: string) => void;
+  onSaveInventory: () => void; onConfirm: (value: Confirmation) => void;
+}) {
+  const editable = ["draft", "rejected"].includes(item.status);
+  const [editing, setEditing] = useState(false);
+  const [details, setDetails] = useState({ title: item.title, summary: item.summary, price: String(item.price_cents / 100), source: item.source_note, category: item.category?.slug ?? "other", craft: item.craft_type, region: item.origin_region, season: item.season_tag });
+  const [image, setImage] = useState<File | null>(null);
+  const [imageAlt, setImageAlt] = useState("");
+  const [imageSource, setImageSource] = useState("");
+  async function saveDetails(event: FormEvent) {
+    event.preventDefault();
+    const priceCents = Math.round(Number(details.price) * 100);
+    if (!Number.isFinite(priceCents) || priceCents < 1) return;
+    if (await run(() => updateCommerceProduct(item.id, { title: details.title, summary: details.summary, price_cents: priceCents, source_note: details.source, category_slug: details.category, craft_type: details.craft, origin_region: details.region, season_tag: details.season, expected_version: item.version }), "商品草稿已更新。")) setEditing(false);
+  }
+  async function uploadImage(event: FormEvent) {
+    event.preventDefault();
+    if (!image) return;
+    if (await run(() => uploadCommerceProductImage(item.id, image, imageAlt, imageSource, item.version), "商品图片已上传。")) { setImage(null); setImageAlt(""); setImageSource(""); }
+  }
+  return <article className="commerceSellerCard">
+    <header><div><span>{statusLabels[item.status] ?? item.status} · v{item.version}</span><h3>{item.title}</h3><p>{item.reviewer_note || item.source_note}</p></div><div className="commerceRowActions">
+      {editable ? <button className="productButtonSecondary" type="button" disabled={busy} onClick={() => setEditing(!editing)}>{editing ? "取消编辑" : "编辑商品"}</button> : null}
+      {editable ? <button className="productButton" type="button" disabled={busy} onClick={() => void run(() => submitCommerceProduct(item.id, item.version), "商品已提交审核。")}>提交审核</button> : null}
+      {["approved", "delisted"].includes(item.status) ? <div className="commerceQuantity compact"><label htmlFor={`inventory-${item.id}`}>上架库存<input id={`inventory-${item.id}`} type="number" min="1" max="1000000" step="1" value={inventoryValue} onChange={(event) => onInventoryChange(event.target.value)} /></label><button className="productButtonSecondary" type="button" disabled={busy} onClick={onSaveInventory}>{item.status === "delisted" ? "重新上架" : "设置库存并上架"}</button></div> : null}
+      {item.status === "listed" ? <button className="productButtonQuiet identityDangerAction" type="button" disabled={busy} onClick={() => onConfirm({ title: "下架这个商品？", description: "商品会立即从买家目录移除，可用库存归零；历史订单和审计记录会保留。", label: "确认下架", tone: "danger", action: () => updateCommerceInventory(item.id, 0, item.inventory.version) })}>下架商品</button> : null}
+    </div></header>
+    {item.media.length ? <div className="commerceMediaGrid">{item.media.map((media) => <figure key={media.id}><Image src={commerceMediaUrl(media.id)} alt={media.alt_text} width={480} height={360} unoptimized /><figcaption>{media.alt_text}</figcaption>{editable ? <button type="button" className="productButtonQuiet identityDangerAction" disabled={busy} onClick={() => onConfirm({ title: "删除这张商品图片？", description: "图片文件会从当前商品移除，此操作不可撤销。", label: "确认删除", tone: "danger", action: () => deleteCommerceProductImage(item.id, media.id, item.version) })}>删除图片</button> : null}</figure>)}</div> : <small>尚未上传商品图片。图片不会替代来源与权利说明。</small>}
+    {editing ? <form className="commerceForm commerceProductForm" onSubmit={saveDetails}>
+      <label>商品名称<input value={details.title} onChange={(event) => setDetails({ ...details, title: event.target.value })} required /></label><label>沙盒价格（元）<input type="number" min="0.01" step="0.01" value={details.price} onChange={(event) => setDetails({ ...details, price: event.target.value })} required /></label>
+      <label>商品分类<select value={details.category} onChange={(event) => setDetails({ ...details, category: event.target.value })}>{categories.map((category) => <option value={category.slug} key={category.id}>{category.name}</option>)}</select></label><label>工艺类型<input value={details.craft} onChange={(event) => setDetails({ ...details, craft: event.target.value })} /></label><label>来源地区<input value={details.region} onChange={(event) => setDetails({ ...details, region: event.target.value })} /></label><label>季节主题<input value={details.season} onChange={(event) => setDetails({ ...details, season: event.target.value })} /></label>
+      <label className="wide">商品说明<textarea value={details.summary} onChange={(event) => setDetails({ ...details, summary: event.target.value })} required /></label><label className="wide">来源与授权说明<textarea value={details.source} onChange={(event) => setDetails({ ...details, source: event.target.value })} required /></label><button className="productButton wide" disabled={busy}>保存修改</button>
+    </form> : null}
+    {editable ? <form className="commerceForm commerceImageForm" onSubmit={uploadImage}><label>商品图片（JPEG/PNG，最大 10 MB）<input type="file" accept="image/jpeg,image/png" onChange={(event) => setImage(event.target.files?.[0] ?? null)} required /></label><label>图片内容说明<input value={imageAlt} onChange={(event) => setImageAlt(event.target.value)} required maxLength={300} /></label><label>图片来源与权利说明<input value={imageSource} onChange={(event) => setImageSource(event.target.value)} required maxLength={1000} /></label><button className="productButtonSecondary" disabled={busy || !image}>上传图片</button></form> : null}
+  </article>;
 }

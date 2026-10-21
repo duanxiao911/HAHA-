@@ -440,6 +440,64 @@ class SQLAlchemyCommerceRepository:
             )
             return [self._row(ProductMedia, row) for row in rows]
 
+    def get_product_media(self, media_id: str, workspace_id: str) -> ProductMedia | None:
+        with self.engine.connect() as connection:
+            return self._row(ProductMedia, connection.execute(
+                select(commerce_product_media).where(
+                    commerce_product_media.c.id == media_id,
+                    commerce_product_media.c.workspace_id == workspace_id,
+                )
+            ).first())
+
+    def add_product_media(
+        self, media: ProductMedia, product: Product, expected_version: int
+    ) -> None:
+        with self.engine.begin() as connection:
+            product_result = connection.execute(update(commerce_products).where(
+                commerce_products.c.id == product.id,
+                commerce_products.c.workspace_id == product.workspace_id,
+                commerce_products.c.version == expected_version,
+            ).values(**asdict(product)))
+            if product_result.rowcount != 1:
+                raise CommerceConflictError("商品版本已变化，请刷新后重试")
+            connection.execute(commerce_product_media.insert().values(**asdict(media)))
+            self._event(
+                connection, actor=product.seller_user_id,
+                workspace_id=product.workspace_id, event_type="product.media_added",
+                entity_type="product_media", entity_id=media.id,
+                key=f"product-media:{media.id}:created",
+            )
+
+    def remove_product_media(
+        self, media_id: str, product: Product, expected_version: int
+    ) -> ProductMedia:
+        with self.engine.begin() as connection:
+            row = connection.execute(select(commerce_product_media).where(
+                commerce_product_media.c.id == media_id,
+                commerce_product_media.c.product_id == product.id,
+                commerce_product_media.c.workspace_id == product.workspace_id,
+            )).first()
+            media = self._row(ProductMedia, row)
+            if not media:
+                raise CommerceNotFoundError("商品图片不存在")
+            product_result = connection.execute(update(commerce_products).where(
+                commerce_products.c.id == product.id,
+                commerce_products.c.workspace_id == product.workspace_id,
+                commerce_products.c.version == expected_version,
+            ).values(**asdict(product)))
+            if product_result.rowcount != 1:
+                raise CommerceConflictError("商品版本已变化，请刷新后重试")
+            connection.execute(delete(commerce_product_media).where(
+                commerce_product_media.c.id == media_id
+            ))
+            self._event(
+                connection, actor=product.seller_user_id,
+                workspace_id=product.workspace_id, event_type="product.media_removed",
+                entity_type="product_media", entity_id=media.id,
+                key=f"product-media:{media.id}:removed",
+            )
+            return media
+
     def list_product_variants(self, product_id: str, workspace_id: str) -> list[ProductVariant]:
         with self.engine.connect() as connection:
             rows = connection.execute(
@@ -672,6 +730,27 @@ class SQLAlchemyCommerceRepository:
             if result.rowcount != 1:
                 raise CommerceConflictError("商品版本已变化，请刷新后重试")
             self._event(connection, actor=product.reviewed_by or product.seller_user_id, workspace_id=product.workspace_id, event_type=f"product.{product.status}", entity_type="product", entity_id=product.id, key=f"product:{product.id}:v{product.version}")
+
+    def update_product(self, product: Product, expected_version: int) -> None:
+        with self.engine.begin() as connection:
+            result = connection.execute(update(commerce_products).where(
+                commerce_products.c.id == product.id,
+                commerce_products.c.workspace_id == product.workspace_id,
+                commerce_products.c.version == expected_version,
+            ).values(**asdict(product)))
+            if result.rowcount != 1:
+                raise CommerceConflictError("商品版本已变化，请刷新后重试")
+            connection.execute(update(commerce_product_variants).where(
+                commerce_product_variants.c.product_id == product.id,
+                commerce_product_variants.c.workspace_id == product.workspace_id,
+                commerce_product_variants.c.is_default == 1,
+            ).values(price_cents=product.price_cents, updated_at=product.updated_at))
+            self._event(
+                connection, actor=product.seller_user_id,
+                workspace_id=product.workspace_id, event_type="product.updated",
+                entity_type="product", entity_id=product.id,
+                key=f"product:{product.id}:v{product.version}:updated",
+            )
 
     def get_inventory(self, product_id: str, workspace_id: str) -> Inventory | None:
         with self.engine.connect() as connection:

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
 from haha_api.main import create_app
 from haha_commerce.sqlalchemy_repository import SQLAlchemyCommerceRepository
+from haha_community.media_storage import FileSystemMediaStorage
 from haha_core.repository import SQLiteCreatorRepository
 from haha_identity.domain import RoleGrant
 from haha_identity.service import IdentityService
@@ -31,6 +34,13 @@ def _stack() -> tuple[TestClient, SQLiteCreatorRepository]:
     identity = SQLiteCreatorRepository(":memory:")
     commerce = SQLAlchemyCommerceRepository.for_sqlite_path(":memory:")
     return TestClient(create_app(identity, commerce_repository=commerce)), identity
+
+
+def _media_stack() -> tuple[TestClient, SQLiteCreatorRepository]:
+    identity = SQLiteCreatorRepository(":memory:")
+    commerce = SQLAlchemyCommerceRepository.for_sqlite_path(":memory:")
+    storage = FileSystemMediaStorage(Path(".test-artifacts") / f"commerce-media-{uuid4().hex}")
+    return TestClient(create_app(identity, commerce_repository=commerce, media_storage=storage)), identity
 
 
 def _headers(user_id: str) -> dict[str, str]:
@@ -100,6 +110,80 @@ def test_product_creation_is_idempotent_and_rejects_payload_reuse() -> None:
     assert conflict.status_code == 409
 
 
+def test_seller_can_edit_and_manage_real_product_images() -> None:
+    client, identity = _media_stack()
+    seller = _headers("seller-media")
+    outsider = _headers("seller-outsider")
+    _grant(identity, "seller-media", "commerce-ws", "seller")
+    _grant(identity, "seller-outsider", "commerce-ws", "seller")
+    assert client.post("/api/commerce/stores", headers=seller, json={"name": "图片测试店铺"}).status_code == 200
+    created = client.post("/api/commerce/products", headers={
+        **seller, "Idempotency-Key": "product-media-create-0001"
+    }, json={
+        "title": "待编辑商品", "summary": "原始商品说明", "price_cents": 1200,
+        "source_note": "卖家原始来源说明。",
+    })
+    product = created.json()["seller_products"][0]
+    updated = client.put(f"/api/commerce/products/{product['id']}", headers=seller, json={
+        "title": "已编辑商品", "summary": "更新后的商品说明", "price_cents": 1500,
+        "source_note": "卖家更新的来源与授权说明。", "category_slug": "other",
+        "craft_type": "手工测试", "origin_region": "测试地区", "season_tag": "秋季",
+        "expected_version": product["version"],
+    })
+    assert updated.status_code == 200
+    product = updated.json()["seller_products"][0]
+    assert product["title"] == "已编辑商品"
+    assert product["price_cents"] == 1500
+    png = b"\x89PNG\r\n\x1a\n" + b"safe-test-image"
+    upload_headers = {
+        **seller, "Content-Type": "image/png", "X-Upload-Filename": "item.png",
+        "X-Image-Alt": quote("测试商品正面"), "X-Image-Source": quote("测试卖家自行拍摄。"),
+    }
+    uploaded = client.put(
+        f"/api/commerce/products/{product['id']}/images?expected_version={product['version']}",
+        headers=upload_headers, content=png,
+    )
+    assert uploaded.status_code == 200
+    product = uploaded.json()["seller_products"][0]
+    assert "storage_key" not in product["media"][0]
+    assert product["media"][0]["url"].startswith("/api/commerce/media/")
+    media_id = product["media"][0]["id"]
+    served = client.get(f"/api/commerce/media/{media_id}", headers=seller)
+    assert served.status_code == 200
+    assert served.content == png
+    assert client.delete(
+        f"/api/commerce/products/{product['id']}/images/{media_id}?expected_version={product['version']}",
+        headers=outsider,
+    ).status_code == 403
+    deleted = client.delete(
+        f"/api/commerce/products/{product['id']}/images/{media_id}?expected_version={product['version']}",
+        headers=seller,
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["seller_products"][0]["media"] == []
+
+
+def test_product_image_rejects_spoofed_content_and_insights_are_account_scoped() -> None:
+    client, identity = _media_stack()
+    seller = _headers("seller-insights")
+    _grant(identity, "seller-insights", "commerce-ws", "seller")
+    client.post("/api/commerce/stores", headers=seller, json={"name": "分析测试店铺"})
+    created = client.post("/api/commerce/products", headers={
+        **seller, "Idempotency-Key": "product-insights-create-0001"
+    }, json={"title": "分析商品", "summary": "测试说明", "price_cents": 3000, "source_note": "测试来源。"})
+    product = created.json()["seller_products"][0]
+    spoofed = client.put(
+        f"/api/commerce/products/{product['id']}/images?expected_version={product['version']}",
+        headers={**seller, "Content-Type": "image/png", "X-Upload-Filename": "fake.png", "X-Image-Alt": quote("伪造图片"), "X-Image-Source": quote("测试。")},
+        content=b"not-an-image",
+    )
+    assert spoofed.status_code == 400
+    snapshot = client.get("/api/commerce", headers=seller).json()
+    assert snapshot["seller_insights"]["product_status_counts"]["draft"] == 1
+    assert snapshot["seller_insights"]["actionable"]["drafts_to_finish"] == 1
+    assert snapshot["seller_insights"]["scope"] == "internal_sandbox_only"
+
+
 def test_rejected_seller_cannot_open_store_and_listing_can_be_delisted() -> None:
     client, identity = _stack()
     applicant = _headers("seller-rejected")
@@ -147,6 +231,8 @@ def test_full_sandbox_transaction_is_authorized_durable_and_auditable() -> None:
     catalog = client.get("/api/commerce", headers=buyer)
     assert catalog.status_code == 200
     assert catalog.json()["sandbox"]["real_money_moved"] is False
+    assert catalog.json()["sandbox"]["production_gates"]["payment"]["status"] == "blocked"
+    assert catalog.json()["sandbox"]["production_gates"]["logistics"]["status"] == "blocked"
     assert catalog.json()["catalog"][0]["provenance"] == "seller_supplied_unverified"
 
     added = client.put(

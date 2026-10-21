@@ -21,9 +21,11 @@ from haha_commerce.domain import (
     CommercePermissionError,
     Inventory,
     Product,
+    ProductMedia,
     ShoppingAdvisorInteraction,
 )
 from haha_commerce.repository import CommerceRepository
+from haha_community.media_storage import FileSystemMediaStorage, MediaStorageError
 from haha_identity.domain import RoleGrant
 from haha_identity.service import IdentityService
 from haha_media.model_router import ModelCallError
@@ -57,12 +59,14 @@ class CommerceService:
         identity_repository: Any,
         advisor: ShoppingAdvisor | None = None,
         advisor_request_limit: int | None = None,
+        media_storage: FileSystemMediaStorage | None = None,
     ) -> None:
         self.repository = repository
         self.identity_repository = identity_repository
         self.identity_service = IdentityService(identity_repository)
         self.user_center = UserCenterService(identity_repository)
         self.advisor = advisor or ShoppingAdvisor()
+        self.media_storage = media_storage or FileSystemMediaStorage()
         self.advisor_request_limit = advisor_request_limit or int(
             os.getenv("COMMERCE_ADVISOR_REQUEST_LIMIT_24H", "30")
         )
@@ -104,7 +108,7 @@ class CommerceService:
                 if item.category_id in categories
                 else None,
                 "media": [
-                    asdict(media)
+                    self._media_payload(media)
                     for media in self.repository.list_product_media(item.id, workspace_id)
                 ],
                 "variants": [
@@ -150,6 +154,8 @@ class CommerceService:
             "seller_orders": [order_payload(item) for item in seller_orders],
             "buyer_after_sales": [asdict(item) for item in self.repository.list_after_sales(workspace_id, buyer_user_id=user_id)],
             "seller_after_sales": [asdict(item) for item in self.repository.list_after_sales(workspace_id, seller_user_id=user_id)] if "seller" in roles else [],
+            "seller_insights": self._seller_insights(seller_products, seller_orders)
+            if "seller" in roles else None,
             "categories": [asdict(item) for item in categories.values()],
             "sandbox": {
                 "status": "internal_test_only",
@@ -157,6 +163,20 @@ class CommerceService:
                 "real_money_moved": False,
                 "notice": "内部交易沙盒：不处理真实资金，不采集银行卡或支付凭证，不代表商品已获权威认证。",
                 "checkout_scope": "single_store",
+                "production_gates": {
+                    "payment": {
+                        "status": "blocked",
+                        "reason": "尚未接入持牌支付机构、回调验签、对账、退款与资金安全审查。",
+                    },
+                    "logistics": {
+                        "status": "blocked",
+                        "reason": "尚未接入承运商、真实运单、轨迹回调、隐私地址保护与异常赔付流程。",
+                    },
+                    "public_release": {
+                        "status": "blocked",
+                        "reason": "商家资质、商品权利审核、内容治理、客服和发布门禁尚未完成。",
+                    },
+                },
             },
         }
 
@@ -466,7 +486,7 @@ class CommerceService:
             **asdict(product),
             "category": asdict(category) if category else None,
             "media": [
-                asdict(item)
+                self._media_payload(item)
                 for item in self.repository.list_product_media(product.id, workspace_id)
             ],
             "variants": [
@@ -490,6 +510,141 @@ class CommerceService:
                 "platform_endorsement": False,
             },
         }
+
+    @staticmethod
+    def _media_payload(media: ProductMedia) -> dict[str, object]:
+        payload = asdict(media)
+        payload.pop("storage_key", None)
+        payload["url"] = f"/api/commerce/media/{media.id}"
+        return payload
+
+    def _seller_insights(self, products: list[Product], orders: list[Any]) -> dict[str, object]:
+        status_counts = {
+            status: sum(item.status == status for item in products)
+            for status in ("draft", "submitted", "approved", "rejected", "listed", "delisted")
+        }
+        actionable = {
+            "drafts_to_finish": status_counts["draft"] + status_counts["rejected"],
+            "orders_to_ship": sum(item.status == "paid" for item in orders),
+            "after_sales_to_handle": sum(item.status == "after_sales" for item in orders),
+        }
+        completed = [item for item in orders if item.status == "completed"]
+        return {
+            "product_status_counts": status_counts,
+            "order_count": len(orders),
+            "completed_order_count": len(completed),
+            "completed_revenue_cents": sum(item.total_cents for item in completed),
+            "actionable": actionable,
+            "scope": "internal_sandbox_only",
+            "generated_at": _now(),
+        }
+
+    def update_product_details(
+        self, user_id: str, workspace_id: str, product_id: str, *,
+        title: str, summary: str, price_cents: int, source_note: str,
+        category_slug: str, craft_type: str, origin_region: str,
+        season_tag: str, expected_version: int,
+    ) -> dict[str, object]:
+        product = self._owned_product(user_id, workspace_id, product_id)
+        if product.status not in {"draft", "rejected"}:
+            raise CommerceConflictError("仅草稿或被退回的商品可以编辑；在售商品请先下架并重新审核")
+        if product.version != expected_version:
+            raise CommerceConflictError("商品版本已变化，请刷新后重试")
+        if not 1 <= price_cents <= 10_000_000:
+            raise ValueError("沙盒价格必须在 0.01 至 100000.00 元之间")
+        category = next((item for item in self.repository.list_categories()
+                         if item.slug == category_slug.casefold()), None)
+        if not category:
+            raise ValueError("商品类目不存在或已停用")
+        updated = replace(
+            product, title=_clean(title, "商品名称", 200),
+            summary=_clean(summary, "商品说明", 2000), price_cents=price_cents,
+            source_note=_clean(source_note, "来源与授权说明", 1000),
+            category_id=category.id,
+            craft_type=_clean(craft_type, "工艺类型", 120, required=False),
+            origin_region=_clean(origin_region, "来源地区", 120, required=False),
+            season_tag=_clean(season_tag, "季节主题", 80, required=False),
+            reviewer_note="", reviewed_by="", version=product.version + 1,
+            updated_at=_now(),
+        )
+        self.repository.update_product(updated, expected_version)
+        return self.snapshot(user_id, workspace_id)
+
+    def add_product_image(
+        self, user_id: str, workspace_id: str, product_id: str, *,
+        staged_path: Any, filename: str, declared_content_type: str,
+        alt_text: str, source_note: str, expected_version: int,
+    ) -> dict[str, object]:
+        _clean(filename, "文件名", 255)
+        product = self._owned_product(user_id, workspace_id, product_id)
+        if product.status not in {"draft", "rejected"}:
+            raise CommerceConflictError("仅草稿或被退回的商品可以管理图片")
+        if product.version != expected_version:
+            raise CommerceConflictError("商品版本已变化，请刷新后重试")
+        existing = self.repository.list_product_media(product.id, workspace_id)
+        if len(existing) >= 8:
+            raise CommerceConflictError("每个商品最多上传 8 张图片")
+        data = staged_path.read_bytes()
+        detected = "image/jpeg" if data.startswith(b"\xff\xd8\xff") else (
+            "image/png" if data.startswith(b"\x89PNG\r\n\x1a\n") else ""
+        )
+        if detected not in {"image/jpeg", "image/png"} or declared_content_type != detected:
+            raise ValueError("商品图片仅支持内容匹配的 JPEG 或 PNG 文件")
+        if len(data) > 10 * 1024 * 1024:
+            raise ValueError("商品图片不能超过 10 MB")
+        extension = ".jpg" if detected == "image/jpeg" else ".png"
+        media_id = f"product_media_{uuid4().hex}"
+        workspace_hash = hashlib.sha256(workspace_id.encode("utf-8")).hexdigest()[:16]
+        storage_key = f"commerce/{workspace_hash}/{media_id}{extension}"
+        now = _now()
+        media = ProductMedia(
+            media_id, product.id, workspace_id, "image", storage_key,
+            _clean(alt_text, "图片替代文本", 300),
+            _clean(source_note, "图片来源与权利说明", 1000),
+            "seller_declared", len(existing), 1, now, now,
+        )
+        self.media_storage.commit(staged_path, storage_key)
+        try:
+            self.repository.add_product_media(
+                media, replace(product, version=product.version + 1, updated_at=now),
+                expected_version,
+            )
+        except Exception:
+            self.media_storage.delete(storage_key)
+            raise
+        return self.snapshot(user_id, workspace_id)
+
+    def remove_product_image(
+        self, user_id: str, workspace_id: str, product_id: str, media_id: str,
+        expected_version: int,
+    ) -> dict[str, object]:
+        product = self._owned_product(user_id, workspace_id, product_id)
+        if product.status not in {"draft", "rejected"}:
+            raise CommerceConflictError("仅草稿或被退回的商品可以管理图片")
+        if product.version != expected_version:
+            raise CommerceConflictError("商品版本已变化，请刷新后重试")
+        removed = self.repository.remove_product_media(
+            media_id, replace(product, version=product.version + 1, updated_at=_now()),
+            expected_version,
+        )
+        try:
+            self.media_storage.delete(removed.storage_key)
+        except MediaStorageError:
+            pass
+        return self.snapshot(user_id, workspace_id)
+
+    def product_image_path(
+        self, user_id: str, workspace_id: str, media_id: str
+    ) -> tuple[Any, str]:
+        media = self.repository.get_product_media(media_id, workspace_id)
+        if not media:
+            raise CommerceNotFoundError("商品图片不存在")
+        product = self._product(media.product_id, workspace_id)
+        roles = self._roles(user_id, workspace_id)
+        if product.status != "listed" and product.seller_user_id != user_id and not roles & {"reviewer", "admin"}:
+            raise CommerceNotFoundError("商品图片不存在")
+        content_type = "image/jpeg" if media.storage_key.endswith(".jpg") else "image/png"
+        return self.media_storage.path_for(media.storage_key), content_type
 
     def submit_product(self, user_id: str, workspace_id: str, product_id: str, expected_version: int) -> dict[str, object]:
         product = self._owned_product(user_id, workspace_id, product_id)

@@ -102,7 +102,7 @@ async def run(
         for width in (390, 768, 1440):
             await command("Emulation.setDeviceMetricsOverride", {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": width <= 768})
             await command("Page.navigate", {"url": f"{WEB_URL}/commerce"})
-            body = await wait_for("非遗交易沙盒")
+            body = await wait_for("发现值得带回家的非遗好物")
             metrics = await evaluate("({viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth})")
             checks = {
                 "loaded": "不处理真实资金" in body and "单店结算" in body,
@@ -119,9 +119,9 @@ async def run(
         await wait_for("加入购物车")
         assertions["catalog_search_discoverable"] = bool(await evaluate("Boolean(document.querySelector('#commerce-search'))"))
         await evaluate("""(() => {const node=document.querySelector('#commerce-search');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(node,'没有这个商品');node.dispatchEvent(new Event('input',{bubbles:true}));return true;})()""")
-        await wait_for("没有匹配的沙盒商品")
+        await wait_for("没有找到匹配商品")
         assertions["catalog_search_empty_state"] = True
-        await click("清除搜索")
+        await click("清除筛选")
         await wait_for("加入购物车")
         await evaluate("""(() => {const node=document.querySelector('[id^="catalog-quantity-"]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(node,'2');node.dispatchEvent(new Event('input',{bubbles:true}));return true;})()""")
         await click("加入购物车")
@@ -150,7 +150,10 @@ async def run(
 
         await command("Network.setExtraHTTPHeaders", {"headers": seller_headers})
         await command("Page.navigate", {"url": f"{WEB_URL}/commerce?view=seller"})
-        await wait_for("卖家工作台")
+        seller_body = await wait_for("卖家工作台")
+        assertions["seller_operations_discoverable"] = all(
+            text in seller_body for text in ("经营分析", "编辑商品", "商品图片（JPEG/PNG，最大 10 MB）")
+        )
         await click("标记沙盒发货")
         body = await wait_for("确认标记为沙盒发货？")
         assertions["shipping_confirmation"] = "不会创建真实物流单" in body
@@ -194,6 +197,24 @@ def main() -> None:
         "X-User-ID": state["seller"],
         "X-Workspace-ID": state["workspace"],
     }
+    draft_request = urllib.request.Request(
+        f"{os.getenv('HAHA_E2E_API_URL', 'http://127.0.0.1:8000').rstrip('/')}/api/commerce/products",
+        data=json.dumps({
+            "title": "浏览器商品编辑测试草稿",
+            "summary": "用于验证卖家编辑与图片管理入口，不代表正式商品或非遗事实。",
+            "price_cents": 2600,
+            "source_note": "浏览器验收测试数据，来源与权利状态待核验。",
+        }, ensure_ascii=False).encode("utf-8"),
+        headers={
+            **seller_headers,
+            "Content-Type": "application/json",
+            "Idempotency-Key": f"browser-draft-{uuid4().hex}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(draft_request, timeout=15) as response:
+        if response.status != 201:
+            raise RuntimeError("Failed to seed seller draft for browser acceptance")
     with tempfile.TemporaryDirectory(prefix="haha-d-e2e-", ignore_cleanup_errors=True) as profile:
         process = subprocess.Popen([str(find_chrome()), "--headless=new", f"--remote-debugging-port={DEBUG_PORT}", "--remote-allow-origins=*", f"--user-data-dir={profile}", "--disable-extensions", "--no-first-run", "--hide-scrollbars", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
