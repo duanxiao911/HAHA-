@@ -214,8 +214,12 @@ async def run(websocket_url: str) -> dict[str, Any]:
         active_learning = await evaluate("document.querySelector('.productPrimaryNav a[aria-current=\"page\"]')?.textContent.trim()")
         assertions["learning_nav_active"] = active_learning == "AI 学习"
 
-        body = await navigate("/commerce", "非遗交易沙盒")
-        assertions["commerce_route_and_boundary"] = "INTERNAL SANDBOX" in body and "不处理真实资金" in body
+        body = await navigate("/commerce", "HAHA HERITAGE MARKET")
+        assertions["commerce_route_and_boundary"] = (
+            "INTERNAL SANDBOX" in body
+            and "真实资金" in body
+            and "BLOCKED" in body
+        )
         active_commerce = await evaluate("document.querySelector('.productPrimaryNav a[aria-current=\"page\"]')?.textContent.trim()")
         assertions["commerce_nav_active"] = active_commerce == "非遗电商"
 
