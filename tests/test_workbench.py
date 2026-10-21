@@ -105,3 +105,24 @@ def test_workbench_api_uses_persisted_context_and_ignores_role_forgery() -> None
     assert creator.status_code == 200
     assert creator.json()["role"] == "creator"
     assert any(item["key"] == "creator_projects" for item in creator.json()["capabilities"])
+
+
+def test_platform_capabilities_do_not_depend_on_active_workbench(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    repository = _repository()
+    client = TestClient(create_app(repository))
+    headers = {"X-User-ID": "member-a", "X-Workspace-ID": "workspace-a"}
+
+    initial = client.get("/api/platform/capabilities", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["catalog_scope"]["status"] == "decision_required"
+    learning = next(item for item in initial.json()["modules"] if item["key"] == "learning")
+    assert learning["features"]["ai_tutor"]["status"] == "blocked"
+
+    client.post("/api/identity/roles/creator/activate", headers=headers)
+    client.post("/api/identity/context", headers=headers, json={"role": "creator"})
+    after_switch = client.get("/api/platform/capabilities", headers=headers)
+    assert after_switch.json()["modules"] == initial.json()["modules"]
+    assert after_switch.json()["internal_roles"]["self_service"] is False

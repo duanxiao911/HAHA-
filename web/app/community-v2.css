@@ -20,6 +20,7 @@
 @media(max-width:767px){.communityNavSystem{top:60px}}
 @media(max-width:479px){.brandBanner{min-height:132px;padding:20px 16px}.brandBanner p{font-size:9px}.brandBanner h1{font-size:24px}.brandBanner>div>span{font-size:11px}.globalHeaderInner{grid-template-columns:auto 1fr auto}.submitPrimary{font-size:0}.submitPrimary::after{font-size:18px;content:"＋"}.globalSearch input{height:38px}.channelCompact{min-height:50px}.channelCompact button{height:34px;padding-inline:12px}.heroRecommendation{gap:16px}.heroRecommendations{gap:14px}.contentGrid{gap:20px 14px}.contentCopy h3{font-size:14px;line-height:20px}.contentStats{display:none}.featureCopy h2{font-size:23px}.regionGrid{grid-template-columns:1fr 1fr;gap:10px}.regionCard{min-height:140px;padding:16px}.topicCard{grid-template-columns:1fr}.topicCard>span{min-height:120px}.topicCard>div{padding:22px}}
 @media(prefers-reduced-motion:reduce){.expandedChannels,.globalHeader,.contentThumb>span,.playIcon{transition:none}}
+.contentThumb.has-image{background-position:center;background-size:cover}.communityFeedMore{display:flex;justify-content:center;padding-top:24px}
 
 /* Keep the complete desktop channel system optically centered. */
 @media(min-width:1024px){.channelCompact{justify-content:center}.channelToggle{margin-left:0!important}}

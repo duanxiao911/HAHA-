@@ -972,6 +972,15 @@ def create_app(
         except WorkbenchPermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    @application.get("/api/platform/capabilities")
+    def get_platform_capabilities(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        """Return account capabilities independently from the selected workbench."""
+        return workbench_service.platform_capabilities(
+            principal.user_id, principal.workspace_id
+        )
+
     @application.post("/api/identity/role-applications/{application_id}/decision")
     def decide_role_application(
         application_id: str,

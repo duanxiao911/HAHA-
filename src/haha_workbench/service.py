@@ -69,6 +69,12 @@ ROLE_COPY: dict[BusinessRole, tuple[str, str, WorkbenchMaturity, str]] = {
     ),
 }
 
+PUBLIC_PLATFORM_WORKBENCHES = {
+    BusinessRole.CREATOR,
+    BusinessRole.CONTRIBUTOR,
+    BusinessRole.SELLER,
+}
+
 
 def _capability(
     key: str,
@@ -298,6 +304,65 @@ class WorkbenchService:
         self.commerce_repository = commerce_repository
         self.user_center = UserCenterService(repository)
         self.learning_tutor = learning_tutor or HeritageTutor()
+
+    def platform_capabilities(self, user_id: str, workspace_id: str) -> dict[str, object]:
+        """Return account-level capabilities without depending on active workbench UI state."""
+
+        center = self.user_center.bootstrap(user_id, workspace_id)
+        grants = center["roles"]
+        assert isinstance(grants, list)
+        professional_roles = [
+            str(item["role"])
+            for item in grants
+            if isinstance(item, dict)
+            and item.get("status") == "active"
+            and BusinessRole(str(item["role"])) in PUBLIC_PLATFORM_WORKBENCHES
+        ]
+        tutor = self.learning_tutor.status()
+        tutor_available = tutor["status"] == "available"
+        return {
+            "contract_version": "platform-capabilities.v1",
+            "account_scope": {
+                "user_id": user_id,
+                "workspace_id": workspace_id,
+                "consumer_capabilities": ["viewer", "buyer", "learner"],
+                "professional_workbenches": professional_roles,
+            },
+            "catalog_scope": {
+                "status": "decision_required",
+                "mode": "workspace_isolated",
+                "reason": "D1 公共审核目录范围尚未批准；历史数据不会自动公开。",
+            },
+            "modules": [
+                {
+                    "key": "community", "label": "视频社区", "href": "/community",
+                    "status": "limited", "reason": "已发布内容可用；跨空间公共目录等待 D1。",
+                },
+                {
+                    "key": "commerce", "label": "非遗电商", "href": "/commerce",
+                    "status": "limited", "reason": "内部交易沙盒可用；真实支付和物流保持阻断。",
+                },
+                {
+                    "key": "learning", "label": "AI 学习", "href": "/learning",
+                    "status": "available", "reason": "确定性学习闭环可用。",
+                    "features": {
+                        "ai_tutor": {
+                            "status": "available" if tutor_available else "blocked",
+                            "reason": str(tutor["reason"]),
+                        }
+                    },
+                },
+                {
+                    "key": "identity", "label": "用户中心", "href": "/identity",
+                    "status": "available", "reason": "统一账户、成长摘要和专业工作台管理可用。",
+                },
+            ],
+            "internal_roles": {
+                "self_service": False,
+                "roles": ["reviewer", "admin"],
+                "reason": "仅平台内部受控授予，不出现在公众申请或切换入口。",
+            },
+        }
 
     def snapshot(self, user_id: str, workspace_id: str) -> dict[str, object]:
         # Bootstrap owns first-account side effects such as the welcome

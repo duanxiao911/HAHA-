@@ -11,12 +11,14 @@ import {
   DEMO_MODE,
   getAuthSessionSnapshot,
   getIdentityWorkbench,
+  getPlatformCapabilities,
   getServerAuthSessionSnapshot,
   getUserCenter,
   initializeAuthSession,
   subscribeAuthSession,
   UserCenterSnapshot,
   WorkbenchSnapshot,
+  PlatformCapabilities,
 } from "@/lib/api";
 
 const roleLabels: Record<BusinessRole, string> = {
@@ -53,6 +55,7 @@ export function PlatformHome() {
   const canLoadPersonal = !DEMO_MODE && (!AUTH_REQUIRED || authState === "authenticated");
   const [snapshot, setSnapshot] = useState<UserCenterSnapshot | null>(null);
   const [workbench, setWorkbench] = useState<WorkbenchSnapshot | null>(null);
+  const [platformCapabilities, setPlatformCapabilities] = useState<PlatformCapabilities | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => { void initializeAuthSession(); }, []);
@@ -60,8 +63,8 @@ export function PlatformHome() {
     if (!canLoadPersonal) return;
     setError("");
     try {
-      const [userCenter, roleWorkbench] = await Promise.all([getUserCenter(), getIdentityWorkbench()]);
-      setSnapshot(userCenter); setWorkbench(roleWorkbench);
+      const [userCenter, roleWorkbench, capabilities] = await Promise.all([getUserCenter(), getIdentityWorkbench(), getPlatformCapabilities()]);
+      setSnapshot(userCenter); setWorkbench(roleWorkbench); setPlatformCapabilities(capabilities);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "平台首页暂时无法读取账户摘要。");
     }
@@ -69,10 +72,10 @@ export function PlatformHome() {
   useEffect(() => {
     if (!canLoadPersonal) return;
     let active = true;
-    void Promise.all([getUserCenter(), getIdentityWorkbench()])
-      .then(([userCenter, roleWorkbench]) => {
+    void Promise.all([getUserCenter(), getIdentityWorkbench(), getPlatformCapabilities()])
+      .then(([userCenter, roleWorkbench, capabilities]) => {
         if (!active) return;
-        setSnapshot(userCenter); setWorkbench(roleWorkbench);
+        setSnapshot(userCenter); setWorkbench(roleWorkbench); setPlatformCapabilities(capabilities);
       })
       .catch((cause: unknown) => {
         if (active) setError(cause instanceof Error ? cause.message : "平台首页暂时无法读取账户摘要。");
@@ -86,12 +89,10 @@ export function PlatformHome() {
   const applicationRole = snapshot?.available_actions.apply[0];
   const conversionRole = selfActivateRole ?? applicationRole;
   const availableCapability = workbench?.capabilities.find((item) => item.status === "available" && item.href);
-  const aiTutorCapability = workbench?.capabilities.find((item) => item.key === "ai_tutor");
-  const aiTutorStatus = aiTutorCapability?.status === "available"
+  const learningCapability = platformCapabilities?.modules.find((item) => item.key === "learning");
+  const aiTutorStatus = learningCapability?.features?.ai_tutor?.status === "available"
     ? "学习可用 · AI 老师可用"
-    : aiTutorCapability?.status === "blocked"
-      ? "学习可用 · AI 老师受阻"
-      : "学习可用 · AI 老师受阻";
+    : "学习可用 · AI 老师受阻";
   const resumeItems = snapshot ? [
     snapshot.today.continue_watching ? {
       eyebrow: "视频社区", title: snapshot.today.continue_watching.title,

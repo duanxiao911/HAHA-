@@ -122,6 +122,7 @@ class Run:
     claimed_at: str = ""
     lease_until: str = ""
     heartbeat_at: str = ""
+    claim_epoch: int = 0
     lock_version: int = 0
 
     @classmethod
@@ -154,6 +155,7 @@ class Run:
             claimed_at="",
             lease_until="",
             heartbeat_at="",
+            claim_epoch=0,
             lock_version=0,
         )
 
@@ -184,6 +186,7 @@ class Run:
             claimed_at="" if target in TERMINAL_RUN_STATUSES else self.claimed_at,
             lease_until="" if target in TERMINAL_RUN_STATUSES else self.lease_until,
             heartbeat_at="" if target in TERMINAL_RUN_STATUSES else self.heartbeat_at,
+            claim_epoch=self.claim_epoch,
             lock_version=self.lock_version,
         )
 

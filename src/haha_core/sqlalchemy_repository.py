@@ -608,6 +608,7 @@ runs = Table(
     Column("claimed_at", String(40), nullable=False, server_default=""),
     Column("lease_until", String(40), nullable=False, server_default=""),
     Column("heartbeat_at", String(40), nullable=False, server_default=""),
+    Column("claim_epoch", Integer, nullable=False, server_default="0"),
     Column("lock_version", Integer, nullable=False, server_default="0"),
     UniqueConstraint(
         "workspace_id", "project_id", "idempotency_key", name="uq_run_idempotency_scope"
@@ -2282,6 +2283,7 @@ class SQLAlchemyCreatorRepository:
             "claimed_at": run.claimed_at,
             "lease_until": run.lease_until,
             "heartbeat_at": run.heartbeat_at,
+            "claim_epoch": run.claim_epoch,
             "lock_version": run.lock_version,
         }
         try:
@@ -2302,6 +2304,7 @@ class SQLAlchemyCreatorRepository:
                             claimed_at=run.claimed_at,
                             lease_until=run.lease_until,
                             heartbeat_at=run.heartbeat_at,
+                            claim_epoch=run.claim_epoch,
                             lock_version=run.lock_version,
                         )
                     )
@@ -2411,7 +2414,33 @@ class SQLAlchemyCreatorRepository:
             created_at=row["created_at"],
         )
 
-    def complete_run_with_script(self, run: Run, script: ScriptVersion) -> None:
+    def save_claimed_run(self, run: Run, worker_id: str, claim_epoch: int) -> None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with self.engine.begin() as connection:
+            result = connection.execute(
+                runs.update().where(
+                    runs.c.id == run.id,
+                    runs.c.claimed_by == worker_id,
+                    runs.c.claim_epoch == claim_epoch,
+                    runs.c.lease_until != "",
+                    runs.c.lease_until >= now,
+                    runs.c.status != RunStatus.CANCELLED.value,
+                ).values(
+                    status=run.status.value, attempt=run.attempt,
+                    error_code=run.error_code, error_message=run.error_message,
+                    updated_at=run.updated_at, claimed_by=run.claimed_by,
+                    claimed_at=run.claimed_at, lease_until=run.lease_until,
+                    heartbeat_at=run.heartbeat_at,
+                    lock_version=runs.c.lock_version + 1,
+                )
+            )
+            if result.rowcount != 1:
+                raise RepositoryConflictError("worker no longer owns this run lease")
+
+    def complete_run_with_script(
+        self, run: Run, script: ScriptVersion, worker_id: str, claim_epoch: int
+    ) -> None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with self.engine.begin() as connection:
             connection.execute(
                 script_versions.insert().values(
@@ -2429,6 +2458,10 @@ class SQLAlchemyCreatorRepository:
                 runs.update()
                 .where(
                     runs.c.id == run.id,
+                    runs.c.claimed_by == worker_id,
+                    runs.c.claim_epoch == claim_epoch,
+                    runs.c.lease_until != "",
+                    runs.c.lease_until >= now,
                     runs.c.status != RunStatus.CANCELLED.value,
                 )
                 .values(
@@ -2437,7 +2470,10 @@ class SQLAlchemyCreatorRepository:
                     error_code=run.error_code,
                     error_message=run.error_message,
                     updated_at=run.updated_at,
+                    claimed_by="",
+                    claimed_at="",
                     lease_until="",
+                    heartbeat_at="",
                     lock_version=runs.c.lock_version + 1,
                 )
             )
@@ -2474,13 +2510,14 @@ class SQLAlchemyCreatorRepository:
                     claimed_at=now_text,
                     lease_until=lease_text,
                     heartbeat_at=now_text,
+                    claim_epoch=runs.c.claim_epoch + 1,
                     updated_at=now_text,
                     lock_version=runs.c.lock_version + 1,
                 )
             )
         return self.get_run(run_id) if result.rowcount == 1 else None
 
-    def heartbeat_run(self, run_id: str, worker_id: str, lease_seconds: int = 120) -> bool:
+    def heartbeat_run(self, run_id: str, worker_id: str, claim_epoch: int, lease_seconds: int = 120) -> bool:
         now = datetime.now(UTC)
         now_text = now.isoformat(timespec="milliseconds")
         lease_text = (now + timedelta(seconds=lease_seconds)).isoformat(timespec="milliseconds")
@@ -2490,6 +2527,7 @@ class SQLAlchemyCreatorRepository:
                 .where(
                     runs.c.id == run_id,
                     runs.c.claimed_by == worker_id,
+                    runs.c.claim_epoch == claim_epoch,
                     runs.c.status.not_in(
                         [
                             RunStatus.PASSED.value,

@@ -17,6 +17,9 @@ export class ApiRequestError extends Error {
 export type AuthSessionState = "unknown" | "authenticated" | "anonymous";
 const authListeners = new Set<() => void>();
 let authState: AuthSessionState = AUTH_REQUIRED ? "unknown" : "authenticated";
+let authAccountKey = AUTH_REQUIRED
+  ? "anonymous"
+  : `${process.env.NEXT_PUBLIC_USER_ID ?? "local-user"}:${process.env.NEXT_PUBLIC_WORKSPACE_ID ?? "local"}`;
 let authInitialization: Promise<boolean> | null = null;
 
 function emitAuthSessionChange(): void {
@@ -36,9 +39,19 @@ export function getServerAuthSessionSnapshot(): AuthSessionState {
   return AUTH_REQUIRED ? "unknown" : "authenticated";
 }
 
-function setAuthState(next: AuthSessionState): void {
-  if (authState === next) return;
+export function getAuthAccountSnapshot(): string {
+  return authAccountKey;
+}
+
+export function getServerAuthAccountSnapshot(): string {
+  return AUTH_REQUIRED ? "unknown" : authAccountKey;
+}
+
+function setAuthSession(next: AuthSessionState, account?: { user_id: string; workspace_id: string }): void {
+  const nextKey = account ? `${account.user_id}:${account.workspace_id}` : next;
+  if (authState === next && authAccountKey === nextKey) return;
   authState = next;
+  authAccountKey = nextKey;
   emitAuthSessionChange();
 }
 
@@ -73,7 +86,7 @@ export function hasAccessToken(): boolean {
 }
 
 export function clearAuthSession(): void {
-  setAuthState(AUTH_REQUIRED ? "anonymous" : "authenticated");
+  setAuthSession(AUTH_REQUIRED ? "anonymous" : "authenticated");
 }
 
 export async function initializeAuthSession(): Promise<boolean> {
@@ -83,10 +96,13 @@ export async function initializeAuthSession(): Promise<boolean> {
   }).then(async (response) => {
     const payload = await response.json().catch(() => ({ authenticated: false }));
     const authenticated = response.ok && payload.authenticated === true;
-    setAuthState(authenticated ? "authenticated" : "anonymous");
+    setAuthSession(
+      authenticated ? "authenticated" : "anonymous",
+      authenticated ? payload.account : undefined,
+    );
     return authenticated;
   }).catch(() => {
-    setAuthState("anonymous");
+    setAuthSession("anonymous");
     return false;
   }).finally(() => { authInitialization = null; });
   return authInitialization;
@@ -95,7 +111,7 @@ export async function initializeAuthSession(): Promise<boolean> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, { ...init, cache: "no-store" });
   if (!response.ok) {
-    if (response.status === 401 && AUTH_REQUIRED) setAuthState("anonymous");
+    if (response.status === 401 && AUTH_REQUIRED) setAuthSession("anonymous");
     const payload = await response.json().catch(() => ({ detail: response.statusText }));
     throw new ApiRequestError(
       response.status,
@@ -132,7 +148,7 @@ export async function loginAccount(email: string, password: string): Promise<Aut
     throw new Error(String(payload.detail ?? `登录失败：${response.status}`));
   }
   const session = await response.json() as AuthSession;
-  setAuthState("authenticated");
+  setAuthSession("authenticated", session.account);
   return session;
 }
 
@@ -149,7 +165,7 @@ export async function registerAccount(
     throw new Error(String(payload.detail ?? `注册失败：${response.status}`));
   }
   const session = await response.json() as AuthSession;
-  setAuthState("authenticated");
+  setAuthSession("authenticated", session.account);
   return session;
 }
 
@@ -332,6 +348,16 @@ export type WorkbenchSnapshot = {
   }[];
   tasks: IdentityTask[];
   boundary_note: string;
+};
+
+export type PlatformCapabilities = {
+  contract_version: "platform-capabilities.v1";
+  catalog_scope: { status: "decision_required" | "approved"; mode: string; reason: string };
+  modules: {
+    key: "community" | "commerce" | "learning" | "identity";
+    label: string; href: string; status: "available" | "limited" | "blocked"; reason: string;
+    features?: { ai_tutor?: { status: "available" | "blocked"; reason: string } };
+  }[];
 };
 
 export type LearningQuestion = {
@@ -549,6 +575,9 @@ export async function getUserCenter(): Promise<UserCenterSnapshot> {
 }
 export async function getIdentityWorkbench(): Promise<WorkbenchSnapshot> {
   return request("/api/identity/workbench", { headers: headers() });
+}
+export async function getPlatformCapabilities(): Promise<PlatformCapabilities> {
+  return request("/api/platform/capabilities", { headers: headers() });
 }
 export async function getLearningCenter(): Promise<LearningSnapshot> {
   return request("/api/learning", { headers: headers() });

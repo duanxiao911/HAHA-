@@ -7,6 +7,30 @@ import {
 type RouteContext = { params: Promise<{ path: string[] }> };
 const MUTATIONS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+async function readBoundedBody(request: NextRequest, limit: number): Promise<ArrayBuffer | undefined> {
+  if (["GET", "HEAD"].includes(request.method) || !request.body) return undefined;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > limit) {
+      await reader.cancel("request body limit exceeded");
+      throw new RangeError("request body limit exceeded");
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body.buffer as ArrayBuffer;
+}
+
 async function handle(request: NextRequest, context: RouteContext) {
   if (MUTATIONS.has(request.method)) {
     const csrfError = validateCsrf(request);
@@ -21,21 +45,38 @@ async function handle(request: NextRequest, context: RouteContext) {
   if (tokenEndpoints.has(`/${path.map(encodeURIComponent).join("/")}`)) {
     return NextResponse.json({ detail: "令牌端点只能通过安全会话接口访问" }, { status: 404 });
   }
-  const isMediaUpload = request.method === "PUT"
+  const isCommunityUpload = request.method === "PUT"
     && path.length === 5
     && path[0] === "api"
     && path[1] === "community"
     && path[2] === "submissions"
     && path[4] === "assets";
-  const bodyLimit = isMediaUpload ? 25 * 1024 * 1024 : 1024 * 1024;
-  const declaredLength = Number(request.headers.get("content-length") ?? 0);
-  if (declaredLength > bodyLimit) {
-    return NextResponse.json({ detail: `BFF 请求体超过 ${isMediaUpload ? "25 MiB" : "1 MiB"} 限制` }, { status: 413 });
+  const isCommerceImageUpload = request.method === "PUT"
+    && path.length === 5
+    && path[0] === "api"
+    && path[1] === "commerce"
+    && path[2] === "products"
+    && path[4] === "images";
+  const bodyLimit = isCommunityUpload
+    ? 25 * 1024 * 1024
+    : isCommerceImageUpload ? 10 * 1024 * 1024 : 1024 * 1024;
+  const limitLabel = isCommunityUpload ? "25 MiB" : isCommerceImageUpload ? "10 MiB" : "1 MiB";
+  const declaredLengthHeader = request.headers.get("content-length");
+  const declaredLength = declaredLengthHeader === null ? 0 : Number(declaredLengthHeader);
+  if (!Number.isFinite(declaredLength) || declaredLength < 0) {
+    return NextResponse.json({ detail: "Content-Length 无效" }, { status: 400 });
   }
-  const body = ["GET", "HEAD"].includes(request.method) ? undefined : await request.arrayBuffer();
-  const contentLength = Number(request.headers.get("content-length") ?? body?.byteLength ?? 0);
-  if (contentLength > bodyLimit) {
-    return NextResponse.json({ detail: `BFF 请求体超过 ${isMediaUpload ? "25 MiB" : "1 MiB"} 限制` }, { status: 413 });
+  if (declaredLength > bodyLimit) {
+    return NextResponse.json({ detail: `BFF 请求体超过 ${limitLabel} 限制` }, { status: 413 });
+  }
+  let body: ArrayBuffer | undefined;
+  try {
+    body = await readBoundedBody(request, bodyLimit);
+  } catch (error) {
+    if (error instanceof RangeError) {
+      return NextResponse.json({ detail: `BFF 请求体超过 ${limitLabel} 限制` }, { status: 413 });
+    }
+    throw error;
   }
   let accessToken = request.cookies.get(ACCESS_COOKIE)?.value ?? "";
   const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value ?? "";
@@ -46,7 +87,7 @@ async function handle(request: NextRequest, context: RouteContext) {
   }
   const call = (token: string) => {
     const headers = new Headers();
-    for (const name of ["content-type", "idempotency-key", "last-event-id", "range", "x-request-id", "x-upload-filename", "x-upload-kind"]) {
+    for (const name of ["content-type", "idempotency-key", "last-event-id", "range", "x-request-id", "x-upload-filename", "x-upload-kind", "x-image-alt", "x-image-source"]) {
       const value = request.headers.get(name);
       if (value) headers.set(name, value);
     }

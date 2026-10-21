@@ -21,13 +21,13 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_DB: haha
+          POSTGRES_DB: haha_test
           POSTGRES_USER: haha
           POSTGRES_PASSWORD: ci-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U haha -d haha"
+          --health-cmd "pg_isready -U haha -d haha_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -41,8 +41,9 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql+psycopg://haha:ci-password@127.0.0.1:5432/haha
-      HAHA_TEST_POSTGRES_URL: postgresql+psycopg://haha:ci-password@127.0.0.1:5432/haha
+      DATABASE_URL: postgresql+psycopg://haha:ci-password@127.0.0.1:5432/haha_test
+      HAHA_TEST_POSTGRES_URL: postgresql+psycopg://haha:ci-password@127.0.0.1:5432/haha_test
+      HAHA_ALLOW_TEST_DATABASE_RESET: "true"
       REDIS_URL: redis://127.0.0.1:6379/0
       HAHA_JWT_SECRET: ci-auth-test-secret-at-least-32-characters
       HAHA_PASSWORD_PBKDF2_ITERATIONS: "1000"

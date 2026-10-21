@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict
+from threading import Event, Thread
 from typing import Any
 
 from haha_core.domain import (
@@ -32,6 +33,60 @@ class RunNotCancellableError(ValueError):
 
 class FailedJobNotRetryableError(ValueError):
     """A failed job cannot consume another bounded retry attempt."""
+
+
+class _RunLeaseKeeper:
+    """Renew an owned run lease while a blocking model/retrieval call is in flight."""
+
+    def __init__(
+        self,
+        repository: CreatorRepository,
+        run_id: str,
+        worker_id: str,
+        claim_epoch: int,
+        *,
+        interval_seconds: float = 30.0,
+    ) -> None:
+        self.repository = repository
+        self.run_id = run_id
+        self.worker_id = worker_id
+        self.claim_epoch = claim_epoch
+        self.interval_seconds = interval_seconds
+        self._stop = Event()
+        self._ready = Event()
+        self._error: Exception | None = None
+        self._thread = Thread(target=self._renew, name=f"lease-{run_id}", daemon=True)
+
+    def _renew(self) -> None:
+        try:
+            while not self._stop.is_set():
+                if not self.repository.heartbeat_run(
+                    self.run_id, self.worker_id, self.claim_epoch
+                ):
+                    self._error = RepositoryConflictError("worker lost the run lease")
+                    return
+                self._ready.set()
+                if self._stop.wait(self.interval_seconds):
+                    return
+        except Exception as exc:  # pragma: no cover - adapter-specific failure path
+            self._error = exc
+        finally:
+            self._ready.set()
+
+    def __enter__(self) -> _RunLeaseKeeper:
+        self._thread.start()
+        self._ready.wait()
+        self.ensure_owned()
+        return self
+
+    def ensure_owned(self) -> None:
+        if self._error:
+            raise RepositoryConflictError("worker could not renew the run lease") from self._error
+
+    def __exit__(self, *_: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=max(self.interval_seconds, 1.0) + 1.0)
+        self.ensure_owned()
 
 
 class CreatorService:
@@ -143,14 +198,16 @@ class CreatorService:
         if claimed is None:
             return self.repository.get_run(run.id) or run
         run = claimed
+        claim_epoch = claimed.claim_epoch
         brief = self.repository.get_brief(run.brief_version_id)
         if not brief:
             raise LookupError("运行参数版本不存在")
         try:
             for status in (RunStatus.RUNNING, RunStatus.RETRIEVING, RunStatus.GENERATING):
                 run = run.transition(status)
-                self.repository.save_run(run)
-                self.repository.heartbeat_run(run.id, worker_id)
+                self.repository.save_claimed_run(run, worker_id, claim_epoch)
+                if not self.repository.heartbeat_run(run.id, worker_id, claim_epoch):
+                    raise RepositoryConflictError("worker lost the run lease")
                 run = self.repository.get_run(run.id) or run
             content_brief = ContentBrief(
                 craft=brief.craft,
@@ -163,14 +220,18 @@ class CreatorService:
                 aspect_ratio=brief.aspect_ratio,
                 asset_context=brief.asset_context,
             )
-            generated, mode = generate_content_script_for_mode(
-                content_brief, run.model_preference
-            )
+            with _RunLeaseKeeper(
+                self.repository, run.id, worker_id, claim_epoch
+            ) as lease_keeper:
+                generated, mode = generate_content_script_for_mode(
+                    content_brief, run.model_preference
+                )
+                lease_keeper.ensure_owned()
             persisted = self.repository.get_run(run.id)
             if persisted and persisted.status is RunStatus.CANCELLED:
                 return persisted
             run = run.transition(RunStatus.VALIDATING)
-            self.repository.save_run(run)
+            self.repository.save_claimed_run(run, worker_id, claim_epoch)
             verification = verify_script(brief, generated)
             if not verification.passed:
                 run = run.transition(
@@ -178,7 +239,7 @@ class CreatorService:
                     error_code="verification_failed",
                     error_message="; ".join(issue.message for issue in verification.issues),
                 )
-                self.repository.save_run(run)
+                self.repository.save_claimed_run(run, worker_id, claim_epoch)
                 return run
             trace = generated.retrieval_trace
             evidence: dict[str, Any] = {
@@ -198,7 +259,7 @@ class CreatorService:
                 created_at=utc_now(),
             )
             run = run.transition(RunStatus.PASSED)
-            self.repository.complete_run_with_script(run, script)
+            self.repository.complete_run_with_script(run, script, worker_id, claim_epoch)
             return run
         except Exception as exc:
             persisted = self.repository.get_run(run.id)
@@ -210,7 +271,7 @@ class CreatorService:
                     error_code=type(exc).__name__,
                     error_message=str(exc),
                 )
-                self.repository.save_run(run)
+                self.repository.save_claimed_run(run, worker_id, claim_epoch)
             return run
 
     def cancel_run(self, run_id: str) -> Run:

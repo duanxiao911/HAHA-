@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from haha_core.domain import RunStatus, ScriptVersion, new_id, utc_now
-from haha_core.repository import SQLiteCreatorRepository
+from haha_core.repository import RepositoryConflictError, SQLiteCreatorRepository
 from haha_core.service import (
     CreatorService,
     FailedJobNotRetryableError,
@@ -173,11 +173,52 @@ def test_expired_lease_can_be_reclaimed_and_heartbeat_extends_it() -> None:
     assert expired is not None
     assert reclaimed is not None
     assert reclaimed.claimed_by == "worker-b"
+    assert reclaimed.claim_epoch == expired.claim_epoch + 1
     old_lease = reclaimed.lease_until
-    assert service.repository.heartbeat_run(run.id, "worker-b", lease_seconds=60)
+    assert service.repository.heartbeat_run(
+        run.id, "worker-b", reclaimed.claim_epoch, lease_seconds=60
+    )
     refreshed = service.repository.get_run(run.id)
     assert refreshed is not None
     assert refreshed.lease_until > old_lease
+
+
+def test_reclaimed_run_rejects_stale_worker_stage_and_completion() -> None:
+    repository = SQLiteCreatorRepository(":memory:")
+    service = CreatorService(repository)
+    project = service.create_project(title="代次隔离", workspace_id="ws_test")
+    brief = _brief(service, project.id)
+    run, _ = service.create_run(
+        workspace_id="ws_test", project_id=project.id, brief_version_id=brief.id,
+        model_preference="本地演示", idempotency_key="claim-epoch-fence",
+    )
+    stale = repository.claim_run(run.id, "worker-a", lease_seconds=-1)
+    current = repository.claim_run(run.id, "worker-b", lease_seconds=60)
+    assert stale is not None and current is not None
+    with pytest.raises(RepositoryConflictError):
+        repository.save_claimed_run(
+            stale.transition(RunStatus.RUNNING), "worker-a", stale.claim_epoch
+        )
+    passed = (
+        stale.transition(RunStatus.RUNNING)
+        .transition(RunStatus.RETRIEVING)
+        .transition(RunStatus.GENERATING)
+        .transition(RunStatus.VALIDATING)
+        .transition(RunStatus.PASSED)
+    )
+    script = ScriptVersion(
+        id=new_id("script"), project_id=project.id, run_id=run.id,
+        brief_version_id=brief.id, version=1, payload={}, evidence={}, created_at=utc_now(),
+    )
+    with pytest.raises(RepositoryConflictError):
+        repository.complete_run_with_script(
+            passed, script, "worker-a", stale.claim_epoch
+        )
+    assert repository.get_script_for_run(run.id) is None
+    persisted = repository.get_run(run.id)
+    assert persisted is not None
+    assert persisted.claimed_by == "worker-b"
+    assert persisted.claim_epoch == current.claim_epoch
 
 
 def test_finished_run_cannot_be_reclaimed() -> None:
@@ -219,7 +260,9 @@ def test_transaction_failure_rolls_back_script_and_run() -> None:
                WHEN NEW.status = 'PASSED' BEGIN SELECT RAISE(ABORT, 'forced'); END"""
         )
     with pytest.raises(sqlite3.IntegrityError):
-        repository.complete_run_with_script(passed, script)
+        repository.complete_run_with_script(
+            passed, script, "worker-a", claimed.claim_epoch
+        )
     assert repository.get_script_for_run(run.id) is None
     persisted = repository.get_run(run.id)
     assert persisted is not None

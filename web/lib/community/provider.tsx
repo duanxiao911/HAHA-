@@ -7,19 +7,32 @@ import {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 import type { CommunityActions, CommunityContextValue } from "./contract";
 import { createApiCommunityAdapter } from "./api-adapter";
 import { createLocalCommunityAdapter } from "./local-adapter";
-import { DEMO_MODE } from "@/lib/api";
+import {
+  DEMO_MODE,
+  getAuthAccountSnapshot,
+  getServerAuthAccountSnapshot,
+  subscribeAuthSession,
+} from "@/lib/api";
 
 const CommunityContext = createContext<CommunityContextValue | null>(null);
 
 export function CommunityProvider({ children }: { children: ReactNode }) {
-  const [adapter] = useState(() => (
-    DEMO_MODE ? createLocalCommunityAdapter() : createApiCommunityAdapter()
-  ));
+  const accountKey = useSyncExternalStore(
+    subscribeAuthSession,
+    getAuthAccountSnapshot,
+    getServerAuthAccountSnapshot,
+  );
+  const adapter = useMemo(() => (
+    DEMO_MODE
+      ? createLocalCommunityAdapter()
+      : (void accountKey, createApiCommunityAdapter())
+  ), [accountKey]);
   const [snapshot, setSnapshot] = useState(() => adapter.getSnapshot());
 
   useEffect(() => {

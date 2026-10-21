@@ -64,7 +64,11 @@ function describeError(error: unknown): string {
 export function ContentDetailView({ contentId }: ContentDetailViewProps) {
   const { snapshot, actions } = useCommunity();
   const apiMode = snapshot.runtime.mode === "api";
-  const content = snapshot.contents.find((item) => item.id === contentId);
+  const snapshotContent = snapshot.contents.find((item) => item.id === contentId);
+  const [loadedContent, setLoadedContent] = useState<typeof snapshotContent>(undefined);
+  const [detailState, setDetailState] = useState<"loading" | "success" | "error">("loading");
+  const [detailError, setDetailError] = useState("");
+  const content = snapshotContent ?? loadedContent;
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [commentBody, setCommentBody] = useState("");
@@ -74,6 +78,22 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
   const [annotationSourceId, setAnnotationSourceId] = useState("");
   const historyRecordedFor = useRef<string | null>(null);
   const historyContentId = content?.id;
+
+  useEffect(() => {
+    if (!snapshot.runtime.hydrated) return;
+    const controller = new AbortController();
+    void actions.getContent(contentId, controller.signal)
+      .then((result) => {
+        setLoadedContent(result);
+        setDetailState("success");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setDetailError(describeError(error));
+        setDetailState("error");
+      });
+    return () => controller.abort();
+  }, [actions, contentId, snapshot.runtime.hydrated]);
 
   useEffect(() => {
     if (!snapshot.runtime.hydrated || !historyContentId || historyRecordedFor.current === historyContentId) return;
@@ -107,7 +127,7 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
     [contentId, snapshot.annotations],
   );
 
-  if (!snapshot.runtime.hydrated) {
+  if (!snapshot.runtime.hydrated || (detailState === "loading" && !content)) {
     return (
       <ProductFrame demoLabel={apiMode ? "服务端内容" : "本地演示"}>
         <StateNotice kind="loading" title="正在加载内容" description="正在读取内容、来源与账户互动状态。" />
@@ -115,13 +135,13 @@ export function ContentDetailView({ contentId }: ContentDetailViewProps) {
     );
   }
 
-  if (!content) {
+  if (!content || detailState === "error") {
     return (
       <ProductFrame demoLabel={apiMode ? "服务端内容" : "本地演示"}>
         <StateNotice
-          kind={snapshot.runtime.recoveryNotice ? "offline" : "empty"}
+          kind={snapshot.runtime.recoveryNotice ? "offline" : detailState === "error" ? "error" : "empty"}
           title="没有找到这条内容"
-          description={snapshot.runtime.recoveryNotice ?? "该内容可能已被移除、尚未发布或链接有误。"}
+          description={snapshot.runtime.recoveryNotice ?? (detailError || "该内容可能已被移除、尚未发布或链接有误。")}
           actionLabel="返回内容社区"
           actionHref="/"
         />

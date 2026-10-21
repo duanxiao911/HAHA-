@@ -100,11 +100,13 @@ class CreatorRepository(Protocol):
 
     def get_script_for_run(self, run_id: str) -> ScriptVersion | None: ...
 
-    def complete_run_with_script(self, run: Run, script: ScriptVersion) -> None: ...
+    def complete_run_with_script(self, run: Run, script: ScriptVersion, worker_id: str, claim_epoch: int) -> None: ...
+
+    def save_claimed_run(self, run: Run, worker_id: str, claim_epoch: int) -> None: ...
 
     def claim_run(self, run_id: str, worker_id: str, lease_seconds: int = 120) -> Run | None: ...
 
-    def heartbeat_run(self, run_id: str, worker_id: str, lease_seconds: int = 120) -> bool: ...
+    def heartbeat_run(self, run_id: str, worker_id: str, claim_epoch: int, lease_seconds: int = 120) -> bool: ...
 
     def record_failed_job(self, run_id: str, reason: str) -> None: ...
 
@@ -469,6 +471,7 @@ class SQLiteCreatorRepository:
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     claimed_by TEXT NOT NULL DEFAULT '', claimed_at TEXT NOT NULL DEFAULT '',
                     lease_until TEXT NOT NULL DEFAULT '', heartbeat_at TEXT NOT NULL DEFAULT '',
+                    claim_epoch INTEGER NOT NULL DEFAULT 0,
                     lock_version INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(workspace_id, project_id, idempotency_key),
                     FOREIGN KEY(project_id) REFERENCES projects(id),
@@ -509,6 +512,7 @@ class SQLiteCreatorRepository:
                 "claimed_at": "TEXT NOT NULL DEFAULT ''",
                 "lease_until": "TEXT NOT NULL DEFAULT ''",
                 "heartbeat_at": "TEXT NOT NULL DEFAULT ''",
+                "claim_epoch": "INTEGER NOT NULL DEFAULT 0",
                 "lock_version": "INTEGER NOT NULL DEFAULT 0",
             }.items():
                 if name not in existing_columns:
@@ -1790,6 +1794,7 @@ class SQLiteCreatorRepository:
             run.claimed_at,
             run.lease_until,
             run.heartbeat_at,
+            run.claim_epoch,
             run.lock_version,
         )
         try:
@@ -1799,13 +1804,14 @@ class SQLiteCreatorRepository:
                        id, workspace_id, project_id, brief_version_id, status,
                        model_preference, idempotency_key, request_fingerprint, attempt,
                        error_code, error_message, created_at, updated_at, claimed_by,
-                       claimed_at, lease_until, heartbeat_at, lock_version
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       claimed_at, lease_until, heartbeat_at, claim_epoch, lock_version
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET status=excluded.status, attempt=excluded.attempt,
                     error_code=excluded.error_code, error_message=excluded.error_message,
                     updated_at=excluded.updated_at, claimed_by=excluded.claimed_by,
                     claimed_at=excluded.claimed_at, lease_until=excluded.lease_until,
-                    heartbeat_at=excluded.heartbeat_at, lock_version=excluded.lock_version
+                    heartbeat_at=excluded.heartbeat_at, claim_epoch=excluded.claim_epoch,
+                    lock_version=excluded.lock_version
                     WHERE runs.status != 'CANCELLED' OR excluded.status = 'CANCELLED'""",
                     values,
                 )
@@ -1897,7 +1903,27 @@ class SQLiteCreatorRepository:
             created_at=row["created_at"],
         )
 
-    def complete_run_with_script(self, run: Run, script: ScriptVersion) -> None:
+    def save_claimed_run(self, run: Run, worker_id: str, claim_epoch: int) -> None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                """UPDATE runs SET status = ?, attempt = ?, error_code = ?, error_message = ?,
+                   updated_at = ?, claimed_by = ?, claimed_at = ?, lease_until = ?,
+                   heartbeat_at = ?, lock_version = lock_version + 1
+                   WHERE id = ? AND claimed_by = ? AND claim_epoch = ?
+                     AND lease_until != '' AND lease_until >= ? AND status != ?""",
+                (run.status.value, run.attempt, run.error_code, run.error_message,
+                 run.updated_at, run.claimed_by, run.claimed_at, run.lease_until,
+                 run.heartbeat_at, run.id, worker_id, claim_epoch, now,
+                 RunStatus.CANCELLED.value),
+            )
+            if cursor.rowcount != 1:
+                raise RepositoryConflictError("worker no longer owns this run lease")
+
+    def complete_run_with_script(
+        self, run: Run, script: ScriptVersion, worker_id: str, claim_epoch: int
+    ) -> None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 "INSERT INTO script_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1913,7 +1939,11 @@ class SQLiteCreatorRepository:
                 ),
             )
             cursor = connection.execute(
-                "UPDATE runs SET status = ?, attempt = ?, error_code = ?, error_message = ?, updated_at = ?, lease_until = '', lock_version = lock_version + 1 WHERE id = ? AND status != ?",
+                """UPDATE runs SET status = ?, attempt = ?, error_code = ?, error_message = ?,
+                   updated_at = ?, claimed_by = '', claimed_at = '', lease_until = '',
+                   heartbeat_at = '', lock_version = lock_version + 1
+                   WHERE id = ? AND claimed_by = ? AND claim_epoch = ?
+                     AND lease_until != '' AND lease_until >= ? AND status != ?""",
                 (
                     run.status.value,
                     run.attempt,
@@ -1921,6 +1951,9 @@ class SQLiteCreatorRepository:
                     run.error_message,
                     run.updated_at,
                     run.id,
+                    worker_id,
+                    claim_epoch,
+                    now,
                     RunStatus.CANCELLED.value,
                 ),
             )
@@ -1936,6 +1969,7 @@ class SQLiteCreatorRepository:
             cursor = connection.execute(
                 """UPDATE runs SET status = ?, claimed_by = ?, claimed_at = ?,
                    lease_until = ?, heartbeat_at = ?, updated_at = ?, lock_version = lock_version + 1
+                   , claim_epoch = claim_epoch + 1
                    WHERE id = ? AND (
                      status IN (?, ?) OR
                      (status IN (?, ?, ?, ?, ?) AND lease_until != '' AND lease_until < ?)
@@ -1963,7 +1997,7 @@ class SQLiteCreatorRepository:
                 return None
         return self.get_run(run_id)
 
-    def heartbeat_run(self, run_id: str, worker_id: str, lease_seconds: int = 120) -> bool:
+    def heartbeat_run(self, run_id: str, worker_id: str, claim_epoch: int, lease_seconds: int = 120) -> bool:
         now = datetime.now(UTC)
         now_text = now.isoformat(timespec="milliseconds")
         lease_text = (now + timedelta(seconds=lease_seconds)).isoformat(timespec="milliseconds")
@@ -1971,13 +2005,15 @@ class SQLiteCreatorRepository:
             cursor = connection.execute(
                 """UPDATE runs SET heartbeat_at = ?, lease_until = ?, updated_at = ?,
                    lock_version = lock_version + 1
-                   WHERE id = ? AND claimed_by = ? AND status NOT IN (?, ?, ?)""",
+                   WHERE id = ? AND claimed_by = ? AND claim_epoch = ?
+                     AND status NOT IN (?, ?, ?)""",
                 (
                     now_text,
                     lease_text,
                     now_text,
                     run_id,
                     worker_id,
+                    claim_epoch,
                     RunStatus.PASSED.value,
                     RunStatus.FAILED.value,
                     RunStatus.CANCELLED.value,

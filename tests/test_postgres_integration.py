@@ -18,7 +18,9 @@ from haha_community.domain import CommunityConflictError
 from haha_community.media_storage import FileSystemMediaStorage
 from haha_community.service import CommunityService
 from haha_community.sqlalchemy_repository import SQLAlchemyCommunityRepository
+from haha_core.database_safety import assert_test_database_reset_safe
 from haha_core.domain import RunStatus, ScriptVersion, new_id, utc_now
+from haha_core.repository import RepositoryConflictError
 from haha_core.service import CreatorService
 from haha_core.sqlalchemy_repository import SQLAlchemyCreatorRepository
 from haha_identity.domain import RoleGrant
@@ -36,6 +38,7 @@ pytestmark = pytest.mark.skipif(not POSTGRES_URL, reason="HAHA_TEST_POSTGRES_URL
 
 @pytest.fixture()
 def repository() -> SQLAlchemyCreatorRepository:
+    assert_test_database_reset_safe(POSTGRES_URL)
     repo = SQLAlchemyCreatorRepository(POSTGRES_URL)
     with repo.engine.begin() as connection:
         connection.execute(
@@ -610,7 +613,14 @@ def test_postgres_worker_claim_and_expired_lease(repository) -> None:
     assert reclaimed is not None
     assert reclaimed.status is RunStatus.CLAIMED
     assert reclaimed.claimed_by == "worker-c"
+    assert reclaimed.claim_epoch == claimed.claim_epoch + 1
     assert reclaimed.lock_version > claimed.lock_version
+    with pytest.raises(RepositoryConflictError):
+        repository.save_claimed_run(
+            claimed.transition(RunStatus.RUNNING),
+            claimed.claimed_by,
+            claimed.claim_epoch,
+        )
 
 
 def test_postgres_cancel_is_atomic_and_blocks_stale_worker_write(repository) -> None:
@@ -678,7 +688,9 @@ def test_postgres_completion_failure_rolls_back_script_and_run(repository) -> No
             )
         )
     with pytest.raises(DBAPIError):
-        repository.complete_run_with_script(passed, script)
+        repository.complete_run_with_script(
+            passed, script, "worker-a", claimed.claim_epoch
+        )
     assert repository.get_script_for_run(run.id) is None
     persisted = repository.get_run(run.id)
     assert persisted is not None
