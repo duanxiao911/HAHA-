@@ -91,6 +91,7 @@ class CommunityService:
 
     def bootstrap(self, user_id: str, workspace_id: str) -> dict[str, object]:
         self._ensure_catalog(workspace_id)
+        self._reconcile_published_submissions(workspace_id)
         account = self.user_center.bootstrap(user_id, workspace_id)
         rows = self.repository.list_entities(workspace_id)
         grouped: dict[str, list[dict[str, object]]] = {}
@@ -554,11 +555,13 @@ class CommunityService:
             "version": 1,
             "title": _clean(title, label="标题", maximum=200),
             "summary": "",
+            "body": "",
             "projectIds": [],
             "personIds": [],
             "sourceIds": [],
             "tags": [],
             "assets": [],
+            "assetOrder": [],
             "aiDisclosure": "none",
         }
         submission = Submission(
@@ -604,8 +607,9 @@ class CommunityService:
             raise CommunityConflictError("投稿版本已变化，请刷新后重试")
         payload = json.loads(current.payload_json)
         allowed = {
-            "title", "summary", "categoryId", "regionId", "projectIds",
+            "title", "summary", "body", "categoryId", "regionId", "projectIds",
             "personIds", "sourceIds", "tags", "aiDisclosure",
+            "assetOrder",
         }
         if set(patch) - allowed:
             raise CommunityValidationError("投稿包含不允许修改的字段")
@@ -721,8 +725,17 @@ class CommunityService:
             created_at=now,
             updated_at=now,
         )
+        existing_asset_ids = [
+            str(item.get("id", "")) for item in assets if isinstance(item, dict)
+        ]
         assets.append(self._media_payload(asset))
         payload["assets"] = assets
+        order = payload.get("assetOrder", existing_asset_ids)
+        if not isinstance(order, list) or set(order) != set(existing_asset_ids):
+            order = existing_asset_ids
+        payload["assetOrder"] = [
+            item for item in order if isinstance(item, str)
+        ] + [asset.id]
         payload["updatedAt"] = now
         payload["version"] = current.version + 1
         updated = replace(
@@ -777,6 +790,13 @@ class CommunityService:
             raise CommunityValidationError("投稿素材记录损坏")
         now = _now()
         payload["assets"] = [item for item in assets if item.get("id") != asset_id]
+        order = payload.get(
+            "assetOrder",
+            [str(item.get("id", "")) for item in assets if isinstance(item, dict)],
+        )
+        if not isinstance(order, list):
+            order = []
+        payload["assetOrder"] = [item for item in order if item != asset_id]
         payload["updatedAt"] = now
         payload["version"] = current.version + 1
         updated = replace(
@@ -1038,7 +1058,7 @@ class CommunityService:
             )
             patch = {
                 key: item[key]
-                for key in ("summary", "categoryId", "regionId", "projectIds", "personIds", "sourceIds", "tags", "aiDisclosure")
+                for key in ("summary", "body", "categoryId", "regionId", "projectIds", "personIds", "sourceIds", "tags", "aiDisclosure")
                 if key in item
             }
             self.update_submission(user_id, workspace_id, "creator", identifier, int(draft["version"]), patch)
@@ -1123,6 +1143,7 @@ class CommunityService:
     def _validate_submission_payload(self, payload: dict[str, object], workspace_id: str) -> dict[str, object]:
         payload["title"] = _clean(payload.get("title"), label="标题", maximum=200)
         payload["summary"] = _clean(payload.get("summary"), label="简介", maximum=4000)
+        payload["body"] = _clean(payload.get("body"), label="正文", maximum=50_000)
         disclosure = str(payload.get("aiDisclosure", "none"))
         if disclosure not in {"none", "assisted", "generated"}:
             raise CommunityValidationError("AI 披露类型无效")
@@ -1156,6 +1177,15 @@ class CommunityService:
             raise CommunityValidationError("素材记录格式或数量无效")
         if any(not isinstance(item, dict) for item in assets):
             raise CommunityValidationError("素材记录格式无效")
+        asset_ids = [str(item.get("id", "")) for item in assets]
+        if any(not identifier for identifier in asset_ids) or len(set(asset_ids)) != len(asset_ids):
+            raise CommunityValidationError("素材标识无效或重复")
+        order = payload.get("assetOrder", asset_ids)
+        if not isinstance(order, list) or any(not isinstance(item, str) for item in order):
+            raise CommunityValidationError("素材展示顺序格式无效")
+        if len(order) != len(set(order)) or set(order) != set(asset_ids):
+            raise CommunityValidationError("素材展示顺序必须完整且不能重复")
+        payload["assetOrder"] = order
         return payload
 
     @staticmethod
@@ -1165,6 +1195,8 @@ class CommunityService:
             missing.append("标题")
         if not str(payload.get("summary", "")).strip():
             missing.append("简介")
+        if payload.get("submissionType") == "article" and not str(payload.get("body", "")).strip():
+            missing.append("图文正文")
         if not payload.get("projectIds"):
             missing.append("关联项目")
         if not payload.get("sourceIds"):
@@ -1266,12 +1298,39 @@ class CommunityService:
             for source_id in payload.get("sourceIds", [])
         ]
         uploaded_assets = payload.get("assets", [])
+        if not isinstance(uploaded_assets, list):
+            uploaded_assets = []
+        order = payload.get("assetOrder", [])
+        order_index = {
+            asset_id: index for index, asset_id in enumerate(order)
+        } if isinstance(order, list) else {}
+        uploaded_assets = sorted(
+            uploaded_assets,
+            key=lambda item: order_index.get(str(item.get("id", "")), len(order_index))
+            if isinstance(item, dict) else len(order_index),
+        )
+        published_media = [
+            {
+                "id": item["id"],
+                "kind": item["kind"],
+                "url": item["url"],
+                "alt": f"{submission.title}的投稿素材",
+                "mimeType": item["mimeType"],
+            }
+            for item in uploaded_assets
+            if isinstance(item, dict) and item.get("localOnly") is False
+        ]
         cover = {
             "id": f"asset-{content_id}-cover",
             "kind": "image",
             "alt": f"{submission.title}的元数据占位封面",
             "placeholder": {"mark": submission.title[:1] or "稿", "tone": "red"},
         }
+        image_cover = next(
+            (item for item in published_media if item.get("kind") == "image"), None
+        )
+        if image_cover:
+            cover = dict(image_cover)
         content = {
             "id": content_id,
             "workspaceId": submission.workspace_id,
@@ -1297,18 +1356,9 @@ class CommunityService:
             "trust": {"status": "pending", "label": "已审核发布 · 事实待持续复核", "sourceCount": len(source_payloads), "checkedAt": now, "aiAssisted": payload.get("aiDisclosure") != "none"},
             "viewer": {"reactions": [], "followedCreator": False, "viewed": False, "watchProgressSeconds": 0},
             "publishedAt": now,
-            "body": submission.summary,
-            "media": [
-                {
-                    "id": item["id"],
-                    "kind": item["kind"],
-                    "url": item["url"],
-                    "alt": f"{submission.title}的投稿素材",
-                    "mimeType": item["mimeType"],
-                }
-                for item in uploaded_assets
-                if isinstance(item, dict) and item.get("localOnly") is False
-            ] or [cover],
+            "body": str(payload.get("body") or submission.summary),
+            "submissionVersion": submission.version,
+            "media": published_media or [cover],
             "claims": [],
             "sources": source_payloads,
             "relatedContentIds": [],
@@ -1318,6 +1368,20 @@ class CommunityService:
             submission.title, "published", "creator_submission", content,
             submission.created_at, now,
         )
+
+    def _reconcile_published_submissions(self, workspace_id: str) -> None:
+        """Repair a public projection after a prior publish write was interrupted."""
+        for submission in self.repository.list_submissions(workspace_id):
+            if submission.status != SubmissionStatus.PUBLISHED.value:
+                continue
+            content = self.repository.get_entity(
+                workspace_id, "content", f"content-{submission.id}"
+            )
+            current_version = -1
+            if content:
+                current_version = int(_payload(content).get("submissionVersion", -1))
+            if current_version != submission.version:
+                self._publish_submission(submission)
 
     def _validate_import(self, local_state: dict[str, object]) -> None:
         encoded = json.dumps(local_state, ensure_ascii=False, sort_keys=True).encode()

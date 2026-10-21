@@ -614,11 +614,13 @@ export class LocalCommunityAdapter implements CommunityAdapter {
       version: 1,
       title: input.title?.trim().slice(0, 200) ?? "",
       summary: "",
+      body: "",
       projectIds: [],
       personIds: [],
       sourceIds: [],
       tags: [],
       assets: [],
+      assetOrder: [],
       aiDisclosure: "none",
     };
     this.mutate((next) => { next.drafts.unshift(draft); });
@@ -629,15 +631,17 @@ export class LocalCommunityAdapter implements CommunityAdapter {
     const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
     if (!kind) throw new CommunityDataError("validation", "本地演示只登记视频或图片元数据");
     const current = this.draftOrThrow(draftId);
+    const assetId = newId("local-asset");
     return this.updateSubmissionDraft(draftId, {
       assets: [...current.assets, {
-        id: newId("local-asset"),
+        id: assetId,
         name: file.name,
         kind,
         mimeType: file.type,
         sizeBytes: file.size,
         localOnly: true,
       }],
+      assetOrder: [...(current.assetOrder ?? current.assets.map((asset) => asset.id)), assetId],
     });
   }
 
@@ -645,6 +649,7 @@ export class LocalCommunityAdapter implements CommunityAdapter {
     const current = this.draftOrThrow(draftId);
     return this.updateSubmissionDraft(draftId, {
       assets: current.assets.filter((asset) => asset.id !== assetId),
+      assetOrder: (current.assetOrder ?? current.assets.map((asset) => asset.id)).filter((id) => id !== assetId),
     });
   }
 
@@ -653,12 +658,14 @@ export class LocalCommunityAdapter implements CommunityAdapter {
     if (!["draft", "needs_revision", "rejected"].includes(current.status)) throw new CommunityDataError("conflict", "当前投稿状态不可编辑");
     if (patch.title !== undefined && patch.title.trim().length > 200) throw new CommunityDataError("validation", "标题不能超过 200 个字符");
     if (patch.summary !== undefined && patch.summary.trim().length > 4000) throw new CommunityDataError("validation", "简介不能超过 4000 个字符");
+    if (patch.body !== undefined && patch.body.trim().length > 50000) throw new CommunityDataError("validation", "正文不能超过 50000 个字符");
     this.mutate((next) => {
       const target = next.drafts.find((draft) => draft.id === draftId);
       if (!target) return;
       Object.assign(target, clone(patch), {
         title: patch.title === undefined ? target.title : patch.title.trim(),
         summary: patch.summary === undefined ? target.summary : patch.summary.trim(),
+        body: patch.body === undefined ? (target.body ?? "") : patch.body.trim(),
         updatedAt: nowIso(),
         version: target.version + 1,
       });

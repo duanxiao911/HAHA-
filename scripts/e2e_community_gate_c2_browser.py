@@ -347,6 +347,7 @@ async def run(websocket_url: str) -> dict[str, Any]:
           return {
             title:set('input[maxlength="200"]','C2 浏览器真实投稿'),
             summary:set('textarea[maxlength="4000"]','通过真实浏览器验证服务端草稿、版本和提交状态。'),
+            body:set('textarea[maxlength="50000"]','这是浏览器端填写并由服务端持久化的完整图文正文。'),
             category:selects[0]?set('select',selects[0].options[1]?.value||'刺绣'):false,
             region:selects[1]?(()=>{const el=selects[1];Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(el,el.options[1]?.value);el.dispatchEvent(new Event('change',{bubbles:true}));return true;})():false
           };

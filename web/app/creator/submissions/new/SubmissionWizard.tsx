@@ -61,6 +61,7 @@ export function SubmissionWizard({
   const [type, setType] = useState<SubmissionType>(normalizedType(initialType));
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
+  const [body, setBody] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [regionId, setRegionId] = useState("");
   const [projectIds, setProjectIds] = useState<string[]>([]);
@@ -88,6 +89,7 @@ export function SubmissionWizard({
       setType(currentDraft.submissionType);
       setTitle(currentDraft.title);
       setSummary(currentDraft.summary);
+      setBody(currentDraft.body ?? "");
       setCategoryId(currentDraft.categoryId ?? "");
       setRegionId(currentDraft.regionId ?? "");
       setProjectIds(currentDraft.projectIds);
@@ -123,11 +125,12 @@ export function SubmissionWizard({
 
   const checks = useMemo(() => [
     { label: "标题与简介完整", pass: Boolean(title.trim() && summary.trim()) },
+    { label: "图文正文完整", pass: type !== "article" || Boolean(body.trim()) },
     { label: "已关联非遗项目", pass: projectIds.length > 0 },
     { label: "至少一条可信来源", pass: sourceIds.length > 0 },
     { label: "AI 参与程度已披露", pass: Boolean(aiDisclosure) },
     { label: "素材已登记", pass: assets.length > 0 },
-  ], [aiDisclosure, assets.length, projectIds.length, sourceIds.length, summary, title]);
+  ], [aiDisclosure, assets.length, body, projectIds.length, sourceIds.length, summary, title, type]);
   const checksPass = checks.every((item) => item.pass);
 
   function toggle(list: string[], value: string, next: (values: string[]) => void) {
@@ -188,6 +191,17 @@ export function SubmissionWizard({
     }
   }
 
+  function moveAsset(assetId: string, direction: -1 | 1) {
+    setAssets((items) => {
+      const index = items.findIndex((item) => item.id === assetId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= items.length) return items;
+      const next = [...items];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
   async function persist(): Promise<SubmissionDraft> {
     let id = draftId;
     let draft = currentDraft;
@@ -201,6 +215,7 @@ export function SubmissionWizard({
     return actions.updateSubmissionDraft(id, {
       title,
       summary,
+      body,
       categoryId: categoryId || undefined,
       regionId: regionId || undefined,
       projectIds,
@@ -208,6 +223,7 @@ export function SubmissionWizard({
       sourceIds,
       tags: tags.split(/[，,]/).map((item) => item.trim()).filter(Boolean).slice(0, 12),
       assets,
+      assetOrder: assets.map((asset) => asset.id),
       aiDisclosure,
     });
   }
@@ -282,11 +298,11 @@ export function SubmissionWizard({
         <section className="productWizardPanel" aria-live="polite">
           <small className="productEyebrow">STEP {step + 1} / {steps.length}</small>
           {step === 0 ? <><h1>选择内容类型</h1><p>四类投稿共用同一套来源、披露和审核规则。</p><div className="productTypeGrid">{submissionTypes.map((item) => <button type="button" aria-pressed={type === item.value} onClick={() => setType(item.value)} key={item.value}><b>{item.title}</b><span>{item.detail}</span></button>)}</div></> : null}
-          {step === 1 ? <><h1>{apiMode ? "上传素材" : "登记素材"}</h1><p>{apiMode ? "支持 MP4、WebM、JPEG、PNG；视频最大 25 MB、图片最大 15 MB。服务端复核 MIME 签名并保存 SHA-256 摘要，病毒扫描与转码属于后续生产门禁。" : "本地演示只保存文件元数据，不上传文件内容。"}</p><label className="productButtonSecondary">{busy ? "处理中…" : "选择本地文件"}<input className="productVisuallyHidden" type="file" multiple disabled={busy} accept="video/mp4,video/webm,image/jpeg,image/png" onChange={(event) => void selectFiles(event)} /></label>{assets.length ? <ul className="productSourceList">{assets.map((asset) => <li key={asset.id}><b>{asset.name}</b><p>{asset.kind} · {asset.mimeType} · {fileSize(asset.sizeBytes)} · {asset.localOnly ? "仅登记元数据" : "服务端已上传并校验"}</p><button className="productButtonQuiet" type="button" disabled={busy} onClick={() => void removeAsset(asset)}>移除</button></li>)}</ul> : <StateNotice compact kind="empty" title={apiMode ? "尚未上传素材" : "尚未登记素材"} description={apiMode ? "选择一个小型图片或视频文件；上传成功后才能提交审核。" : "可选择一个图片或视频文件用于本地元数据登记。"} />}</> : null}
-          {step === 2 ? <><h1>填写基础信息</h1><p>标题和简介将同时用于预览与事实检查。</p><div className="productForm"><label>标题<input value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} placeholder="准确描述内容，不使用夸张数字" /></label><label>内容简介<textarea value={summary} maxLength={4000} onChange={(event) => setSummary(event.target.value)} placeholder="说明人物、地方、材料、过程和内容边界" /></label><div className="productFormGrid"><label>内容分类<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">请选择</option>{Array.from(new Map(snapshot.contents.map((item) => [item.categoryId, item.categoryLabel]))).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label><label>地区<select value={regionId} onChange={(event) => setRegionId(event.target.value)}><option value="">请选择</option>{snapshot.regions.map((region) => <option value={region.id} key={region.id}>{region.name}</option>)}</select></label></div><label>标签<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="用中文逗号分隔，例如：苗绣，人物故事" /></label></div></> : null}
+          {step === 1 ? <><h1>{apiMode ? "上传素材" : "登记素材"}</h1><p>{apiMode ? "支持 MP4、WebM、JPEG、PNG；视频最大 25 MB、图片最大 15 MB。服务端复核 MIME 签名并保存 SHA-256 摘要，病毒扫描与转码属于后续生产门禁。" : "本地演示只保存文件元数据，不上传文件内容。"}</p><label className="productButtonSecondary">{busy ? "处理中…" : "选择本地文件"}<input className="productVisuallyHidden" type="file" multiple disabled={busy} accept="video/mp4,video/webm,image/jpeg,image/png" onChange={(event) => void selectFiles(event)} /></label>{assets.length ? <ul className="productSourceList">{assets.map((asset, index) => <li key={asset.id}><b>{index + 1}. {asset.name}</b><p>{asset.kind} · {asset.mimeType} · {fileSize(asset.sizeBytes)} · {asset.localOnly ? "仅登记元数据" : "服务端已上传并校验"}</p><div className="productFormActions"><button className="productButtonQuiet" type="button" disabled={busy || index === 0} onClick={() => moveAsset(asset.id, -1)}>上移</button><button className="productButtonQuiet" type="button" disabled={busy || index === assets.length - 1} onClick={() => moveAsset(asset.id, 1)}>下移</button><button className="productButtonQuiet" type="button" disabled={busy} onClick={() => void removeAsset(asset)}>移除</button></div></li>)}</ul> : <StateNotice compact kind="empty" title={apiMode ? "尚未上传素材" : "尚未登记素材"} description={apiMode ? "选择一个小型图片或视频文件；上传成功后才能提交审核。" : "可选择一个图片或视频文件用于本地元数据登记。"} />}</> : null}
+          {step === 2 ? <><h1>填写基础信息</h1><p>标题、简介和正文将用于预览、审核与最终发布。</p><div className="productForm"><label>标题<input value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)} placeholder="准确描述内容，不使用夸张数字" /></label><label>内容简介<textarea value={summary} maxLength={4000} onChange={(event) => setSummary(event.target.value)} placeholder="说明人物、地方、材料、过程和内容边界" /></label><label>{type === "article" ? "图文正文（必填）" : "详细正文（选填）"}<textarea value={body} maxLength={50000} onChange={(event) => setBody(event.target.value)} placeholder="填写经来源支持的完整内容；不要粘贴未经授权的第三方全文" /></label><div className="productFormGrid"><label>内容分类<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">请选择</option>{Array.from(new Map(snapshot.contents.map((item) => [item.categoryId, item.categoryLabel]))).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></label><label>地区<select value={regionId} onChange={(event) => setRegionId(event.target.value)}><option value="">请选择</option>{snapshot.regions.map((region) => <option value={region.id} key={region.id}>{region.name}</option>)}</select></label></div><label>标签<input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="用中文逗号分隔，例如：苗绣，人物故事" /></label></div></> : null}
           {step === 3 ? <><h1>关联项目、人物与来源</h1><p>来源是事实层的一部分，不能在发布时静默丢失。</p><div className="productForm"><fieldset><legend>非遗项目（至少一项）</legend>{snapshot.projects.map((project) => <label key={project.id}><input type="checkbox" checked={projectIds.includes(project.id)} onChange={() => toggle(projectIds, project.id, setProjectIds)} /> {project.name}</label>)}</fieldset><fieldset><legend>相关人物</legend>{snapshot.people.map((person) => <label key={person.id}><input type="checkbox" checked={personIds.includes(person.id)} onChange={() => toggle(personIds, person.id, setPersonIds)} /> {person.displayName}</label>)}</fieldset><fieldset><legend>事实来源（至少一条）</legend>{snapshot.sources.map((source) => <label key={source.id}><input type="checkbox" checked={sourceIds.includes(source.id)} onChange={() => toggle(sourceIds, source.id, setSourceIds)} /> {source.title} · {source.publisher}</label>)}</fieldset></div></> : null}
           {step === 4 ? <><h1>AI 披露与自动检查</h1><p>同一事实层可以被多个平台版本复用，但不能因改写而产生新事实。</p><div className="productTypeGrid">{(["none", "assisted", "generated"] as const).map((value) => <button type="button" aria-pressed={aiDisclosure === value} onClick={() => setAiDisclosure(value)} key={value}><b>{value === "none" ? "未使用 AI" : value === "assisted" ? "AI 辅助" : "AI 主要生成"}</b><span>{value === "none" ? "完全人工整理" : value === "assisted" ? "人工主导，AI 协助表达" : "需重点复核事实与归因"}</span></button>)}</div><ul className="productClaimList">{checks.map((check) => <li key={check.label}><b>{check.pass ? "✓" : "○"} {check.label}</b><small>{check.pass ? " 已完成" : " 仍需补充"}</small></li>)}</ul><div className="productInlineAlert">这是一组前端完整性检查，不等于后端 Verifier、文件安全扫描或人工文化审核。</div></> : null}
-          {step === 5 ? <><h1>预览并提交</h1><p>提交后进入{apiMode ? "服务端" : "本地"}状态机，审核期间内容不可编辑。</p><article className="productPanel"><div className="productPanelBody"><span className="productStatusPill">{submissionTypes.find((item) => item.value === type)?.title}</span><h2>{title || "未填写标题"}</h2><p>{summary || "未填写简介"}</p><p>素材 {assets.length} 项 · 项目 {projectIds.length} 项 · 来源 {sourceIds.length} 条 · AI：{aiDisclosure}</p></div></article><ul className="productClaimList">{checks.map((check) => <li key={check.label}><b>{check.pass ? "✓" : "!"} {check.label}</b></li>)}</ul><button className="productButton" type="button" disabled={busy || !checksPass} onClick={() => void submitForReview()}>{busy ? "正在提交…" : apiMode ? "提交内部审核" : "提交本地审核"}</button></> : null}
+          {step === 5 ? <><h1>预览并提交</h1><p>提交后进入{apiMode ? "服务端" : "本地"}状态机，审核期间内容不可编辑。</p><article className="productPanel"><div className="productPanelBody"><span className="productStatusPill">{submissionTypes.find((item) => item.value === type)?.title}</span><h2>{title || "未填写标题"}</h2><p>{summary || "未填写简介"}</p>{body ? <p>{body.slice(0, 300)}{body.length > 300 ? "…" : ""}</p> : null}<p>素材 {assets.length} 项（按当前顺序发布）· 项目 {projectIds.length} 项 · 来源 {sourceIds.length} 条 · AI：{aiDisclosure}</p></div></article><ul className="productClaimList">{checks.map((check) => <li key={check.label}><b>{check.pass ? "✓" : "!"} {check.label}</b></li>)}</ul><button className="productButton" type="button" disabled={busy || !checksPass} onClick={() => void submitForReview()}>{busy ? "正在提交…" : apiMode ? "提交内部审核" : "提交本地审核"}</button></> : null}
           {error ? <div className="productInlineAlert" role="alert">{error}</div> : null}
           <div className="productFormActions"><button className="productButtonSecondary" type="button" disabled={busy || step === 0} onClick={() => setStep((value) => Math.max(0, value - 1))}>上一步</button>{step < steps.length - 1 ? <button className="productButton" type="button" disabled={busy} onClick={() => void saveAndMove(step + 1)}>{busy ? "保存中…" : "保存并继续"}</button> : null}</div>
         </section>

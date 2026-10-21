@@ -244,6 +244,7 @@ class CommunitySubmissionPatch(BaseModel):
     expected_version: int = Field(ge=1)
     title: str | None = Field(default=None, max_length=200)
     summary: str | None = Field(default=None, max_length=4000)
+    body: str | None = Field(default=None, max_length=50_000)
     categoryId: str | None = Field(default=None, max_length=100)
     regionId: str | None = Field(default=None, max_length=200)
     projectIds: list[str] | None = Field(default=None, max_length=20)
@@ -251,6 +252,7 @@ class CommunitySubmissionPatch(BaseModel):
     sourceIds: list[str] | None = Field(default=None, max_length=20)
     tags: list[str] | None = Field(default=None, max_length=12)
     assets: list[dict[str, object]] | None = Field(default=None, max_length=20)
+    assetOrder: list[str] | None = Field(default=None, max_length=20)
     aiDisclosure: str | None = Field(default=None, pattern="^(none|assisted|generated)$")
 
 

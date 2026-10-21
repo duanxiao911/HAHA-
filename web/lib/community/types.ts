@@ -161,6 +161,7 @@ export interface ContentSummary extends DemoEntity {
   contentType: ContentType;
   title: string;
   summary: string;
+  body: string;
   cover: MediaAsset;
   creatorId: EntityId;
   creator: CommunityPerson;
@@ -243,6 +244,7 @@ export interface SubmissionDraft extends DemoEntity {
   version: number;
   title: string;
   summary: string;
+  body: string;
   categoryId?: EntityId;
   regionId?: EntityId;
   projectIds: EntityId[];
@@ -250,6 +252,7 @@ export interface SubmissionDraft extends DemoEntity {
   sourceIds: EntityId[];
   tags: string[];
   assets: SubmissionAssetDraft[];
+  assetOrder: EntityId[];
   aiDisclosure: "none" | "assisted" | "generated";
   reviewerNote?: string;
   submittedAt?: ISODateString;
@@ -261,6 +264,7 @@ export type SubmissionDraftPatch = Partial<
     SubmissionDraft,
     | "title"
     | "summary"
+    | "body"
     | "categoryId"
     | "regionId"
     | "projectIds"
@@ -268,6 +272,7 @@ export type SubmissionDraftPatch = Partial<
     | "sourceIds"
     | "tags"
     | "assets"
+    | "assetOrder"
     | "aiDisclosure"
     | "reviewerNote"
   >

@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from haha_api.main import create_app
 from haha_auth.service import AuthService
-from haha_community.domain import SubmissionEvent
+from haha_community.domain import CommunityValidationError, SubmissionEvent
 from haha_community.media_storage import FileSystemMediaStorage
 from haha_community.service import CommunityService
 from haha_community.sqlalchemy_repository import SQLAlchemyCommunityRepository
@@ -23,6 +23,7 @@ from haha_user_center.service import UserCenterService
 
 WORKSPACE = "community-c2"
 SMALL_MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"test-media"
+SMALL_PNG = b"\x89PNG\r\n\x1a\n" + b"test-image"
 
 
 def _headers(user_id: str, workspace_id: str = WORKSPACE) -> dict[str, str]:
@@ -84,6 +85,7 @@ def _complete_draft_payload(snapshot: dict[str, object]) -> dict[str, object]:
     return {
         "title": "一针一线的苗绣故事",
         "summary": "记录材料、针法与传承人的工作过程，并保留事实来源。",
+        "body": "这是经来源支持的完整投稿正文，不应在发布时被简介替代。",
         "categoryId": "刺绣",
         "regionId": regions[0]["id"],
         "projectIds": [projects[0]["id"]],
@@ -327,6 +329,30 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     )
     assert retry.status_code == 200
     assert retry.json()["version"] == 3
+    image_upload = client.put(
+        f"/api/community/submissions/{submission_id}/assets",
+        headers={
+            **creator_headers,
+            "Content-Type": "image/png",
+            "Idempotency-Key": "upload-c2-real-image-1",
+            "X-Upload-Filename": "cover.png",
+            "X-Upload-Kind": "image",
+        },
+        params={"expected_version": 3},
+        content=SMALL_PNG,
+    )
+    assert image_upload.status_code == 200
+    image_asset = image_upload.json()["assets"][1]
+    reordered = client.patch(
+        f"/api/community/submissions/{submission_id}",
+        headers=creator_headers,
+        json={
+            "expected_version": 4,
+            "assetOrder": [image_asset["id"], media_asset["id"]],
+        },
+    )
+    assert reordered.status_code == 200
+    assert reordered.json()["assetOrder"] == [image_asset["id"], media_asset["id"]]
     stale = client.patch(
         f"/api/community/submissions/{submission_id}",
         headers=creator_headers,
@@ -337,13 +363,13 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     checking = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=creator_headers,
-        json={"expected_version": 3, "status": "checking"},
+        json={"expected_version": 5, "status": "checking"},
     )
     assert checking.status_code == 200
     submitted = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=creator_headers,
-        json={"expected_version": 4, "status": "submitted"},
+        json={"expected_version": 6, "status": "submitted"},
     )
     assert submitted.status_code == 200
 
@@ -351,7 +377,7 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     self_review = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=creator_headers,
-        json={"expected_version": 5, "status": "reviewing"},
+        json={"expected_version": 7, "status": "reviewing"},
     )
     assert self_review.status_code == 403
 
@@ -361,14 +387,14 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     reviewing = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=reviewer_headers,
-        json={"expected_version": 5, "status": "reviewing"},
+        json={"expected_version": 7, "status": "reviewing"},
     )
     assert reviewing.status_code == 200
     approved = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=reviewer_headers,
         json={
-            "expected_version": 6,
+            "expected_version": 8,
             "status": "approved",
             "reviewer_note": "来源与披露已核对。",
         },
@@ -378,7 +404,7 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     reviewer_publish = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=reviewer_headers,
-        json={"expected_version": 7, "status": "published"},
+        json={"expected_version": 9, "status": "published"},
     )
     assert reviewer_publish.status_code == 409
 
@@ -387,10 +413,10 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     published = client.post(
         f"/api/community/submissions/{submission_id}/transition",
         headers=_headers(admin_id),
-        json={"expected_version": 7, "status": "published"},
+        json={"expected_version": 9, "status": "published"},
     )
     assert published.status_code == 200
-    assert published.json()["version"] == 8
+    assert published.json()["version"] == 10
     playback = client.get(f"/api/community/media/{media_asset['id']}")
     assert playback.status_code == 200
     assert playback.headers["content-type"].startswith("video/mp4")
@@ -400,6 +426,24 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     )
     assert partial.status_code == 206
     assert partial.content == SMALL_MP4[:8]
+
+    projection = community.get_entity(WORKSPACE, "content", f"content-{submission_id}")
+    assert projection is not None
+    stale_payload = dict(projection["payload_json"])
+    stale_payload["body"] = "中断后遗留的旧投影"
+    stale_payload["submissionVersion"] = 9
+    community.save_entity(
+        WORKSPACE,
+        "content",
+        f"content-{submission_id}",
+        str(projection["slug"]),
+        str(projection["title"]),
+        "published",
+        "creator_submission",
+        stale_payload,
+        str(projection["created_at"]),
+        str(projection["updated_at"]),
+    )
 
     creator_snapshot = client.get(
         "/api/community/bootstrap", headers=creator_headers
@@ -413,8 +457,13 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
         for item in creator_snapshot["contents"]
         if item["id"] == f"content-{submission_id}"
     )
-    assert published_content["media"][0]["id"] == media_asset["id"]
-    assert published_content["media"][0]["url"] == (
+    assert published_content["body"] == "这是经来源支持的完整投稿正文，不应在发布时被简介替代。"
+    assert [item["id"] for item in published_content["media"]] == [
+        image_asset["id"], media_asset["id"]
+    ]
+    assert published_content["cover"]["id"] == image_asset["id"]
+    assert published_content["media"][1]["id"] == media_asset["id"]
+    assert published_content["media"][1]["url"] == (
         f"/api/backend/api/community/media/{media_asset['id']}"
     )
     assert any(
@@ -426,7 +475,21 @@ def test_submission_versions_roles_audit_publish_and_notification_close_the_loop
     )
     assert audited.status_code == 200
     assert [event["to_status"] for event in audited.json()["events"]][-1] == "published"
-    assert len(community.list_submission_events(submission_id, WORKSPACE)) == 8
+    assert len(community.list_submission_events(submission_id, WORKSPACE)) == 10
+
+
+def test_article_submission_requires_a_real_body_before_review() -> None:
+    payload = {
+        "submissionType": "article",
+        "title": "图文投稿",
+        "summary": "摘要",
+        "body": "",
+        "projectIds": ["project-demo"],
+        "sourceIds": ["source-demo"],
+        "assets": [{"id": "asset-demo", "localOnly": False}],
+    }
+    with pytest.raises(CommunityValidationError, match="图文正文"):
+        CommunityService._assert_submission_complete(payload)
 
 
 def test_media_upload_rejects_spoofed_content_and_unauthorized_users(
