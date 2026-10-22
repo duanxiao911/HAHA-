@@ -14,12 +14,14 @@ import {
   AUTH_REQUIRED,
   BusinessRole,
   clearUserCenterHistory,
+  changeAccountPassword,
   completeIdentityTask,
   deleteUserCenterNotification,
   getAuthSessionSnapshot,
   getIdentityWorkbench,
   getServerAuthSessionSnapshot,
   getUserCenter,
+  exportUserCenterData,
   initializeAuthSession,
   listAccountSessions,
   logoutAccount,
@@ -50,6 +52,11 @@ type ConfirmationRequest = {
 };
 
 const centerViews = new Set<CenterView>(["today", "archive", "workbench", "tasks", "settings"]);
+const legacyViewAliases: Record<string, CenterView> = {
+  assets: "archive",
+  notifications: "tasks",
+  security: "settings",
+};
 
 const professionalRoles = new Set<BusinessRole>([
   "creator", "contributor", "seller",
@@ -91,6 +98,9 @@ export function IdentityCenter() {
   const [account, setAccount] = useState<UserCenterSnapshot["account"] | null>(null);
   const [preferences, setPreferences] = useState<UserCenterSnapshot["preferences"] | null>(null);
   const [sessions, setSessions] = useState<AccountSession[]>([]);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const requestedView = searchParams.get("tab");
@@ -98,7 +108,9 @@ export function IdentityCenter() {
   const identityManagerVisible = identityManagerOpen || roleManagerRequested;
   const routeView = requestedView && centerViews.has(requestedView as CenterView)
     ? requestedView as CenterView
-    : "today";
+    : requestedView && legacyViewAliases[requestedView]
+      ? legacyViewAliases[requestedView]
+      : "today";
   const view = routeView === "workbench" && snapshot && !professionalRoles.has(snapshot.profile.active_role)
     ? "today"
     : routeView;
@@ -218,6 +230,32 @@ export function IdentityCenter() {
     setApplyRole(""); setReason("");
   }
 
+  async function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (newPassword !== confirmPassword) {
+      setError("两次输入的新密码不一致。");
+      return;
+    }
+    const success = await run("change-password", async () => {
+      await changeAccountPassword(currentPassword, newPassword);
+      await logoutAccount();
+    }, "密码已更新，所有设备需要重新登录。", false);
+    if (success) router.push("/login?reason=password-changed");
+  }
+
+  async function downloadAccountExport() {
+    await run("account-export", async () => {
+      const data = await exportUserCenterData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `haha-account-export-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    }, "个人数据导出已生成。", false);
+  }
+
   if (AUTH_REQUIRED && authState === "unknown") {
     return <ProductFrame><StateNotice kind="loading" title="正在验证安全会话" description="令牌由同源服务端安全保存，浏览器脚本不可读取。" /></ProductFrame>;
   }
@@ -306,6 +344,9 @@ export function IdentityCenter() {
       <div className="identitySectionHeading"><div><small>ACCOUNT & PRIVACY</small><h2>账户资料与隐私</h2><p>画像、推荐、通知和历史均可独立关闭。</p></div></div>
       <form className="identitySettingsForm" onSubmit={(event) => { event.preventDefault(); void run("profile", () => updateUserCenterProfile(account), "账户资料已保存。"); }}><label>显示名称<input value={account.display_name} maxLength={50} required onChange={(event) => setAccount({ ...account, display_name: event.target.value })} /></label><label>所在地区<input value={account.region} maxLength={100} onChange={(event) => setAccount({ ...account, region: event.target.value })} /></label><label>个人简介<textarea value={account.bio} maxLength={300} onChange={(event) => setAccount({ ...account, bio: event.target.value })} /></label><label>资料可见范围<select value={account.profile_visibility} onChange={(event) => setAccount({ ...account, profile_visibility: event.target.value as typeof account.profile_visibility })}><option value="private">仅自己</option><option value="members">平台成员</option><option value="public">公开</option></select></label><button className="productButton" type="submit">保存账户资料</button></form>
       <form className="identitySettingsForm" onSubmit={(event) => { event.preventDefault(); void run("preferences", () => updateUserCenterPreferences(preferences), "体验偏好已保存。"); }}>{([["history_enabled", "保存观看历史"], ["recommendation_enabled", "允许内容推荐"], ["personalization_enabled", "允许跨板块个性化"], ["notification_enabled", "接收站内通知"]] as [keyof typeof preferences, string][]).map(([key, label]) => <label className="identityToggle" key={key}><input type="checkbox" checked={preferences[key]} onChange={(event) => setPreferences({ ...preferences, [key]: event.target.checked })} /><span>{label}</span></label>)}<button className="productButtonSecondary" type="submit">保存体验偏好</button></form>
+      {AUTH_REQUIRED ? <><div className="identitySectionHeading"><div><small>ACCOUNT SECURITY</small><h2>修改登录密码</h2><p>验证当前密码后更新；成功时会撤销所有设备的会话，防止旧令牌继续使用。</p></div></div><form className="identitySettingsForm" onSubmit={(event) => void submitPasswordChange(event)}><label>当前密码<input type="password" autoComplete="current-password" minLength={1} maxLength={256} required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label><label>新密码<input type="password" autoComplete="new-password" minLength={12} maxLength={256} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label><label>确认新密码<input type="password" autoComplete="new-password" minLength={12} maxLength={256} required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label><button className="productButton" type="submit" disabled={Boolean(busy)}>{busy === "change-password" ? "正在更新…" : "更新密码并退出所有设备"}</button></form><div className="identityBoundaryNote"><strong>忘记密码找回尚未开放</strong><p>平台尚未接入可信邮件发送与送达监控，因此不会显示虚假的“邮件已发送”。接入邮件服务并完成令牌、防枚举、限流和送达验收后再开放。</p></div></> : null}
+      <div className="identitySectionHeading"><div><small>DATA PORTABILITY</small><h2>下载个人数据</h2><p>导出当前个人空间的资料、收藏、学习成长摘要、消息与脱敏会话元数据；不包含密码、令牌和内部风控记录。</p></div><button className="productButtonSecondary" type="button" disabled={Boolean(busy)} onClick={() => void downloadAccountExport()}>{busy === "account-export" ? "正在生成…" : "下载 JSON 导出"}</button></div>
+      <div className="identityBoundaryNote"><strong>账户删除需要单独治理</strong><p>订单、审核记录、文化投稿和法定留存范围尚未获批，因此当前不提供“一键物理删除”。这不是可用按钮缺失，而是防止误删和审计断链的安全门禁。</p></div>
       <div className="identitySectionHeading"><div><small>SECURE SESSIONS</small><h2>登录设备与会话</h2><p>撤销后，对应访问令牌会立即失效。会话列表不包含任何令牌或密码。</p></div>{sessions.some((item) => item.status === "active") ? <button className="productButtonDanger" type="button" onClick={() => setConfirmation({ title: "退出全部设备？", description: "所有有效会话都会立即失效，包括当前设备；完成后需要重新登录。", confirmLabel: "退出全部设备", actionKey: "revoke-all", action: async () => { await revokeAllAccountSessions(); await logoutAccount(); }, message: "所有登录会话已撤销。", reload: false, onSuccess: () => router.push("/login") })}>退出全部设备</button> : null}</div>
       {sessions.length ? <ul className="identityTaskList" data-testid="account-session-list">{sessions.map((session) => <li className={session.status === "active" ? "open" : "completed"} key={session.id}><div><span>{session.is_current ? "当前会话" : "其他会话"} · {session.status === "active" ? "有效" : session.status === "expired" ? "已过期" : "已撤销"}</span><h3>{session.id.slice(0, 20)}…</h3><p>最近使用：{new Date(session.last_used_at).toLocaleString("zh-CN")} · 到期：{new Date(session.expires_at).toLocaleString("zh-CN")}</p></div>{session.status === "active" ? <button className={session.is_current ? "productButtonDanger" : "productButtonSecondary"} type="button" onClick={() => setConfirmation({ title: session.is_current ? "退出当前会话？" : "撤销这条会话？", description: session.is_current ? "当前设备会立即退出，并返回登录页。" : "此会话会立即失效；对应设备需要重新登录。", confirmLabel: session.is_current ? "退出当前会话" : "撤销会话", actionKey: `revoke-${session.id}`, action: async () => { await revokeAccountSession(session.id); if (session.is_current) await logoutAccount(); else setSessions((items) => items.map((item) => item.id === session.id ? { ...item, status: "revoked" } : item)); }, message: session.is_current ? "当前会话已退出。" : "该会话已撤销。", reload: !session.is_current, onSuccess: session.is_current ? () => router.push("/login") : undefined })}>{session.is_current ? "退出此设备" : "撤销会话"}</button> : null}</li>)}</ul> : <p>当前没有可显示的服务端会话。</p>}
     </section> : null}

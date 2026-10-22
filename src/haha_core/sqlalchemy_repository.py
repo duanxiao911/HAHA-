@@ -833,6 +833,22 @@ class SQLAlchemyCreatorRepository:
             )
         return AuthCredential(**row) if row else None
 
+    def get_auth_credential_by_user(
+        self, user_id: str, workspace_id: str
+    ) -> AuthCredential | None:
+        with self.engine.connect() as connection:
+            row = (
+                connection.execute(
+                    select(auth_credentials).where(
+                        auth_credentials.c.user_id == user_id,
+                        auth_credentials.c.workspace_id == workspace_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return AuthCredential(**row) if row else None
+
     def create_personal_account(
         self, credential: AuthCredential, *, workspace_name: str, display_name: str
     ) -> bool:
@@ -895,6 +911,39 @@ class SQLAlchemyCreatorRepository:
                 else auth_credentials.insert()
             )
             connection.execute(query.values(**values))
+
+    def change_password_and_revoke_sessions(
+        self, credential: AuthCredential, revoked_at: str
+    ) -> int:
+        with self.engine.begin() as connection:
+            updated = connection.execute(
+                auth_credentials.update()
+                .where(
+                    auth_credentials.c.user_id == credential.user_id,
+                    auth_credentials.c.workspace_id == credential.workspace_id,
+                    auth_credentials.c.status == "active",
+                )
+                .values(
+                    password_salt=credential.password_salt,
+                    password_hash=credential.password_hash,
+                    password_iterations=credential.password_iterations,
+                    failed_attempts=0,
+                    locked_until="",
+                    updated_at=credential.updated_at,
+                )
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError("账户凭据不可用")
+            revoked = connection.execute(
+                auth_sessions.update()
+                .where(
+                    auth_sessions.c.user_id == credential.user_id,
+                    auth_sessions.c.workspace_id == credential.workspace_id,
+                    auth_sessions.c.revoked_at == "",
+                )
+                .values(revoked_at=revoked_at, last_used_at=revoked_at)
+            )
+            return int(revoked.rowcount)
 
     def get_auth_session(self, session_id: str) -> AuthSession | None:
         with self.engine.connect() as connection:

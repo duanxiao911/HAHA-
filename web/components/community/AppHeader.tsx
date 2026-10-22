@@ -113,7 +113,7 @@ export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
       <button type="submit" aria-label="提交搜索"><SearchIcon /></button>
     </form>
     <nav className="productUtilityNav" aria-label="账户功能">
-      <Link className="productMessageAction" href="/notifications" aria-label="消息与通知" aria-current={pathMatches(pathname, "/notifications") ? "page" : undefined}><MessageIcon /><span>消息</span></Link>
+      <Link className="productMessageAction" href="/identity?tab=tasks" aria-label="消息与任务"><MessageIcon /><span>消息</span></Link>
       <div className="productIdentityMenu" ref={identityMenuRef}>
         {signedIn || !AUTH_REQUIRED ? <button className="productIdentityTrigger" ref={identityTriggerRef} type="button" aria-haspopup="menu" aria-expanded={identityMenuOpen} aria-controls="product-identity-menu" onClick={() => setIdentityMenuOpen((open) => !open)}>
           <span className="productIdentityAvatar" aria-hidden="true">{displayName.slice(0, 1).toUpperCase()}</span><span className="productIdentityCopy"><small>我的 HAHA</small><strong>{displayName}</strong></span><b aria-hidden="true">⌄</b>
@@ -122,9 +122,9 @@ export function AppHeader({ initialQuery = "", demoLabel }: AppHeaderProps) {
           <div className="productIdentityPopoverHead"><small>当前账户</small><strong>{displayName}</strong></div>
           <div className="productIdentityPopoverHint" role="presentation"><strong>专业工作台</strong><span>{professionalSummary}</span></div>
           <Link role="menuitem" href={DEMO_MODE ? "/profile/demo-user" : "/identity"} onClick={() => setIdentityMenuOpen(false)}>{DEMO_MODE ? "查看本地演示档案" : "用户中心"}</Link>
-          {!DEMO_MODE ? <Link role="menuitem" href="/identity?tab=assets" onClick={() => setIdentityMenuOpen(false)}>我的内容</Link> : null}
+          {!DEMO_MODE ? <Link role="menuitem" href="/identity?tab=archive" onClick={() => setIdentityMenuOpen(false)}>我的内容</Link> : null}
           {!DEMO_MODE ? <Link role="menuitem" href="/identity?manage=roles" onClick={() => setIdentityMenuOpen(false)}>专业工作台</Link> : null}
-          <Link role="menuitem" href="/notifications" onClick={() => setIdentityMenuOpen(false)}>消息与通知</Link>
+          <Link role="menuitem" href="/identity?tab=tasks" onClick={() => setIdentityMenuOpen(false)}>消息与任务</Link>
           {!DEMO_MODE ? <Link role="menuitem" href="/identity?tab=settings" onClick={() => setIdentityMenuOpen(false)}>设置与安全</Link> : null}
         </div> : null}
       </div>

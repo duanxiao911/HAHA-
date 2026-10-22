@@ -214,6 +214,12 @@ class AuthRefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=40, max_length=300)
 
 
+class AuthPasswordChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
 class CommunityHistoryUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     progress_seconds: int = Field(default=0, ge=0, le=86400)
@@ -1093,11 +1099,74 @@ def create_app(
             )
         }
 
+    @application.post("/api/auth/password/change")
+    def change_auth_password(
+        payload: AuthPasswordChangeRequest,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            revoked = auth_service.change_password(
+                user_id=principal.user_id,
+                workspace_id=principal.workspace_id,
+                **payload.model_dump(),
+            )
+        except InvalidCredentialsError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except AccountLockedError as exc:
+            raise HTTPException(
+                status_code=429, detail=str(exc), headers={"Retry-After": "900"}
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        metrics.add("haha_auth_password_changes_total")
+        return {
+            "changed": True,
+            "revoked_sessions": revoked,
+            "requires_login": True,
+        }
+
     @application.get("/api/user-center")
     def get_user_center(
         principal: Principal = Depends(resolve_membership),
     ) -> dict[str, object]:
         return user_center_service.bootstrap(principal.user_id, principal.workspace_id)
+
+    @application.get("/api/user-center/export")
+    def export_user_center_data(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        snapshot = user_center_service.bootstrap(
+            principal.user_id, principal.workspace_id
+        )
+        credential = repository.get_auth_credential_by_user(
+            principal.user_id, principal.workspace_id
+        )
+        sessions = auth_service.list_sessions(
+            user_id=principal.user_id,
+            workspace_id=principal.workspace_id,
+            current_session_id=principal.session_id,
+        )
+        return {
+            "schema_version": "haha-account-export.v1",
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "account": {
+                "user_id": principal.user_id,
+                "workspace_id": principal.workspace_id,
+                "email": credential.email if credential else "",
+                "credential_status": credential.status if credential else "unknown",
+            },
+            "user_center": snapshot,
+            "security": {
+                "sessions": sessions,
+                "password_hashes_included": False,
+                "refresh_tokens_included": False,
+                "internal_audit_included": False,
+            },
+            "scope_note": (
+                "本导出包含当前个人空间中的用户中心、身份、学习成长摘要和会话元数据；"
+                "不包含密码、令牌、内部风控审计或其他账户数据。"
+            ),
+        }
 
     @application.patch("/api/user-center/profile")
     def update_user_center_profile(

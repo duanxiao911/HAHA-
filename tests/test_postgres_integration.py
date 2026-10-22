@@ -10,7 +10,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from haha_auth.service import AccountRegistrationError, AuthService, InvalidRefreshTokenError
+from haha_auth.service import (
+    AccountRegistrationError,
+    AuthService,
+    InvalidCredentialsError,
+    InvalidRefreshTokenError,
+)
 from haha_commerce.domain import CommerceConflictError, ShoppingAdvisorInteraction
 from haha_commerce.service import CommerceService
 from haha_commerce.sqlalchemy_repository import SQLAlchemyCommerceRepository
@@ -550,6 +555,45 @@ def test_postgres_refresh_rotation_is_atomic(repository) -> None:
     with ThreadPoolExecutor(max_workers=2) as executor:
         outcomes = list(executor.map(lambda _: refresh_once(), range(2)))
     assert sorted(outcomes) == ["rejected", "rotated"]
+
+
+def test_postgres_password_change_and_session_revocation_are_atomic(repository) -> None:
+    auth = AuthService(repository)
+    auth.bootstrap_account(
+        user_id="pg-password-user",
+        workspace_id="pg-password-workspace",
+        email="pg-password@haha.local",
+        password="Postgres-Original-Password-2026",
+        role="owner",
+    )
+    first = auth.login(
+        email="pg-password@haha.local",
+        password="Postgres-Original-Password-2026",
+    )
+    second = auth.login(
+        email="pg-password@haha.local",
+        password="Postgres-Original-Password-2026",
+    )
+    revoked = auth.change_password(
+        user_id="pg-password-user",
+        workspace_id="pg-password-workspace",
+        current_password="Postgres-Original-Password-2026",
+        new_password="Postgres-Replacement-Password-2026",
+    )
+    assert revoked == 2
+    with pytest.raises(InvalidRefreshTokenError):
+        auth.refresh(str(first["refresh_token"]))
+    with pytest.raises(InvalidRefreshTokenError):
+        auth.refresh(str(second["refresh_token"]))
+    with pytest.raises(InvalidCredentialsError):
+        auth.login(
+            email="pg-password@haha.local",
+            password="Postgres-Original-Password-2026",
+        )
+    assert auth.login(
+        email="pg-password@haha.local",
+        password="Postgres-Replacement-Password-2026",
+    )["account"]["user_id"] == "pg-password-user"
 
 
 def test_postgres_public_registration_is_transactional_unique_and_restorable(

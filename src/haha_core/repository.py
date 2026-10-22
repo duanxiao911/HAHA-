@@ -576,6 +576,16 @@ class SQLiteCreatorRepository:
             ).fetchone()
         return AuthCredential(**dict(row)) if row else None
 
+    def get_auth_credential_by_user(
+        self, user_id: str, workspace_id: str
+    ) -> AuthCredential | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM auth_credentials WHERE user_id = ? AND workspace_id = ?",
+                (user_id, workspace_id),
+            ).fetchone()
+        return AuthCredential(**dict(row)) if row else None
+
     def create_personal_account(
         self, credential: AuthCredential, *, workspace_name: str, display_name: str
     ) -> bool:
@@ -637,6 +647,33 @@ class SQLiteCreatorRepository:
                        locked_until=excluded.locked_until, updated_at=excluded.updated_at""",
                 tuple(asdict(credential).values()),
             )
+
+    def change_password_and_revoke_sessions(
+        self, credential: AuthCredential, revoked_at: str
+    ) -> int:
+        with closing(self._connect()) as connection, connection:
+            result = connection.execute(
+                """UPDATE auth_credentials SET
+                       password_salt = ?, password_hash = ?, password_iterations = ?,
+                       failed_attempts = 0, locked_until = '', updated_at = ?
+                   WHERE user_id = ? AND workspace_id = ? AND status = 'active'""",
+                (
+                    credential.password_salt,
+                    credential.password_hash,
+                    credential.password_iterations,
+                    credential.updated_at,
+                    credential.user_id,
+                    credential.workspace_id,
+                ),
+            )
+            if result.rowcount != 1:
+                raise RuntimeError("账户凭据不可用")
+            revoked = connection.execute(
+                """UPDATE auth_sessions SET revoked_at = ?, last_used_at = ?
+                   WHERE user_id = ? AND workspace_id = ? AND revoked_at = ''""",
+                (revoked_at, revoked_at, credential.user_id, credential.workspace_id),
+            )
+            return int(revoked.rowcount)
 
     def get_auth_session(self, session_id: str) -> AuthSession | None:
         with closing(self._connect()) as connection:

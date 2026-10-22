@@ -212,6 +212,21 @@ export async function revokeAllAccountSessions(): Promise<number> {
   return result.revoked;
 }
 
+export async function changeAccountPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ changed: boolean; revoked_sessions: number; requires_login: boolean }> {
+  return request("/api/auth/password/change", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
+export async function exportUserCenterData(): Promise<Record<string, unknown>> {
+  return request("/api/user-center/export", { headers: headers() });
+}
+
 export type RunResult = {
   id: string;
   status: string;

@@ -69,4 +69,10 @@ test("account center separates ordinary capabilities from professional workbench
   assert.match(source, /const professionalRoles = new Set<BusinessRole>\(\[\s*"creator", "contributor", "seller",\s*\]\)/);
   assert.match(source, /searchParams\.get\("manage"\) === "roles"/);
   assert.match(source, /confirmLabel: "确认开通"/);
+  assert.match(source, /assets: "archive"/);
+  assert.match(source, /忘记密码找回尚未开放/);
+  assert.match(source, /下载 JSON 导出/);
+  assert.doesNotMatch(read("components/community/AppHeader.tsx"), /tab=assets/);
+  assert.match(read("components/community/AppHeader.tsx"), /identity\?tab=tasks/);
+  assert.doesNotMatch(read("components/community/AppHeader.tsx"), /href="\/notifications"/);
 });

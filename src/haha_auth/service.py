@@ -213,6 +213,78 @@ class AuthService:
         self._audit(user_id, workspace_id, "auth.sessions.revoked_all", {"count": count})
         return count
 
+    def change_password(
+        self,
+        *,
+        user_id: str,
+        workspace_id: str,
+        current_password: str,
+        new_password: str,
+    ) -> int:
+        credential = self.repository.get_auth_credential_by_user(
+            user_id, workspace_id
+        )
+        if not credential or credential.status != "active":
+            raise InvalidCredentialsError("当前密码不正确")
+        if (
+            credential.locked_until
+            and datetime.fromisoformat(credential.locked_until) > _now()
+        ):
+            raise AccountLockedError("密码验证尝试过多，请稍后再试")
+        supplied = hashlib.pbkdf2_hmac(
+            "sha256",
+            current_password.encode(),
+            base64.urlsafe_b64decode(credential.password_salt),
+            credential.password_iterations,
+        )
+        if not hmac.compare_digest(
+            base64.urlsafe_b64decode(credential.password_hash), supplied
+        ):
+            attempts = credential.failed_attempts + 1
+            locked_until = (
+                _iso(_now() + timedelta(seconds=self.lock_seconds))
+                if attempts >= self.lock_threshold
+                else ""
+            )
+            self.repository.save_auth_credential(
+                replace(
+                    credential,
+                    failed_attempts=attempts,
+                    locked_until=locked_until,
+                    updated_at=_iso(_now()),
+                )
+            )
+            self._audit(
+                user_id,
+                workspace_id,
+                "auth.password_change.rejected",
+                {"failed_attempts": attempts},
+            )
+            if locked_until:
+                raise AccountLockedError("密码验证尝试过多，请稍后再试")
+            raise InvalidCredentialsError("当前密码不正确")
+        self._validate_password(new_password)
+        if hmac.compare_digest(current_password.encode(), new_password.encode()):
+            raise ValueError("新密码不能与当前密码相同")
+        now = _iso(_now())
+        replacement = self._credential(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            email=credential.email,
+            password=new_password,
+            created_at=credential.created_at,
+        )
+        revoked = self.repository.change_password_and_revoke_sessions(
+            replacement, now
+        )
+        self._audit(
+            user_id,
+            workspace_id,
+            "auth.password.changed",
+            {"revoked_sessions": revoked},
+        )
+        return revoked
+
     def _new_session(self, user_id: str, workspace_id: str, role: str) -> dict[str, object]:
         now = _now()
         secret = secrets.token_urlsafe(48)

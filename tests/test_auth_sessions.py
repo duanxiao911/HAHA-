@@ -142,6 +142,103 @@ def test_login_error_does_not_reveal_account_existence(monkeypatch: pytest.Monke
     assert wrong_password.json()["detail"] == missing_account.json()["detail"]
 
 
+def test_password_change_verifies_current_password_and_revokes_every_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HAHA_ENVIRONMENT", "development")
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", "password-change-test-secret-long-enough-2026")
+    monkeypatch.setenv("HAHA_PASSWORD_PBKDF2_ITERATIONS", "1000")
+    repository = SQLiteCreatorRepository(":memory:")
+    auth = AuthService(repository)
+    auth.bootstrap_account(
+        user_id="password-user",
+        workspace_id="password-workspace",
+        email="password@haha.local",
+        password="Original-Password-2026",
+        role="owner",
+    )
+    client = TestClient(create_app(repository))
+    first = client.post(
+        "/api/auth/login",
+        json={"email": "password@haha.local", "password": "Original-Password-2026"},
+    ).json()
+    second = client.post(
+        "/api/auth/login",
+        json={"email": "password@haha.local", "password": "Original-Password-2026"},
+    ).json()
+    headers = {"Authorization": f"Bearer {first['access_token']}"}
+
+    rejected = client.post(
+        "/api/auth/password/change",
+        headers=headers,
+        json={"current_password": "wrong", "new_password": "Replacement-Password-2026"},
+    )
+    assert rejected.status_code == 401
+    assert client.get("/api/auth/me", headers=headers).status_code == 200
+
+    changed = client.post(
+        "/api/auth/password/change",
+        headers=headers,
+        json={
+            "current_password": "Original-Password-2026",
+            "new_password": "Replacement-Password-2026",
+        },
+    )
+    assert changed.status_code == 200
+    assert changed.json()["revoked_sessions"] == 2
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+    assert client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {second['access_token']}"},
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login",
+        json={"email": "password@haha.local", "password": "Original-Password-2026"},
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login",
+        json={"email": "password@haha.local", "password": "Replacement-Password-2026"},
+    ).status_code == 200
+
+
+def test_account_export_is_owner_scoped_and_excludes_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HAHA_ENVIRONMENT", "development")
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", "account-export-test-secret-long-enough-2026")
+    monkeypatch.setenv("HAHA_PASSWORD_PBKDF2_ITERATIONS", "1000")
+    repository = SQLiteCreatorRepository(":memory:")
+    AuthService(repository).bootstrap_account(
+        user_id="export-user",
+        workspace_id="export-workspace",
+        email="export@haha.local",
+        password="Export-Password-2026",
+        role="owner",
+    )
+    client = TestClient(create_app(repository))
+    session = client.post(
+        "/api/auth/login",
+        json={"email": "export@haha.local", "password": "Export-Password-2026"},
+    ).json()
+    exported = client.get(
+        "/api/user-center/export",
+        headers={"Authorization": f"Bearer {session['access_token']}"},
+    )
+    assert exported.status_code == 200
+    payload = exported.json()
+    assert payload["schema_version"] == "haha-account-export.v1"
+    assert payload["account"]["email"] == "export@haha.local"
+    assert payload["account"]["user_id"] == "export-user"
+    encoded = json.dumps(payload)
+    assert '"password_hash":' not in encoded
+    assert "password_salt" not in encoded
+    assert "password_iterations" not in encoded
+    assert str(session["refresh_token"]) not in encoded
+    assert payload["security"]["password_hashes_included"] is False
+
+
 def test_public_registration_creates_one_personal_account_and_logs_in_without_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

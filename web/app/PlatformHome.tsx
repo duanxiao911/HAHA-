@@ -129,7 +129,7 @@ export function PlatformHome() {
         {loading ? <div className="platformTodayLoading" aria-busy="true"><i /><i /><i /></div> : null}
         {!loading && snapshot ? <>
           <Link href="/identity?tab=tasks"><b>{snapshot.summary.open_tasks}</b><span>待处理任务</span><em>查看 →</em></Link>
-          <Link href="/notifications"><b>{snapshot.summary.unread_notifications}</b><span>未读消息</span><em>查看 →</em></Link>
+          <Link href="/identity?tab=tasks"><b>{snapshot.summary.unread_notifications}</b><span>未读消息</span><em>查看 →</em></Link>
           <Link href="/learning"><b>{snapshot.growth.achievements}</b><span>学习成就</span><em>继续 →</em></Link>
         </> : null}
         {!loading && !snapshot && !error ? <p className="platformTodayEmpty">{DEMO_MODE ? "本地演示不伪造账户任务、通知或成长记录。" : "登录后显示当前账户的真实任务、通知和成长状态。"}</p> : null}

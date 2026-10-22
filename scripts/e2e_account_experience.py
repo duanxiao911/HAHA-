@@ -24,6 +24,7 @@ WEB_URL = os.getenv("HAHA_E2E_WEB_URL", "http://127.0.0.1:3000").rstrip("/")
 DEBUG_PORT = int(os.getenv("HAHA_ACCOUNT_E2E_DEBUG_PORT", "9368"))
 EMAIL = f"account-e2e-{uuid4().hex[:12]}@haha.local"
 PASSWORD = "Account-E2E-Strong-Password-2026"
+REPLACEMENT_PASSWORD = "Account-E2E-Replacement-Password-2026"
 
 
 def find_chrome() -> Path:
@@ -193,6 +194,47 @@ async def run(websocket_url: str) -> dict[str, Any]:
         body = await wait_for("ACTIVE ROLE WORKBENCH")
         assertions["workbench_context_survives_refresh"] = "创作者工作台" in body
         await shot("creator-workbench-restored.png")
+
+        body = await navigate("/identity?tab=assets", "DURABLE CULTURAL ASSETS")
+        assertions["legacy_assets_deep_link_resolves"] = "收藏与想学" in body
+        body = await navigate("/identity?tab=settings", "ACCOUNT & PRIVACY")
+        assertions["recovery_boundary_is_honest"] = (
+            "忘记密码找回尚未开放" in body
+            and "账户删除需要单独治理" in body
+        )
+        export_result = await evaluate("""(async () => {
+          const response=await fetch('/api/backend/api/user-center/export',{cache:'no-store'});
+          const payload=await response.json();
+          const encoded=JSON.stringify(payload);
+          return {status:response.status,schema:payload.schema_version,
+            noPassword:!encoded.includes('"password_hash":'),
+            noRefresh:!encoded.includes('haha_refresh')};
+        })()""")
+        assertions["account_export_is_scoped"] = (
+            export_result["status"] == 200
+            and export_result["schema"] == "haha-account-export.v1"
+            and export_result["noPassword"]
+            and export_result["noRefresh"]
+        )
+        await fill("input[autocomplete=current-password]", PASSWORD)
+        password_fields = await evaluate(f"""(() => {{
+          const nodes=[...document.querySelectorAll('input[autocomplete=new-password]')];
+          if(nodes.length!==2) return false;
+          for(const node of nodes){{
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(node,{json.dumps(REPLACEMENT_PASSWORD)});
+            node.dispatchEvent(new Event('input',{{bubbles:true}}));
+          }} return true;
+        }})()""")
+        assertions["password_fields_available"] = bool(password_fields)
+        assertions["password_change_submitted"] = await click("更新密码并退出所有设备")
+        body = await wait_for("密码已经更新，请使用新密码重新登录")
+        assertions["password_change_revokes_browser_session"] = "登录 HAHA" in body
+        await fill("input[type=email]", EMAIL)
+        await fill("input[autocomplete=current-password]", REPLACEMENT_PASSWORD)
+        assertions["replacement_password_login_submitted"] = await click("登录")
+        body = await wait_for("今天从这里继续")
+        assertions["replacement_password_login_succeeds"] = "非遗新朋友" in body
+        await shot("account-security-restored.png")
 
         browser_errors = [
             item for item in events
