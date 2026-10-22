@@ -537,6 +537,40 @@ def test_cancelled_run_is_idempotent_and_cannot_be_overwritten() -> None:
     assert service.execute_run(run.id).status is RunStatus.CANCELLED
 
 
+def test_script_revisions_are_immutable_reviewed_and_conflict_safe() -> None:
+    service = _service()
+    project = service.create_project(title="人工修订", workspace_id="ws-revision")
+    brief = _brief(service, project.id)
+    run, _ = service.create_run(
+        workspace_id="ws-revision", project_id=project.id,
+        brief_version_id=brief.id, model_preference="本地演示",
+        idempotency_key="revision-run-001",
+    )
+    assert service.execute_run(run.id).status is RunStatus.PASSED
+    generated = service.repository.get_script_for_run(run.id)
+    assert generated is not None
+    payload = {
+        key: generated.payload[key]
+        for key in ("title", "hook", "voiceover", "shots", "caption", "tags")
+    }
+    payload["title"] = "人工确认后的标题"
+    revision = service.create_script_revision(
+        run.id, payload=payload, expected_version=0, user_id="creator-1"
+    )
+    assert revision.version == 1
+    assert revision.review_status == "draft"
+    with pytest.raises(Exception, match="刷新"):
+        service.create_script_revision(
+            run.id, payload=payload, expected_version=0, user_id="creator-1"
+        )
+    reviewed = service.review_script_revision(
+        run.id, expected_version=1, note="已逐项核对", user_id="creator-1"
+    )
+    assert reviewed.version == 2
+    assert reviewed.review_status == "reviewed"
+    assert service.repository.get_script_for_run(run.id) == generated
+
+
 def test_passed_run_cannot_be_cancelled() -> None:
     service = _service()
     project = service.create_project(title="终态测试", workspace_id="ws-terminal")

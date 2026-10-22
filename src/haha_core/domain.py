@@ -225,3 +225,19 @@ class ScriptVersion:
     payload: dict[str, Any]
     evidence: dict[str, Any]
     created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScriptRevision:
+    id: str
+    project_id: str
+    run_id: str
+    base_script_id: str
+    version: int
+    payload: dict[str, Any]
+    review_status: str
+    review_note: str
+    created_by: str
+    created_at: str
+    updated_at: str
+    lock_version: int = 1

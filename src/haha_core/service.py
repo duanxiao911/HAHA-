@@ -15,6 +15,7 @@ from haha_core.domain import (
     Run,
     RunStatus,
     ScriptVersion,
+    ScriptRevision,
     new_id,
     utc_now,
 )
@@ -33,6 +34,10 @@ class RunNotCancellableError(ValueError):
 
 class FailedJobNotRetryableError(ValueError):
     """A failed job cannot consume another bounded retry attempt."""
+
+
+class ScriptRevisionConflictError(ValueError):
+    """The editor submitted against a stale immutable revision."""
 
 
 class _RunLeaseKeeper:
@@ -291,6 +296,70 @@ class CreatorService:
         if current:
             raise RunNotCancellableError(f"运行状态已变化，不能取消：{current.status.value}")
         raise LookupError("运行记录不存在")
+
+    def create_script_revision(
+        self, run_id: str, *, payload: dict[str, Any], expected_version: int, user_id: str
+    ) -> ScriptRevision:
+        run = self.repository.get_run(run_id)
+        if not run or run.status is not RunStatus.PASSED:
+            raise LookupError("只有已通过验收的运行可以修订")
+        base = self.repository.get_script_for_run(run_id)
+        if not base:
+            raise LookupError("原始生成版本不存在")
+        latest = self.repository.get_latest_script_revision(run_id)
+        current_version = latest.version if latest else 0
+        if expected_version != current_version:
+            raise ScriptRevisionConflictError("脚本已产生新版本，请刷新后继续编辑")
+        allowed = {"title", "hook", "voiceover", "shots", "caption", "tags"}
+        if set(payload) != allowed:
+            raise ValueError("修订内容字段不完整或包含未知字段")
+        for field in ("title", "hook", "caption"):
+            if not isinstance(payload[field], str) or not str(payload[field]).strip():
+                raise ValueError(f"{field} 不能为空")
+        for field in ("voiceover", "shots", "tags"):
+            value = payload[field]
+            if not isinstance(value, list) or not value or not all(
+                isinstance(item, str) and item.strip() for item in value
+            ):
+                raise ValueError(f"{field} 必须是非空文本列表")
+        serialized = json.dumps(payload, ensure_ascii=False)
+        if len(serialized.encode("utf-8")) > 128_000:
+            raise ValueError("修订内容超过 128KB 限制")
+        now = utc_now()
+        revision = ScriptRevision(
+            id=new_id("revision"), project_id=run.project_id, run_id=run.id,
+            base_script_id=base.id, version=current_version + 1,
+            payload=payload, review_status="draft", review_note="",
+            created_by=user_id, created_at=now, updated_at=now,
+        )
+        try:
+            self.repository.save_script_revision(revision)
+        except RepositoryConflictError as exc:
+            raise ScriptRevisionConflictError("脚本已产生新版本，请刷新后继续编辑") from exc
+        return revision
+
+    def review_script_revision(
+        self, run_id: str, *, expected_version: int, note: str, user_id: str
+    ) -> ScriptRevision:
+        latest = self.repository.get_latest_script_revision(run_id)
+        if not latest:
+            raise LookupError("尚无可复核的人工修订版本")
+        if latest.version != expected_version:
+            raise ScriptRevisionConflictError("脚本已产生新版本，请刷新后重新复核")
+        if latest.review_status == "reviewed":
+            return latest
+        now = utc_now()
+        reviewed = ScriptRevision(
+            id=new_id("revision"), project_id=latest.project_id, run_id=latest.run_id,
+            base_script_id=latest.base_script_id, version=latest.version + 1,
+            payload=latest.payload, review_status="reviewed", review_note=note.strip(),
+            created_by=user_id, created_at=now, updated_at=now,
+        )
+        try:
+            self.repository.save_script_revision(reviewed)
+        except RepositoryConflictError as exc:
+            raise ScriptRevisionConflictError("脚本已产生新版本，请刷新后重新复核") from exc
+        return reviewed
 
     def retry_failed_job(self, failed_job_id: str, workspace_id: str) -> Run:
         try:

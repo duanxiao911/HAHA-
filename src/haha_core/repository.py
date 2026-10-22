@@ -15,7 +15,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from haha_auth.domain import AuthAuditEvent, AuthCredential, AuthSession
-from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptVersion
+from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptRevision, ScriptVersion
 from haha_identity.domain import (
     IdentityAuditEvent,
     IdentityTask,
@@ -73,6 +73,8 @@ class CreatorRepository(Protocol):
 
     def get_membership_role(self, user_id: str, workspace_id: str) -> str | None: ...
 
+    def list_role_grants(self, user_id: str, workspace_id: str) -> list[RoleGrant]: ...
+
     def save_project(self, project: Project) -> None: ...
 
     def get_project(self, project_id: str) -> Project | None: ...
@@ -100,6 +102,12 @@ class CreatorRepository(Protocol):
     def save_script(self, script: ScriptVersion) -> None: ...
 
     def get_script_for_run(self, run_id: str) -> ScriptVersion | None: ...
+
+    def next_script_revision_version(self, run_id: str) -> int: ...
+
+    def save_script_revision(self, revision: ScriptRevision) -> None: ...
+
+    def get_latest_script_revision(self, run_id: str) -> ScriptRevision | None: ...
 
     def complete_run_with_script(self, run: Run, script: ScriptVersion, worker_id: str, claim_epoch: int) -> None: ...
 
@@ -501,6 +509,20 @@ class SQLiteCreatorRepository:
                     FOREIGN KEY(project_id) REFERENCES projects(id),
                     FOREIGN KEY(run_id) REFERENCES runs(id)
                 );
+                CREATE TABLE IF NOT EXISTS script_revisions (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, run_id TEXT NOT NULL,
+                    base_script_id TEXT NOT NULL, version INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL, review_status TEXT NOT NULL,
+                    review_note TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    lock_version INTEGER NOT NULL DEFAULT 1,
+                    UNIQUE(run_id, version),
+                    FOREIGN KEY(project_id) REFERENCES projects(id),
+                    FOREIGN KEY(run_id) REFERENCES runs(id),
+                    FOREIGN KEY(base_script_id) REFERENCES script_versions(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_script_revisions_run_updated
+                    ON script_revisions(run_id, updated_at);
                 CREATE TABLE IF NOT EXISTS failed_jobs (
                     id TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE, reason TEXT NOT NULL,
                     created_at TEXT NOT NULL, resolved_at TEXT NOT NULL DEFAULT '',
@@ -1999,6 +2021,47 @@ class SQLiteCreatorRepository:
             payload=json.loads(row["payload_json"]),
             evidence=json.loads(row["evidence_json"]),
             created_at=row["created_at"],
+        )
+
+    def next_script_revision_version(self, run_id: str) -> int:
+        with closing(self._connect()) as connection:
+            value = connection.execute(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM script_revisions WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+        return int(value)
+
+    def save_script_revision(self, revision: ScriptRevision) -> None:
+        try:
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    "INSERT INTO script_revisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        revision.id, revision.project_id, revision.run_id,
+                        revision.base_script_id, revision.version,
+                        json.dumps(revision.payload, ensure_ascii=False),
+                        revision.review_status, revision.review_note, revision.created_by,
+                        revision.created_at, revision.updated_at, revision.lock_version,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise RepositoryConflictError("script revision conflict") from exc
+
+    def get_latest_script_revision(self, run_id: str) -> ScriptRevision | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM script_revisions WHERE run_id = ? ORDER BY version DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return ScriptRevision(
+            id=row["id"], project_id=row["project_id"], run_id=row["run_id"],
+            base_script_id=row["base_script_id"], version=row["version"],
+            payload=json.loads(row["payload_json"]), review_status=row["review_status"],
+            review_note=row["review_note"], created_by=row["created_by"],
+            created_at=row["created_at"], updated_at=row["updated_at"],
+            lock_version=row["lock_version"],
         )
 
     def save_claimed_run(self, run: Run, worker_id: str, claim_epoch: int) -> None:

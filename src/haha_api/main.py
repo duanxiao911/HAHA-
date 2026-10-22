@@ -68,6 +68,7 @@ from haha_community.media_storage import FileSystemMediaStorage
 from haha_community.repository import CommunityRepository
 from haha_community.service import CommunityService
 from haha_core.bootstrap import build_repository, enqueue_run
+from haha_media.model_router import get_model_router
 from haha_core.domain import TERMINAL_RUN_STATUSES
 from haha_core.repository import CreatorRepository
 from haha_core.service import (
@@ -75,6 +76,7 @@ from haha_core.service import (
     FailedJobNotRetryableError,
     IdempotencyConflictError,
     RunNotCancellableError,
+    ScriptRevisionConflictError,
 )
 from haha_identity.service import (
     IdentityConflictError,
@@ -139,7 +141,22 @@ class BriefCreate(BaseModel):
 class RunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     brief_version_id: str
-    model_preference: str = "本地演示"
+    model_preference: str = Field(
+        default="本地演示",
+        pattern="^(DeepSeek-V4\\.1-Flash|DeepSeek-V4-Pro|本地演示)$",
+    )
+
+
+class ScriptRevisionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    payload: dict[str, object]
+    expected_version: int = Field(ge=0)
+
+
+class ScriptRevisionReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
+    note: str = Field(default="", max_length=2000)
 
 
 class RoleApplicationCreate(BaseModel):
@@ -568,6 +585,19 @@ def create_app(
         )
         return principal
 
+    def require_creator_access(principal: Principal) -> None:
+        if principal.role in {Role.OWNER, Role.EDITOR}:
+            return
+        grants = active_repository.list_role_grants(
+            principal.user_id, principal.workspace_id
+        )
+        if any(
+            grant.status == "active" and grant.role in {"creator", "contributor"}
+            for grant in grants
+        ):
+            return
+        raise HTTPException(status_code=403, detail="需要已激活的创作者或知识贡献者身份")
+
     def community_actor(principal: Principal) -> tuple[str, str]:
         snapshot = user_center_service.bootstrap(
             principal.user_id, principal.workspace_id
@@ -678,11 +708,46 @@ def create_app(
     def create_project(
         payload: ProjectCreate, principal: Principal = Depends(resolve_membership)
     ) -> dict[str, object]:
-        require_write_access(principal)
+        require_creator_access(principal)
         metrics.add("haha_projects_created_total")
         return asdict(
             service.create_project(title=payload.title, workspace_id=principal.workspace_id)
         )
+
+    @application.get("/api/creator/model-capabilities")
+    def creator_model_capabilities(
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        require_creator_access(principal)
+        router_status = get_model_router().status()
+        return {
+            "text_ready": router_status.text_ready,
+            "default_model": "DeepSeek-V4.1-Flash" if router_status.text_ready else "本地演示",
+            "options": [
+                {
+                    "id": "DeepSeek-V4.1-Flash",
+                    "label": "DeepSeek V4.1 Flash",
+                    "kind": "real_api",
+                    "available": router_status.text_ready,
+                    "notice": "调用真实模型并保存请求、模型、耗时与 Token 证据。",
+                },
+                {
+                    "id": "DeepSeek-V4-Pro",
+                    "label": "DeepSeek V4 Pro",
+                    "kind": "real_api",
+                    "available": router_status.text_ready,
+                    "notice": "质量优先，耗时与调用成本通常高于 Flash。",
+                },
+                {
+                    "id": "本地演示",
+                    "label": "本地规则演示（非 AI）",
+                    "kind": "deterministic_demo",
+                    "available": True,
+                    "notice": "仅执行确定性模板与知识检索，不代表模型已接通。",
+                },
+            ],
+            "generation_limit": {"max_output_tokens": 4096, "calls_per_run": 1},
+        }
 
     @application.post("/api/projects/{project_id}/briefs", status_code=status.HTTP_201_CREATED)
     def create_brief(
@@ -695,7 +760,7 @@ def create_app(
             if not project:
                 raise LookupError("项目不存在")
             require_project_access(principal, project.workspace_id)
-            require_write_access(principal)
+            require_creator_access(principal)
             return asdict(service.create_brief(project_id, **payload.model_dump()))
         except (LookupError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -713,7 +778,7 @@ def create_app(
             if not project:
                 raise ValueError("项目不存在")
             require_project_access(principal, project.workspace_id)
-            require_write_access(principal)
+            require_creator_access(principal)
             run, created = service.create_run(
                 workspace_id=principal.workspace_id,
                 project_id=project_id,
@@ -749,7 +814,82 @@ def create_app(
         result = asdict(run)
         script = active_repository.get_script_for_run(run_id)
         result["script"] = asdict(script) if script else None
+        revision = active_repository.get_latest_script_revision(run_id)
+        result["latest_revision"] = asdict(revision) if revision else None
         return result
+
+    @application.post("/api/runs/{run_id}/script-revisions", status_code=status.HTTP_201_CREATED)
+    def create_script_revision(
+        run_id: str,
+        payload: ScriptRevisionCreate,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        run = active_repository.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="运行记录不存在")
+        require_project_access(principal, run.workspace_id)
+        require_creator_access(principal)
+        try:
+            revision = service.create_script_revision(
+                run_id, payload=payload.payload,
+                expected_version=payload.expected_version, user_id=principal.user_id,
+            )
+        except ScriptRevisionConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        log_event("creator.script_revision.created", run_id=run_id, version=revision.version)
+        return asdict(revision)
+
+    @application.post("/api/runs/{run_id}/script-revisions/review")
+    def review_script_revision(
+        run_id: str,
+        payload: ScriptRevisionReview,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        run = active_repository.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="运行记录不存在")
+        require_project_access(principal, run.workspace_id)
+        require_creator_access(principal)
+        try:
+            revision = service.review_script_revision(
+                run_id, expected_version=payload.expected_version,
+                note=payload.note, user_id=principal.user_id,
+            )
+        except ScriptRevisionConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        log_event("creator.script_revision.reviewed", run_id=run_id, version=revision.version)
+        return asdict(revision)
+
+    @application.get("/api/runs/{run_id}/submission-handoff")
+    def get_submission_handoff(
+        run_id: str, principal: Principal = Depends(resolve_membership)
+    ) -> dict[str, object]:
+        run = active_repository.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="运行记录不存在")
+        require_project_access(principal, run.workspace_id)
+        require_creator_access(principal)
+        revision = active_repository.get_latest_script_revision(run_id)
+        if not revision or revision.review_status != "reviewed":
+            raise HTTPException(status_code=409, detail="完成人工修订与复核后才能进入投稿")
+        payload = revision.payload
+        return {
+            "run_id": run_id,
+            "revision_id": revision.id,
+            "revision_version": revision.version,
+            "title": payload.get("title", ""),
+            "summary": payload.get("caption") or payload.get("hook", ""),
+            "body": "\n\n".join(str(item) for item in payload.get("voiceover", [])),
+            "tags": payload.get("tags", []),
+            "ai_disclosure": "assisted",
+            "provenance": "reviewed_creator_revision",
+        }
 
     @application.get("/api/runs/{run_id}/events", response_class=StreamingResponse)
     def stream_run_events(
@@ -827,7 +967,7 @@ def create_app(
         if not project:
             raise HTTPException(status_code=404, detail="项目不存在")
         require_project_access(principal, project.workspace_id)
-        require_write_access(principal)
+        require_creator_access(principal)
         try:
             cancelled = service.cancel_run(run_id)
         except RunNotCancellableError as exc:

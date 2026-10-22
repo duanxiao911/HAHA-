@@ -235,6 +235,20 @@ export type RunResult = {
   error_message: string;
   updated_at?: string;
   script: null | { payload: JsonObject; evidence: JsonObject };
+  latest_revision?: null | ScriptRevision;
+};
+
+export type ScriptRevision = {
+  id: string; run_id: string; base_script_id: string; version: number;
+  payload: JsonObject; review_status: "draft" | "reviewed"; review_note: string;
+  created_by: string; created_at: string; updated_at: string; lock_version: number;
+};
+
+export type CreatorModelCapabilities = {
+  text_ready: boolean;
+  default_model: string;
+  options: { id: string; label: string; kind: "real_api" | "deterministic_demo"; available: boolean; notice: string }[];
+  generation_limit: { max_output_tokens: number; calls_per_run: number };
 };
 
 export type RunEvent = {
@@ -507,11 +521,15 @@ export async function createBrief(projectId: string, payload: JsonObject): Promi
   });
 }
 
-export async function createRun(projectId: string, briefId: string): Promise<{ id: string }> {
+export async function getCreatorModelCapabilities(): Promise<CreatorModelCapabilities> {
+  return request("/api/creator/model-capabilities", { headers: headers() });
+}
+
+export async function createRun(projectId: string, briefId: string, modelPreference: string): Promise<{ id: string }> {
   return request(`/api/projects/${projectId}/runs`, {
     method: "POST",
     headers: headers(crypto.randomUUID()),
-    body: JSON.stringify({ brief_version_id: briefId, model_preference: "本地演示" }),
+    body: JSON.stringify({ brief_version_id: briefId, model_preference: modelPreference }),
   });
 }
 
@@ -525,6 +543,32 @@ export async function cancelRun(runId: string): Promise<RunResult> {
     headers: headers(),
   });
   return { ...run, script: null };
+}
+
+export async function createScriptRevision(
+  runId: string, payload: JsonObject, expectedVersion: number,
+): Promise<ScriptRevision> {
+  return request(`/api/runs/${runId}/script-revisions`, {
+    method: "POST", headers: headers(),
+    body: JSON.stringify({ payload, expected_version: expectedVersion }),
+  });
+}
+
+export async function reviewScriptRevision(
+  runId: string, expectedVersion: number, note = "",
+): Promise<ScriptRevision> {
+  return request(`/api/runs/${runId}/script-revisions/review`, {
+    method: "POST", headers: headers(),
+    body: JSON.stringify({ expected_version: expectedVersion, note }),
+  });
+}
+
+export async function getCreatorSubmissionHandoff(runId: string): Promise<{
+  run_id: string; revision_id: string; revision_version: number;
+  title: string; summary: string; body: string; tags: string[];
+  ai_disclosure: "assisted"; provenance: "reviewed_creator_revision";
+}> {
+  return request(`/api/runs/${runId}/submission-handoff`, { headers: headers() });
 }
 
 export async function listFailedJobs(): Promise<{ items: FailedJob[]; count: number }> {

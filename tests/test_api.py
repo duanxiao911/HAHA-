@@ -14,6 +14,7 @@ from haha_auth.domain import AuthSession
 from haha_core.domain import RunStatus
 from haha_core.repository import SQLiteCreatorRepository
 from haha_core.service import CreatorService
+from haha_identity.service import IdentityService
 
 
 def _client(repository: SQLiteCreatorRepository | None = None) -> TestClient:
@@ -66,6 +67,17 @@ def test_sse_reconnect_header_is_allowed_by_cors() -> None:
     allowed = response.headers["access-control-allow-headers"].lower()
     assert "authorization" in allowed
     assert "last-event-id" in allowed
+
+
+def test_creator_model_capabilities_are_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    payload = _client().get("/api/creator/model-capabilities").json()
+    assert payload["text_ready"] is False
+    assert payload["default_model"] == "本地演示"
+    assert payload["generation_limit"] == {"max_output_tokens": 4096, "calls_per_run": 1}
+    local = next(option for option in payload["options"] if option["id"] == "本地演示")
+    assert local["kind"] == "deterministic_demo"
+    assert "非 AI" in local["label"]
 
 
 def test_project_brief_run_http_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -311,6 +323,24 @@ def test_viewer_cannot_write(monkeypatch) -> None:
         json={"title": "项目"},
     )
     assert response.status_code == 403
+
+
+def test_activated_creator_can_use_creator_api_without_workspace_editor_role(monkeypatch) -> None:
+    secret = "test-secret-that-is-at-least-32-characters-long"
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", secret)
+    repository = SQLiteCreatorRepository(":memory:")
+    repository.ensure_identity("user_a", "ws_a", role="viewer")
+    IdentityService(repository).activate_role("user_a", "ws_a", "creator")
+    client = _client(repository)
+    authorization = {"Authorization": f"Bearer {_jwt(secret, repository, role='viewer')}"}
+
+    capabilities = client.get("/api/creator/model-capabilities", headers=authorization)
+    project = client.post("/api/projects", headers=authorization, json={"title": "创作者项目"})
+
+    assert capabilities.status_code == 200
+    assert project.status_code == 201
+    assert repository.get_membership_role("user_a", "ws_a") == "viewer"
 
 
 def test_production_authentication_fails_closed(monkeypatch) -> None:

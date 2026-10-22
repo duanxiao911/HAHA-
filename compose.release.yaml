@@ -92,6 +92,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://haha:${POSTGRES_PASSWORD}@postgres:5432/haha
       REDIS_URL: redis://redis:6379/0
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
       HAHA_RELEASE_ID: ${HAHA_RELEASE_ID:?set HAHA_RELEASE_ID}
       HAHA_GIT_SHA: ${HAHA_GIT_SHA:?set HAHA_GIT_SHA}
     networks: [data]

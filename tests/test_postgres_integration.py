@@ -48,7 +48,7 @@ def repository() -> SQLAlchemyCreatorRepository:
     with repo.engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE script_versions, runs, brief_versions, projects, "
+                "TRUNCATE script_revisions, script_versions, runs, brief_versions, projects, "
                 "memberships, users, workspaces CASCADE"
             )
         )
@@ -91,6 +91,39 @@ def test_postgres_membership_and_concurrent_idempotency(repository) -> None:
         results = list(pool.map(lambda _: submit(), range(4)))
     assert len({run.id for run, _ in results}) == 1
     assert sum(1 for _, created in results if created) == 1
+
+
+def test_postgres_script_revision_is_durable_and_concurrent_safe(repository) -> None:
+    service, project, brief = _prepared_service(repository)
+    run, _ = service.create_run(
+        workspace_id="pg-workspace", project_id=project.id,
+        brief_version_id=brief.id, model_preference="本地演示",
+        idempotency_key="postgres-script-revision",
+    )
+    assert service.execute_run(run.id).status is RunStatus.PASSED
+    generated = repository.get_script_for_run(run.id)
+    assert generated is not None
+    payload = {
+        key: generated.payload[key]
+        for key in ("title", "hook", "voiceover", "shots", "caption", "tags")
+    }
+
+    def revise():
+        try:
+            return service.create_script_revision(
+                run.id, payload=payload, expected_version=0, user_id="pg-user"
+            )
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: revise(), range(4)))
+    winners = [item for item in results if not isinstance(item, Exception)]
+    assert len(winners) == 1
+    restored = SQLAlchemyCreatorRepository(POSTGRES_URL).get_latest_script_revision(run.id)
+    assert restored is not None
+    assert restored.id == winners[0].id
+    assert restored.version == 1
 
 
 def test_postgres_identity_roles_applications_and_context_are_durable(repository) -> None:

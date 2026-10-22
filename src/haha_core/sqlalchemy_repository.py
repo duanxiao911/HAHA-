@@ -32,7 +32,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
 from haha_auth.domain import AuthAuditEvent, AuthCredential, AuthSession
-from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptVersion
+from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptRevision, ScriptVersion
 from haha_core.repository import RepositoryConflictError
 from haha_identity.domain import (
     IdentityAuditEvent,
@@ -648,6 +648,24 @@ script_versions = Table(
     Column("payload_json", JSON, nullable=False),
     Column("evidence_json", JSON, nullable=False),
     Column("created_at", String(40), nullable=False),
+)
+
+script_revisions = Table(
+    "script_revisions",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("project_id", String(64), ForeignKey("projects.id"), nullable=False, index=True),
+    Column("run_id", String(64), ForeignKey("runs.id"), nullable=False),
+    Column("base_script_id", String(64), ForeignKey("script_versions.id"), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("payload_json", JSON, nullable=False),
+    Column("review_status", String(20), nullable=False),
+    Column("review_note", String(2000), nullable=False, server_default=""),
+    Column("created_by", String(200), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+    Column("lock_version", Integer, nullable=False, server_default="1"),
+    UniqueConstraint("run_id", "version", name="uq_script_revision_run_version"),
 )
 
 failed_jobs = Table(
@@ -2529,6 +2547,48 @@ class SQLAlchemyCreatorRepository:
             payload=row["payload_json"],
             evidence=row["evidence_json"],
             created_at=row["created_at"],
+        )
+
+    def next_script_revision_version(self, run_id: str) -> int:
+        with self.engine.connect() as connection:
+            value = connection.scalar(
+                select(func.coalesce(func.max(script_revisions.c.version), 0) + 1).where(
+                    script_revisions.c.run_id == run_id
+                )
+            )
+        return int(value or 1)
+
+    def save_script_revision(self, revision: ScriptRevision) -> None:
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(script_revisions.insert().values(
+                    id=revision.id, project_id=revision.project_id, run_id=revision.run_id,
+                    base_script_id=revision.base_script_id, version=revision.version,
+                    payload_json=revision.payload, review_status=revision.review_status,
+                    review_note=revision.review_note, created_by=revision.created_by,
+                    created_at=revision.created_at, updated_at=revision.updated_at,
+                    lock_version=revision.lock_version,
+                ))
+        except IntegrityError as exc:
+            raise RepositoryConflictError("script revision conflict") from exc
+
+    def get_latest_script_revision(self, run_id: str) -> ScriptRevision | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(script_revisions)
+                .where(script_revisions.c.run_id == run_id)
+                .order_by(script_revisions.c.version.desc())
+                .limit(1)
+            ).mappings().first()
+        if not row:
+            return None
+        return ScriptRevision(
+            id=row["id"], project_id=row["project_id"], run_id=row["run_id"],
+            base_script_id=row["base_script_id"], version=row["version"],
+            payload=row["payload_json"], review_status=row["review_status"],
+            review_note=row["review_note"], created_by=row["created_by"],
+            created_at=row["created_at"], updated_at=row["updated_at"],
+            lock_version=row["lock_version"],
         )
 
     def save_claimed_run(self, run: Run, worker_id: str, claim_epoch: int) -> None:

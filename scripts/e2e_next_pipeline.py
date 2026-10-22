@@ -22,6 +22,7 @@ SCREENSHOT = ARTIFACTS / f"{ARTIFACT_PREFIX}.png"
 REPORT = ARTIFACTS / f"{ARTIFACT_PREFIX}.json"
 CHROME = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 DEBUG_PORT = 9340
+VIEWPORT_WIDTH = int(os.getenv("HAHA_E2E_VIEWPORT_WIDTH", "1680"))
 WEB_BASE_URL = os.getenv("HAHA_E2E_WEB_URL", "http://127.0.0.1:3000").rstrip("/")
 APP_URL = WEB_BASE_URL if WEB_BASE_URL.endswith("/creator") else f"{WEB_BASE_URL}/creator"
 CANCEL_MODE = os.getenv("HAHA_E2E_CANCEL_MODE", "false").lower() == "true"
@@ -72,21 +73,44 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
                 await asyncio.sleep(0.5)
             raise TimeoutError(f"Timed out waiting for {fragment!r} to disappear")
 
+        async def wait_for_action(text: str, selector: str, timeout: float = 20) -> bool:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                found = await evaluate(
+                    f"[...document.querySelectorAll({json.dumps(selector)})].some(x=>x.textContent.includes({json.dumps(text)}))"
+                )
+                if found:
+                    return True
+                await asyncio.sleep(0.5)
+            raise TimeoutError(f"Timed out waiting for action {text!r}")
+
+        async def wait_for_handoff_ready(timeout: float = 20) -> bool:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                ready = await evaluate(
+                    "document.querySelector('.resultActions a')?.getAttribute('aria-disabled') === 'false'"
+                )
+                if ready:
+                    return True
+                await asyncio.sleep(0.5)
+            raise TimeoutError("Timed out waiting for reviewed handoff state")
+
         await command("Runtime.enable")
         await command("Page.enable")
         await command("Log.enable")
         await command("Network.enable")
         await command(
             "Emulation.setDeviceMetricsOverride",
-            {"width": 1680, "height": 1050, "deviceScaleFactor": 1, "mobile": False},
+            {"width": VIEWPORT_WIDTH, "height": 1050, "deviceScaleFactor": 1, "mobile": VIEWPORT_WIDTH < 600},
         )
         await command("Page.navigate", {"url": APP_URL})
-        await wait_for("生成本次创作判断")
+        await wait_for("生成引擎")
         token_saved = await evaluate(
             f"(() => {{sessionStorage.setItem('haha_access_token',{json.dumps(token)});return Boolean(sessionStorage.getItem('haha_access_token'));}})()"
         )
         if not token_saved:
             raise RuntimeError("Could not store the short-lived staging token")
+        await wait_for("DeepSeek V4.1 Flash", 20)
         if OPERATIONS_MODE:
             refreshed = await evaluate(
                 "(() => {const button=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('刷新列表'));button?.click();return !!button;})()"
@@ -158,7 +182,8 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
                 platform:setSelect('发布平台','B站'),
                 duration:setSelect('成片时长','90秒'),
                 ratio:setSelect('画幅','16:9'),
-                tone:setSelect('表达气质','纪录片')
+                tone:setSelect('表达气质','纪录片'),
+                engine:setSelect('生成引擎','本地演示')
               };
             })()"""
         )
@@ -166,7 +191,7 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
             raise RuntimeError(f"Could not prepare form: {prepared}")
         await asyncio.sleep(0.75)
         clicked = await evaluate(
-            "(() => {const button=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('生成本次创作判断'));button?.click();return !!button;})()"
+            "(() => {const button=document.querySelector('.generateButton');button?.click();return !!button;})()"
         )
         if not clicked:
             raise RuntimeError("Submit button not found")
@@ -180,6 +205,45 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
             body = await wait_for("运行已取消", 20)
         else:
             body = await wait_for("验收通过", 60)
+            creator_body = body
+            revision_opened = await evaluate(
+                "(() => {const button=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='人工修订');button?.click();return !!button;})()"
+            )
+            if not revision_opened:
+                raise RuntimeError("Human revision button not found")
+            await wait_for("原始生成版本不会被覆盖", 10)
+            revision_prepared = await evaluate(
+                """(() => {
+                  const editor=document.querySelector('.revisionEditor');
+                  const input=editor?.querySelector('input');
+                  if(!input)return false;
+                  const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+                  setter.call(input,input.value+'（浏览器修订）');
+                  input.dispatchEvent(new Event('input',{bubbles:true}));
+                  return true;
+                })()"""
+            )
+            if not revision_prepared:
+                raise RuntimeError("Could not edit revision title")
+            saved = await evaluate(
+                "(() => {const button=[...document.querySelectorAll('.revisionEditor button')].find(x=>x.textContent.includes('保存新版本'));button?.click();return !!button;})()"
+            )
+            if not saved:
+                raise RuntimeError("Save revision button not found")
+            await wait_for_action("确认人工复核", ".resultActions button", 20)
+            reviewed = await evaluate(
+                "(() => {const button=[...document.querySelectorAll('button')].find(x=>x.textContent.includes('确认人工复核'));button?.click();return !!button;})()"
+            )
+            if not reviewed:
+                raise RuntimeError("Review revision button not found")
+            await wait_for_handoff_ready(20)
+            body = str(await evaluate("document.body?.innerText || ''"))
+            handoff_clicked = await evaluate(
+                "(() => {const link=[...document.querySelectorAll('a')].find(x=>x.textContent.includes('进入投稿预览'));link?.click();return !!link;})()"
+            )
+            if not handoff_clicked:
+                raise RuntimeError("Submission handoff link not found")
+            submission_body = await wait_for("已从服务端已复核版本带入", 20)
         requests = [
             event.get("params", {}).get("request", {})
             for event in events
@@ -190,6 +254,8 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
             if request.get("method") == "GET"
             and "/api/runs/" in str(request.get("url", ""))
             and "/events" not in str(request.get("url", ""))
+            and "/submission-handoff" not in str(request.get("url", ""))
+            and "/script-revisions" not in str(request.get("url", ""))
         ]
         checks = {
             "sse_progress": any(
@@ -211,11 +277,13 @@ async def run(websocket_url: str, token: str) -> dict[str, Any]:
             })
         else:
             checks.update({
-                "platform": "推荐平台 · B站" in body,
-                "spec": "推荐规格 · 90秒 · 16:9" in body,
-                "tone": "表达气质 · 纪录片" in body,
-                "verification": "独立验收已通过" in body,
-                "evidence": "事实来源" in body,
+                "platform": "推荐平台 · B站" in creator_body,
+                "spec": "推荐规格 · 90秒 · 16:9" in creator_body,
+                "tone": "表达气质 · 纪录片" in creator_body,
+                "verification": "独立验收已通过" in creator_body,
+                "evidence": "事实来源" in creator_body,
+                "revision_reviewed": True,
+                "server_handoff": "已从服务端已复核版本带入" in submission_body,
             })
         if not all(checks.values()):
             raise RuntimeError(f"Generated result did not follow parameters: {checks}")

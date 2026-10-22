@@ -13,6 +13,7 @@ import {
   type SubmissionType,
   useCommunity,
 } from "@/lib/community";
+import { getCreatorSubmissionHandoff } from "@/lib/api";
 
 const steps = ["内容类型", "素材", "基础信息", "关联与来源", "披露与检查", "预览提交"];
 const submissionTypes: { value: SubmissionType; title: string; detail: string }[] = [
@@ -105,23 +106,28 @@ export function SubmissionWizard({
   useEffect(() => {
     if (!fromAi || loadedAiHandoff.current) return;
     loadedAiHandoff.current = true;
-    try {
-      const raw = globalThis.localStorage?.getItem("haha.creator.submission-handoff.v1");
-      if (!raw) return;
-      const handoff = JSON.parse(raw) as { title?: string; summary?: string; tags?: string[] };
-      const task = globalThis.setTimeout(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const raw = globalThis.localStorage?.getItem("haha.creator.submission-handoff.v1");
+        if (!raw) return;
+        const localHandoff = JSON.parse(raw) as { title?: string; summary?: string; tags?: string[]; runId?: string };
+        const handoff = apiMode && localHandoff.runId
+          ? await getCreatorSubmissionHandoff(localHandoff.runId)
+          : localHandoff;
+        if (cancelled) return;
         if (handoff.title) setTitle(handoff.title.slice(0, 200));
         if (handoff.summary) setSummary(handoff.summary.slice(0, 4000));
+        if ("body" in handoff && handoff.body) setBody(handoff.body);
         if (handoff.tags) setTags(handoff.tags.join("，"));
         setAiDisclosure("assisted");
-        setFeedback("已从 AI 创作台带入标题、简介和标签；事实来源仍需人工选择。 ");
-      }, 0);
-      return () => globalThis.clearTimeout(task);
-    } catch {
-      const task = globalThis.setTimeout(() => setError("AI 创作交接数据已损坏，未自动带入。 "), 0);
-      return () => globalThis.clearTimeout(task);
-    }
-  }, [fromAi]);
+        setFeedback(apiMode ? "已从服务端已复核版本带入正文与发布信息；事实来源仍需人工选择。" : "已从演示创作台带入标题、简介和标签；事实来源仍需人工选择。");
+      } catch {
+        if (!cancelled) setError("AI 创作交接数据无效或尚未复核，未自动带入。");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [apiMode, fromAi]);
 
   const checks = useMemo(() => [
     { label: "标题与简介完整", pass: Boolean(title.trim() && summary.trim()) },
