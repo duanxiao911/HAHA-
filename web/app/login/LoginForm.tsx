@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState, useSyncExternalStore } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ProductFrame } from "@/components/community/ProductFrame";
 import {
   AUTH_REQUIRED,
@@ -16,7 +16,7 @@ import {
 
 export function LoginForm() {
   const router = useRouter();
-  const [passwordChanged, setPasswordChanged] = useState(false);
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -26,10 +26,7 @@ export function LoginForm() {
     subscribeAuthSession, getAuthSessionSnapshot, getServerAuthSessionSnapshot,
   );
   const signedIn = authState === "authenticated";
-  useEffect(() => {
-    void initializeAuthSession();
-    setPasswordChanged(new URLSearchParams(window.location.search).get("reason") === "password-changed");
-  }, []);
+  useEffect(() => { void initializeAuthSession(); }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError("");
@@ -52,7 +49,7 @@ export function LoginForm() {
         <h1>{signedIn ? "你已经登录" : "登录 HAHA"}</h1>
         <p>继续观看、学习、收藏和购物。专业工作台也使用同一个账户。</p>
         {!AUTH_REQUIRED ? <div className="productInlineAlert">当前是静态或开发演示，真实登录仅在安全账户环境开放。</div> : null}
-        {passwordChanged ? <div className="productInlineAlert" role="status">密码已经更新，请使用新密码重新登录。所有旧设备会话均已失效。</div> : null}
+        {searchParams.get("reason") === "password-changed" ? <div className="productInlineAlert" role="status">密码已经更新，请使用新密码重新登录。所有旧设备会话均已失效。</div> : null}
         {error ? <div className="identityAlert" role="alert">{error}</div> : null}
         {authState === "unknown" ? <div className="productInlineAlert">正在验证安全会话…</div> : signedIn ? <div className="productFormActions"><Link className="productButton" href="/identity">进入用户中心</Link><button className="productButtonSecondary" type="button" disabled={busy} onClick={() => void signOut()}>{busy ? "正在退出…" : "退出当前会话"}</button></div> :
           <form className="authLoginForm" onSubmit={submit}>

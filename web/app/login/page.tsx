@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { LoginForm } from "./LoginForm";
 
 export const metadata: Metadata = {
@@ -6,4 +7,6 @@ export const metadata: Metadata = {
   description: "登录 HAHA，继续观看、学习、收藏和购物。",
 };
 
-export default function LoginPage() { return <LoginForm />; }
+export default function LoginPage() {
+  return <Suspense fallback={null}><LoginForm /></Suspense>;
+}
