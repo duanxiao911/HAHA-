@@ -28,6 +28,7 @@ from haha_learning.domain import (
     AchievementGrant,
     DailyTask,
     KnowledgeCard,
+    KnowledgeContribution,
     KnowledgeSource,
     LearningActivityCommit,
     LearningConflictError,
@@ -453,6 +454,21 @@ class SQLiteCreatorRepository:
                         REFERENCES achievement_definitions(id, workspace_id),
                     FOREIGN KEY(triggering_event_id) REFERENCES learning_events(id)
                 );
+                CREATE TABLE IF NOT EXISTS knowledge_contributions (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                    topic TEXT NOT NULL, body TEXT NOT NULL, source_title TEXT NOT NULL,
+                    source_url TEXT NOT NULL, source_version TEXT NOT NULL,
+                    status TEXT NOT NULL, version INTEGER NOT NULL,
+                    reviewer_note TEXT NOT NULL, reviewed_by TEXT NOT NULL,
+                    submitted_at TEXT NOT NULL, reviewed_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_knowledge_contributions_owner_updated
+                    ON knowledge_contributions(user_id, workspace_id, updated_at);
+                CREATE INDEX IF NOT EXISTS ix_knowledge_contributions_review_queue
+                    ON knowledge_contributions(workspace_id, status, submitted_at);
                 CREATE TABLE IF NOT EXISTS projects (
                     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, title TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -1740,6 +1756,51 @@ class SQLiteCreatorRepository:
             "longest_streak": profile.longest_streak,
             "last_learning_date": profile.last_learning_date,
         }
+
+    def list_knowledge_contributions(self, user_id: str, workspace_id: str) -> list[KnowledgeContribution]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM knowledge_contributions
+                   WHERE user_id = ? AND workspace_id = ? ORDER BY updated_at DESC""",
+                (user_id, workspace_id),
+            ).fetchall()
+        return [KnowledgeContribution(**dict(row)) for row in rows]
+
+    def list_knowledge_contribution_queue(self, workspace_id: str) -> list[KnowledgeContribution]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT * FROM knowledge_contributions
+                   WHERE workspace_id = ? AND status = 'submitted' ORDER BY submitted_at, id""",
+                (workspace_id,),
+            ).fetchall()
+        return [KnowledgeContribution(**dict(row)) for row in rows]
+
+    def get_knowledge_contribution(self, contribution_id: str, workspace_id: str) -> KnowledgeContribution | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM knowledge_contributions WHERE id = ? AND workspace_id = ?",
+                (contribution_id, workspace_id),
+            ).fetchone()
+        return KnowledgeContribution(**dict(row)) if row else None
+
+    def save_knowledge_contribution(self, contribution: KnowledgeContribution, expected_version: int | None) -> bool:
+        values = asdict(contribution)
+        with closing(self._connect()) as connection, connection:
+            if expected_version is None:
+                try:
+                    connection.execute(
+                        "INSERT INTO knowledge_contributions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        tuple(values.values()),
+                    )
+                    return True
+                except sqlite3.IntegrityError:
+                    return False
+            assignments = ", ".join(f"{key} = ?" for key in values)
+            result = connection.execute(
+                f"UPDATE knowledge_contributions SET {assignments} WHERE id = ? AND workspace_id = ? AND version = ?",
+                (*values.values(), contribution.id, contribution.workspace_id, expected_version),
+            )
+            return result.rowcount == 1
 
     def save_project(self, project: Project) -> None:
         with closing(self._connect()) as connection, connection:

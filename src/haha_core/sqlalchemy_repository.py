@@ -46,6 +46,7 @@ from haha_learning.domain import (
     AchievementGrant,
     DailyTask,
     KnowledgeCard,
+    KnowledgeContribution,
     KnowledgeSource,
     LearningActivityCommit,
     LearningConflictError,
@@ -566,6 +567,27 @@ achievement_grants = Table(
     Column("granted_at", String(40), nullable=False),
     ForeignKeyConstraint(["definition_id", "workspace_id"], ["achievement_definitions.id", "achievement_definitions.workspace_id"]),
     UniqueConstraint("user_id", "workspace_id", "definition_id", name="uq_achievement_grant_owner_definition"),
+)
+
+knowledge_contributions = Table(
+    "knowledge_contributions",
+    metadata,
+    Column("id", String(64), primary_key=True),
+    Column("user_id", String(200), ForeignKey("users.id"), nullable=False, index=True),
+    Column("workspace_id", String(100), ForeignKey("workspaces.id"), nullable=False, index=True),
+    Column("topic", String(200), nullable=False),
+    Column("body", String(4000), nullable=False),
+    Column("source_title", String(300), nullable=False),
+    Column("source_url", String(1000), nullable=False),
+    Column("source_version", String(100), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("reviewer_note", String(2000), nullable=False),
+    Column("reviewed_by", String(200), nullable=False),
+    Column("submitted_at", String(40), nullable=False),
+    Column("reviewed_at", String(40), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
 )
 
 projects = Table(
@@ -2238,6 +2260,53 @@ class SQLAlchemyCreatorRepository:
             "longest_streak": profile.longest_streak,
             "last_learning_date": profile.last_learning_date,
         }
+
+    def list_knowledge_contributions(self, user_id: str, workspace_id: str) -> list[KnowledgeContribution]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(knowledge_contributions).where(
+                    knowledge_contributions.c.user_id == user_id,
+                    knowledge_contributions.c.workspace_id == workspace_id,
+                ).order_by(knowledge_contributions.c.updated_at.desc())
+            ).mappings().all()
+        return [KnowledgeContribution(**row) for row in rows]
+
+    def list_knowledge_contribution_queue(self, workspace_id: str) -> list[KnowledgeContribution]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(knowledge_contributions).where(
+                    knowledge_contributions.c.workspace_id == workspace_id,
+                    knowledge_contributions.c.status == "submitted",
+                ).order_by(knowledge_contributions.c.submitted_at, knowledge_contributions.c.id)
+            ).mappings().all()
+        return [KnowledgeContribution(**row) for row in rows]
+
+    def get_knowledge_contribution(self, contribution_id: str, workspace_id: str) -> KnowledgeContribution | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(knowledge_contributions).where(
+                    knowledge_contributions.c.id == contribution_id,
+                    knowledge_contributions.c.workspace_id == workspace_id,
+                )
+            ).mappings().first()
+        return KnowledgeContribution(**row) if row else None
+
+    def save_knowledge_contribution(self, contribution: KnowledgeContribution, expected_version: int | None) -> bool:
+        values = asdict(contribution)
+        with self.engine.begin() as connection:
+            if expected_version is None:
+                return self._insert_ignore_created(
+                    connection, knowledge_contributions, values,
+                    ["id"],
+                )
+            result = connection.execute(
+                knowledge_contributions.update().where(
+                    knowledge_contributions.c.id == contribution.id,
+                    knowledge_contributions.c.workspace_id == contribution.workspace_id,
+                    knowledge_contributions.c.version == expected_version,
+                ).values(**values)
+            )
+            return result.rowcount == 1
 
     def get_project(self, project_id: str) -> Project | None:
         with self.engine.connect() as connection:

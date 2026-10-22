@@ -860,6 +860,30 @@ def test_postgres_learning_tutor_is_durable_and_idempotent(repository) -> None:
     assert router.calls == 1
 
 
+def test_postgres_learning_contribution_retry_is_concurrent_and_isolated(repository) -> None:
+    repository.ensure_identity("pg-contributor", "pg-learning-governance", role="owner")
+    IdentityService(repository).bootstrap("pg-contributor", "pg-learning-governance")
+
+    def submit() -> str:
+        service = LearningService(SQLAlchemyCreatorRepository(POSTGRES_URL))
+        snapshot = service.submit_knowledge_contribution(
+            "pg-contributor", "pg-learning-governance",
+            topic="并发待核验贡献", body="重复提交只能形成一条隔离审核记录。",
+            source_title="来源", source_url="https://example.com/reference",
+            source_version="v1", idempotency_key="pg-s08-contribution-001",
+        )
+        return snapshot["knowledge_contributions"][0]["id"]
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        contribution_ids = list(pool.map(lambda _: submit(), range(4)))
+    assert len(set(contribution_ids)) == 1
+    restored = LearningService(SQLAlchemyCreatorRepository(POSTGRES_URL)).bootstrap(
+        "pg-contributor", "pg-learning-governance"
+    )
+    assert len(restored["knowledge_contributions"]) == 1
+    assert restored["knowledge_contributions"][0]["status"] == "submitted"
+
+
 def test_postgres_commerce_product_edit_and_media_are_durable(repository) -> None:
     repository.ensure_identity("pg-media-seller", "pg-media-workspace", role="owner")
     identity = IdentityService(repository)

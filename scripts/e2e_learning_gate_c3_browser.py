@@ -150,6 +150,14 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["achievements_visible"] = all(
             label in body for label in ("第一步", "有据可查", "检验理解")
         )
+        contribution_filled = await evaluate("""(() => {const form=document.querySelector('[data-testid="knowledge-contributions"] form'); if(!form)return false; const inputs=form.querySelectorAll('input'); const body=form.querySelector('textarea'); const set=(node,value)=>{const proto=node.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto,'value').set.call(node,value); node.dispatchEvent(new Event('input',{bubbles:true}));}; set(inputs[0],'浏览器待核验贡献'); set(body,'内容必须经过审核，不能自动进入可信知识。'); set(inputs[1],'中国非物质文化遗产网'); set(inputs[2],'https://www.ihchina.cn/'); set(inputs[3],'访问于 2026-10-22'); return true;})()""")
+        assertions["contribution_form_filled"] = bool(contribution_filled)
+        await click("提交审核")
+        body = await wait_for("知识贡献已提交审核")
+        assertions["contribution_isolated_pending_review"] = "待审核 · 尚未进入可信知识" in body
+        await command("Page.reload")
+        body = await wait_for("浏览器待核验贡献")
+        assertions["contribution_restored_after_refresh"] = "待审核 · 尚未进入可信知识" in body
         tutor_available = bool(
             await evaluate("Boolean(document.querySelector('[data-testid=ai-tutor]'))")
         )

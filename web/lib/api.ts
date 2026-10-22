@@ -409,6 +409,7 @@ export type LearningSnapshot = {
   sources: { id: string; title: string; publisher: string; source_type: string; url: string; version: number; verification_status: string; provenance: string; checked_at: string }[];
   learning_candidates: UserCenterLibraryItem[];
   cards: { id: string; path_id: string; unit_id: string; topic: string; body: string; source_id: string; source_version: number; trust_status: string; version: number; updated_at: string }[];
+  knowledge_contributions: { id: string; topic: string; body: string; source_title: string; source_url: string; source_version: string; status: "submitted" | "approved" | "rejected"; version: number; reviewer_note: string; submitted_at: string; reviewed_at: string }[];
   quiz_attempts: { id: string; quiz_id: string; quiz_version: number; score: number; passed: boolean; created_at: string }[];
   daily_tasks: { id: string; task_date: string; kind: string; title: string; target_count: number; current_count: number; status: "open" | "completed"; version: number }[];
   achievements: { id: string; code: string; title: string; description: string; points: number; definition_version: number; granted_at: string }[];
@@ -629,6 +630,14 @@ export async function askLearningTutor(question: string): Promise<LearningSnapsh
   return request("/api/learning/tutor/questions", {
     method: "POST", headers: headers(crypto.randomUUID()),
     body: JSON.stringify({ question }),
+  });
+}
+export async function submitLearningContribution(
+  topic: string, body: string, sourceTitle: string, sourceUrl: string, sourceVersion: string,
+): Promise<LearningSnapshot> {
+  return request("/api/learning/contributions", {
+    method: "POST", headers: headers(crypto.randomUUID()),
+    body: JSON.stringify({ topic, body, source_title: sourceTitle, source_url: sourceUrl, source_version: sourceVersion }),
   });
 }
 export async function getCommerceCenter(): Promise<CommerceSnapshot> {

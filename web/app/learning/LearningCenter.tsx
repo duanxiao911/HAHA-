@@ -14,6 +14,7 @@ import {
   getLearningCenter,
   LearningSnapshot,
   saveLearningKnowledgeCard,
+  submitLearningContribution,
   submitLearningQuiz,
 } from "@/lib/api";
 
@@ -37,6 +38,7 @@ export function LearningCenter() {
   const [candidateId, setCandidateId] = useState("");
   const [tutorQuestion, setTutorQuestion] = useState("");
   const [pendingUnit, setPendingUnit] = useState<{ id: string; title: string; version: number } | null>(null);
+  const [contribution, setContribution] = useState({ topic: "", body: "", sourceTitle: "", sourceUrl: "", sourceVersion: "网页访问日期" });
 
   const applySnapshot = useCallback((next: LearningSnapshot) => {
     setSnapshot(next);
@@ -159,6 +161,7 @@ export function LearningCenter() {
       <a href="#learning-paths">学习路径</a>
       {activePath?.enrollment ? <a href="#learning-workspace">知识与测验</a> : null}
       <a href="#learning-achievements">成长成就</a>
+      <a href="#knowledge-contributions">知识贡献</a>
     </nav>
 
     {snapshot.ai_tutor.status === "blocked" ? <section className={styles.boundary} data-testid="ai-tutor-boundary" id="ai-tutor">
@@ -235,6 +238,18 @@ export function LearningCenter() {
     <section className={styles.panel} data-testid="learning-achievements" id="learning-achievements">
       <header><small>ACHIEVEMENTS</small><h2>成长成就</h2><p>每个定义只授予一次，并保留触发事件和规则版本。</p></header>
       {snapshot.achievements.length ? <ul className={styles.achievementList}>{snapshot.achievements.map((item) => <li key={item.id}><span>✦</span><div><h3>{item.title}</h3><p>{item.description}</p><small>规则 v{item.definition_version} · {item.points} 分</small></div></li>)}</ul> : <StateNotice kind="empty" compact title="还没有成就" description="完成真实学习事件后，符合规则的成就会幂等授予。" />}
+    </section>
+    <section className={styles.panel} data-testid="knowledge-contributions" id="knowledge-contributions">
+      <header><small>KNOWLEDGE GOVERNANCE</small><h2>知识贡献</h2><p>提交内容先进入隔离审核区；未经内部审核员批准，不会进入可信知识或 AI 老师检索范围。</p></header>
+      <form onSubmit={(event) => { event.preventDefault(); void run("contribution", () => submitLearningContribution(contribution.topic, contribution.body, contribution.sourceTitle, contribution.sourceUrl, contribution.sourceVersion), "知识贡献已提交审核，不代表内容已获认可。") .then((success) => { if (success) setContribution({ topic: "", body: "", sourceTitle: "", sourceUrl: "", sourceVersion: "网页访问日期" }); }); }}>
+        <label>主题<input required maxLength={200} value={contribution.topic} onChange={(event) => setContribution((current) => ({ ...current, topic: event.target.value }))} /></label>
+        <label>待核验内容<textarea required maxLength={4000} value={contribution.body} onChange={(event) => setContribution((current) => ({ ...current, body: event.target.value }))} /></label>
+        <label>来源标题<input required maxLength={300} value={contribution.sourceTitle} onChange={(event) => setContribution((current) => ({ ...current, sourceTitle: event.target.value }))} /></label>
+        <label>来源链接<input required type="url" maxLength={1000} placeholder="https://…" value={contribution.sourceUrl} onChange={(event) => setContribution((current) => ({ ...current, sourceUrl: event.target.value }))} /></label>
+        <label>来源版本或访问日期<input required maxLength={100} value={contribution.sourceVersion} onChange={(event) => setContribution((current) => ({ ...current, sourceVersion: event.target.value }))} /></label>
+        <button className="productButton" type="submit" disabled={busy === "contribution"}>{busy === "contribution" ? "提交中…" : "提交审核"}</button>
+      </form>
+      {(snapshot.knowledge_contributions ?? []).length ? <ul className={styles.achievementList}>{snapshot.knowledge_contributions.map((item) => <li key={item.id}><span>{item.status === "approved" ? "✓" : item.status === "rejected" ? "×" : "○"}</span><div><h3>{item.topic}</h3><p>{item.source_title} · {item.source_version}</p><small>{item.status === "submitted" ? "待审核 · 尚未进入可信知识" : item.status === "approved" ? "已审核通过" : `未通过：${item.reviewer_note}`}</small></div></li>)}</ul> : <StateNotice kind="empty" compact title="还没有知识贡献" description="提交时必须附来源；审核通过前始终与可信知识隔离。" />}
     </section>
     <ConfirmDialog open={Boolean(pendingUnit)} title="确认完成这个学习节点？" description={pendingUnit ? `“${pendingUnit.title}”完成后会写入学习事件、更新每日任务与成就，当前版本不提供撤销。` : ""} confirmLabel="确认完成节点" busy={Boolean(pendingUnit && busy === `unit-${pendingUnit.id}`)} tone="primary" onCancel={() => setPendingUnit(null)} onConfirm={() => { if (!pendingUnit) return; void run(`unit-${pendingUnit.id}`, () => completeLearningUnit(pendingUnit.id, pendingUnit.version), "学习节点已完成。").then((success) => { if (success) setPendingUnit(null); }); }} />
     {feedback ? <div className="productToast" role="status">{feedback}</div> : null}

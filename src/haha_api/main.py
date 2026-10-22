@@ -302,6 +302,22 @@ class TutorQuestionCreate(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
 
 
+class KnowledgeContributionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    topic: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=4000)
+    source_title: str = Field(min_length=1, max_length=300)
+    source_url: str = Field(min_length=8, max_length=1000)
+    source_version: str = Field(min_length=1, max_length=100)
+
+
+class KnowledgeContributionReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: str = Field(pattern="^(approved|rejected)$")
+    reviewer_note: str = Field(min_length=1, max_length=2000)
+    expected_version: int = Field(ge=1)
+
+
 class CommerceStoreCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=200)
@@ -1422,6 +1438,48 @@ def create_app(
                 question=payload.question,
                 idempotency_key=idempotency_key,
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.post("/api/learning/contributions")
+    def submit_learning_contribution(
+        payload: KnowledgeContributionCreate,
+        principal: Principal = Depends(resolve_membership),
+        idempotency_key: str = Header(
+            alias="Idempotency-Key", min_length=8, max_length=200
+        ),
+    ) -> dict[str, object]:
+        try:
+            return learning_service.submit_knowledge_contribution(
+                principal.user_id,
+                principal.workspace_id,
+                idempotency_key=idempotency_key,
+                **payload.model_dump(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @application.get("/api/learning/contributions/review-queue")
+    def get_learning_contribution_review_queue(
+        principal: Principal = Depends(resolve_membership),
+    ) -> list[dict[str, object]]:
+        return learning_service.review_queue(
+            principal.user_id, principal.workspace_id
+        )
+
+    @application.post("/api/learning/contributions/{contribution_id}/review")
+    def review_learning_contribution(
+        contribution_id: str,
+        payload: KnowledgeContributionReview,
+        principal: Principal = Depends(resolve_membership),
+    ) -> dict[str, object]:
+        try:
+            return asdict(learning_service.review_knowledge_contribution(
+                principal.user_id,
+                principal.workspace_id,
+                contribution_id,
+                **payload.model_dump(),
+            ))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

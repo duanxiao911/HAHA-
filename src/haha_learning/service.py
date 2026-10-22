@@ -11,8 +11,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from haha_identity.service import IdentityPermissionError, IdentityService
 from haha_learning.domain import (
+    ContributionStatus,
     EnrollmentStatus,
     KnowledgeCard,
+    KnowledgeContribution,
     LearningActivityCommit,
     LearningConflictError,
     LearningEvent,
@@ -198,6 +200,12 @@ class LearningService:
             "sources": [asdict(item) for item in sources],
             "learning_candidates": candidates,
             "cards": [asdict(item) for item in cards],
+            "knowledge_contributions": [
+                asdict(item)
+                for item in self.repository.list_knowledge_contributions(
+                    user_id, workspace_id
+                )
+            ],
             "quiz_attempts": [asdict(item) for item in attempts],
             "daily_tasks": [
                 asdict(item)
@@ -222,6 +230,112 @@ class LearningService:
             ],
             "catalog_notice": "当前课程为内部功能验证目录，不构成正式非遗事实、来源认证或权威教学结论。",
         }
+
+    def submit_knowledge_contribution(
+        self,
+        user_id: str,
+        workspace_id: str,
+        *,
+        topic: str,
+        body: str,
+        source_title: str,
+        source_url: str,
+        source_version: str,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        self._require_learner(user_id, workspace_id)
+        clean_key = _idempotency_key(idempotency_key)
+        values = {
+            "topic": _clean(topic, label="主题", maximum=200, required=True),
+            "body": _clean(body, label="贡献内容", maximum=4000, required=True),
+            "source_title": _clean(source_title, label="来源标题", maximum=300, required=True),
+            "source_url": _clean(source_url, label="来源链接", maximum=1000, required=True),
+            "source_version": _clean(source_version, label="来源版本", maximum=100, required=True),
+        }
+        if not values["source_url"].startswith(("https://", "http://")):
+            raise ValueError("来源链接必须是 http 或 https 地址")
+        contribution_id = _stable_id("contribution", user_id, workspace_id, clean_key)
+        existing = self.repository.get_knowledge_contribution(
+            contribution_id, workspace_id
+        )
+        if existing:
+            if any(getattr(existing, key) != value for key, value in values.items()):
+                raise LearningConflictError("幂等键已用于不同的知识贡献")
+            return self.snapshot(user_id, workspace_id)
+        now = _timestamp()
+        contribution = KnowledgeContribution(
+            id=contribution_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            **values,
+            status=ContributionStatus.SUBMITTED.value,
+            version=1,
+            reviewer_note="",
+            reviewed_by="",
+            submitted_at=now,
+            reviewed_at="",
+            created_at=now,
+            updated_at=now,
+        )
+        if not self.repository.save_knowledge_contribution(contribution, None):
+            winner = self.repository.get_knowledge_contribution(
+                contribution_id, workspace_id
+            )
+            if not winner or any(
+                getattr(winner, key) != value for key, value in values.items()
+            ):
+                raise LearningConflictError("知识贡献重复提交冲突")
+        return self.snapshot(user_id, workspace_id)
+
+    def review_queue(self, actor_user_id: str, workspace_id: str) -> list[dict[str, object]]:
+        self._require_internal_reviewer(actor_user_id, workspace_id)
+        return [
+            asdict(item)
+            for item in self.repository.list_knowledge_contribution_queue(workspace_id)
+        ]
+
+    def review_knowledge_contribution(
+        self,
+        actor_user_id: str,
+        workspace_id: str,
+        contribution_id: str,
+        *,
+        decision: str,
+        reviewer_note: str,
+        expected_version: int,
+    ) -> KnowledgeContribution:
+        self._require_internal_reviewer(actor_user_id, workspace_id)
+        contribution = self.repository.get_knowledge_contribution(
+            contribution_id, workspace_id
+        )
+        if not contribution:
+            raise LearningNotFoundError("知识贡献不存在")
+        if contribution.user_id == actor_user_id:
+            raise LearningPermissionError("不能审核自己的知识贡献")
+        if decision not in {
+            ContributionStatus.APPROVED.value,
+            ContributionStatus.REJECTED.value,
+        }:
+            raise ValueError("审核结论无效")
+        if contribution.status != ContributionStatus.SUBMITTED.value:
+            if contribution.status == decision:
+                return contribution
+            raise LearningConflictError("知识贡献已经完成审核")
+        if contribution.version != expected_version:
+            raise LearningConflictError("知识贡献版本已变化，请刷新后重试")
+        now = _timestamp()
+        updated = replace(
+            contribution,
+            status=decision,
+            version=contribution.version + 1,
+            reviewer_note=_clean(reviewer_note, label="审核说明", maximum=2000, required=True),
+            reviewed_by=actor_user_id,
+            reviewed_at=now,
+            updated_at=now,
+        )
+        if not self.repository.save_knowledge_contribution(updated, expected_version):
+            raise LearningConflictError("知识贡献已被其他审核员处理")
+        return updated
 
     def ask_tutor(
         self,
@@ -459,10 +573,12 @@ class LearningService:
             event_type="unit.completed",
             entity_type="learning_unit",
             entity_id=unit.id,
-            entity_version=progress.version,
+            entity_version=unit.version,
             idempotency_key=idempotency_key,
             payload={
                 "path_id": unit.path_id,
+                "unit_version": unit.version,
+                "source_id": unit.source_id,
                 "request_fingerprint": request_fingerprint,
             },
         )
@@ -555,6 +671,7 @@ class LearningService:
             idempotency_key=idempotency_key,
             payload={
                 "unit_id": unit.id,
+                "unit_version": unit.version,
                 "source_id": source.id,
                 "source_version": source.version,
                 "trust_status": source.verification_status,
@@ -681,6 +798,7 @@ class LearningService:
             idempotency_key=idempotency_key,
             payload={
                 "quiz_id": quiz.id,
+                "quiz_version": quiz.version,
                 "score": score,
                 "passed": passed,
                 "request_fingerprint": request_fingerprint,
@@ -753,6 +871,19 @@ class LearningService:
             for item in self.repository.list_role_grants(user_id, workspace_id)
         ):
             raise LearningPermissionError("当前账户没有学习中心访问权限")
+
+    def _require_internal_reviewer(self, user_id: str, workspace_id: str) -> None:
+        try:
+            self.identity.bootstrap(user_id, workspace_id)
+        except IdentityPermissionError as exc:
+            raise LearningPermissionError("当前账户没有知识审核权限") from exc
+        roles = {
+            item.role
+            for item in self.repository.list_role_grants(user_id, workspace_id)
+            if item.status == "active"
+        }
+        if not roles.intersection({"reviewer", "admin"}):
+            raise LearningPermissionError("当前账户没有知识审核权限")
 
     @staticmethod
     def _require_matching_idempotency(

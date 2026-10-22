@@ -44,6 +44,13 @@ class VerificationStatus(StrEnum):
     DISPUTED = "disputed"
 
 
+class ContributionStatus(StrEnum):
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 @dataclass(frozen=True, slots=True)
 class LearningProfile:
     user_id: str
@@ -269,6 +276,26 @@ class TutorInteraction:
     output_tokens: int
     latency_ms: int
     error_code: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeContribution:
+    id: str
+    user_id: str
+    workspace_id: str
+    topic: str
+    body: str
+    source_title: str
+    source_url: str
+    source_version: str
+    status: str
+    version: int
+    reviewer_note: str
+    reviewed_by: str
+    submitted_at: str
+    reviewed_at: str
     created_at: str
     updated_at: str
 

@@ -182,6 +182,31 @@ def exercise() -> dict[str, object]:
         {"answers": wrong_answers, "expected_progress_version": 0},
         "c3-api-quiz-pass-01",
     )[0] == 409
+    contribution_payload = {
+        "topic": "真实环境待核验贡献",
+        "body": "这条内容必须先经过内部审核，不能自动进入可信知识。",
+        "source_title": "中国非物质文化遗产网",
+        "source_url": "https://www.ihchina.cn/",
+        "source_version": "访问于 2026-10-22",
+    }
+    status, contribution_snapshot = request(
+        "POST", "/api/learning/contributions", user_id, workspace_id,
+        contribution_payload, "c3-api-contribution-01",
+    )
+    assertions["knowledge_contribution_isolated"] = (
+        status == 200
+        and contribution_snapshot["knowledge_contributions"][0]["status"] == "submitted"
+    )
+    _, repeated_contribution = request(
+        "POST", "/api/learning/contributions", user_id, workspace_id,
+        contribution_payload, "c3-api-contribution-01",
+    )
+    assertions["knowledge_contribution_idempotent"] = (
+        len(repeated_contribution["knowledge_contributions"]) == 1
+    )
+    assertions["public_user_cannot_review"] = request(
+        "GET", "/api/learning/contributions/review-queue", user_id, workspace_id
+    )[0] == 403
     if not all(assertions.values()):
         raise RuntimeError({key: value for key, value in assertions.items() if not value})
     state = {
@@ -228,6 +253,10 @@ def verify() -> dict[str, object]:
             )
             if tutor_runtime_status == "available"
             else not snapshot["tutor_history"]
+        ),
+        "knowledge_contribution_restored_and_isolated": (
+            len(snapshot["knowledge_contributions"]) == 1
+            and snapshot["knowledge_contributions"][0]["status"] == "submitted"
         ),
     }
     if not all(assertions.values()):
