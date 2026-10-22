@@ -104,6 +104,13 @@ async def run(websocket_url: str) -> dict[str, Any]:
               if(!node) return false; node.click(); return true;
             }})()"""))
 
+        async def click_selector(selector: str) -> bool:
+            return bool(await evaluate(f"""(() => {{
+              const node=document.querySelector({json.dumps(selector)});
+              if(!(node instanceof HTMLElement) || node.hasAttribute('disabled')) return false;
+              node.click(); return true;
+            }})()"""))
+
         async def click_in_article(heading: str, action: str) -> bool:
             return bool(await evaluate(f"""(() => {{
               const article=[...document.querySelectorAll('article')]
@@ -231,7 +238,9 @@ async def run(websocket_url: str) -> dict[str, Any]:
         assertions["password_change_revokes_browser_session"] = "登录 HAHA" in body
         await fill("input[type=email]", EMAIL)
         await fill("input[autocomplete=current-password]", REPLACEMENT_PASSWORD)
-        assertions["replacement_password_login_submitted"] = await click("登录")
+        assertions["replacement_password_login_submitted"] = await click_selector(
+            "form.authLoginForm button[type=submit]"
+        )
         body = await wait_for("今天从这里继续")
         assertions["replacement_password_login_succeeds"] = "非遗新朋友" in body
         await shot("account-security-restored.png")
