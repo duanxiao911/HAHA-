@@ -15,7 +15,15 @@ from typing import Protocol
 from uuid import uuid4
 
 from haha_auth.domain import AuthAuditEvent, AuthCredential, AuthSession
-from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptRevision, ScriptVersion
+from haha_core.domain import (
+    BriefVersion,
+    FailedJob,
+    Project,
+    Run,
+    RunStatus,
+    ScriptRevision,
+    ScriptVersion,
+)
 from haha_identity.domain import (
     IdentityAuditEvent,
     IdentityTask,

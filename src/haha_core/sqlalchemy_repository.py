@@ -32,7 +32,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
 from haha_auth.domain import AuthAuditEvent, AuthCredential, AuthSession
-from haha_core.domain import BriefVersion, FailedJob, Project, Run, RunStatus, ScriptRevision, ScriptVersion
+from haha_core.domain import (
+    BriefVersion,
+    FailedJob,
+    Project,
+    Run,
+    RunStatus,
+    ScriptRevision,
+    ScriptVersion,
+)
 from haha_core.repository import RepositoryConflictError
 from haha_identity.domain import (
     IdentityAuditEvent,

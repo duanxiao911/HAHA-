@@ -68,7 +68,6 @@ from haha_community.media_storage import FileSystemMediaStorage
 from haha_community.repository import CommunityRepository
 from haha_community.service import CommunityService
 from haha_core.bootstrap import build_repository, enqueue_run
-from haha_media.model_router import get_model_router
 from haha_core.domain import TERMINAL_RUN_STATUSES
 from haha_core.repository import CreatorRepository
 from haha_core.service import (
@@ -93,6 +92,7 @@ from haha_learning.domain import (
 )
 from haha_learning.service import LearningService
 from haha_learning.tutor import HeritageTutor
+from haha_media.model_router import get_model_router
 from haha_user_center.service import UserCenterNotFoundError, UserCenterService
 from haha_workbench.service import WorkbenchPermissionError, WorkbenchService
 

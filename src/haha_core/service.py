@@ -14,8 +14,8 @@ from haha_core.domain import (
     Project,
     Run,
     RunStatus,
-    ScriptVersion,
     ScriptRevision,
+    ScriptVersion,
     new_id,
     utc_now,
 )
