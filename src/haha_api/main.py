@@ -1138,7 +1138,7 @@ def create_app(
         snapshot = user_center_service.bootstrap(
             principal.user_id, principal.workspace_id
         )
-        credential = repository.get_auth_credential_by_user(
+        credential = active_repository.get_auth_credential_by_user(
             principal.user_id, principal.workspace_id
         )
         sessions = auth_service.list_sessions(
