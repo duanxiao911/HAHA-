@@ -692,12 +692,11 @@ class SQLAlchemyCreatorRepository:
         conflict_columns: list[str],
     ) -> bool:
         """Return whether an insert won its uniqueness race."""
-        index_elements = [getattr(table.c, column) for column in conflict_columns]
         if connection.dialect.name == "postgresql":
             result = connection.execute(
                 postgresql_insert(table)
                 .values(**values)
-                .on_conflict_do_nothing(index_elements=index_elements)
+                .on_conflict_do_nothing()
                 .returning(*table.primary_key.columns)
             )
             return result.first() is not None
@@ -705,7 +704,7 @@ class SQLAlchemyCreatorRepository:
             result = connection.execute(
                 sqlite_insert(table)
                 .values(**values)
-                .on_conflict_do_nothing(index_elements=index_elements)
+                .on_conflict_do_nothing()
             )
             return result.rowcount == 1
         criteria = [
