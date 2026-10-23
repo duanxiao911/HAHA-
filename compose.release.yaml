@@ -103,10 +103,10 @@ services:
       SEEDREAM_BASE_URL: ${SEEDREAM_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
       SEEDREAM_MODEL: ${SEEDREAM_MODEL:-doubao-seedream-4.5}
       HAHA_CREATOR_MEDIA_ROOT: /var/lib/haha/community-media/creator
-    volumes:
-      - release-media-data:/var/lib/haha/community-media
       HAHA_RELEASE_ID: ${HAHA_RELEASE_ID:?set HAHA_RELEASE_ID}
       HAHA_GIT_SHA: ${HAHA_GIT_SHA:?set HAHA_GIT_SHA}
+    volumes:
+      - release-media-data:/var/lib/haha/community-media
     networks: [data]
     healthcheck:
       test: ["CMD", "python", "-c", "import os; from pathlib import Path; from redis import Redis; assert b'dramatiq' in Path('/proc/1/cmdline').read_bytes(); assert Redis.from_url(os.environ['REDIS_URL']).ping()"]
