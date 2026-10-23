@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import asdict
 from threading import Event, Thread
 from typing import Any
 
+from haha_community.media_storage import FileSystemMediaStorage
 from haha_core.domain import (
     BriefVersion,
+    CreatorImageAsset,
     FailedJob,
+    ImageGenerationRequest,
     Project,
     Run,
     RunStatus,
@@ -21,6 +25,8 @@ from haha_core.domain import (
 )
 from haha_core.repository import CreatorRepository, RepositoryConflictError
 from haha_core.verifier import verification_to_dict, verify_script
+from haha_media.image_assets import download_generated_image
+from haha_media.model_router import get_model_router
 from haha_media.script_writer import ContentBrief, generate_content_script_for_mode
 
 
@@ -186,6 +192,134 @@ class CreatorService:
                 raise IdempotencyConflictError("相同幂等键不能用于不同请求")
             return existing, False
 
+    def create_image_run(
+        self, *, workspace_id: str, source_run_id: str, prompt: str,
+        negative_prompt: str, size: str, count: int, watermark: bool,
+        reference_asset_ids: tuple[str, ...], idempotency_key: str, user_id: str,
+    ) -> tuple[Run, bool]:
+        source = self.repository.get_run(source_run_id)
+        if not source or source.workspace_id != workspace_id or source.status is not RunStatus.PASSED:
+            raise ValueError("来源脚本运行不存在或尚未通过")
+        revision = self.repository.get_latest_script_revision(source_run_id)
+        if not revision or revision.review_status != "reviewed":
+            raise ValueError("来源脚本必须完成人工修订与复核")
+        clean_prompt = prompt.strip()
+        if not clean_prompt:
+            raise ValueError("图片提示词不能为空")
+        if size not in {"1K", "2K", "4K"} or count not in range(1, 5):
+            raise ValueError("图片尺寸或数量不在允许范围内")
+        if reference_asset_ids:
+            raise ValueError("参考图与图片编辑尚未完成供应商账号实测，当前不可用")
+        request_body = {
+            "source_run_id": source_run_id, "prompt": clean_prompt,
+            "negative_prompt": negative_prompt.strip(), "size": size,
+            "count": count, "watermark": watermark, "reference_asset_ids": [],
+        }
+        fingerprint = hashlib.sha256(json.dumps(
+            request_body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        existing = self.repository.find_run_by_idempotency_key(
+            workspace_id, source.project_id, idempotency_key
+        )
+        if existing:
+            if existing.request_fingerprint != fingerprint:
+                raise IdempotencyConflictError("相同幂等键不能用于不同图片请求")
+            return existing, False
+        run = Run.create(
+            workspace_id=workspace_id, project_id=source.project_id,
+            brief_version_id=source.brief_version_id, model_preference="Seedream",
+            idempotency_key=idempotency_key, request_fingerprint=fingerprint,
+        )
+        request = ImageGenerationRequest(
+            run_id=run.id, project_id=run.project_id, source_run_id=source_run_id,
+            prompt=clean_prompt, negative_prompt=negative_prompt.strip(), size=size,
+            count=count, watermark=watermark, reference_asset_ids=(),
+            created_by=user_id, created_at=utc_now(),
+        )
+        try:
+            self.repository.save_image_run(run, request)
+            return run, True
+        except RepositoryConflictError:
+            existing = self.repository.find_run_by_idempotency_key(
+                workspace_id, source.project_id, idempotency_key
+            )
+            if not existing or existing.request_fingerprint != fingerprint:
+                raise IdempotencyConflictError("图片请求发生并发冲突")
+            return existing, False
+
+    def execute_image_run(self, run_id: str, *, worker_id: str = "inline-image-worker") -> Run:
+        run = self.repository.get_run(run_id)
+        request = self.repository.get_image_request(run_id)
+        if not run or not request:
+            raise LookupError("图片运行记录不存在")
+        if run.status in {RunStatus.PASSED, RunStatus.CANCELLED}:
+            return run
+        if run.status is RunStatus.FAILED:
+            if run.attempt >= self.max_run_attempts:
+                return run
+            run = run.transition(RunStatus.RETRYING)
+            self.repository.save_run(run)
+        claimed = self.repository.claim_run(run.id, worker_id)
+        if claimed is None:
+            return self.repository.get_run(run.id) or run
+        run = claimed
+        claim_epoch = run.claim_epoch
+        storage = FileSystemMediaStorage(os.getenv("HAHA_CREATOR_MEDIA_ROOT", "data/creator-media"))
+        committed: list[str] = []
+        try:
+            for target in (RunStatus.RUNNING, RunStatus.RETRIEVING, RunStatus.GENERATING):
+                run = run.transition(target)
+                self.repository.save_claimed_run(run, worker_id, claim_epoch)
+                if not self.repository.heartbeat_run(run.id, worker_id, claim_epoch):
+                    raise RepositoryConflictError("worker lost the run lease")
+                run = self.repository.get_run(run.id) or run
+            effective_prompt = request.prompt
+            if request.negative_prompt:
+                effective_prompt += f"\n画面中避免出现：{request.negative_prompt}"
+            with _RunLeaseKeeper(self.repository, run.id, worker_id, claim_epoch) as lease:
+                result = get_model_router().generate_image(
+                    effective_prompt, size=request.size, count=request.count,
+                    watermark=request.watermark,
+                )
+                validated = [download_generated_image(url) for url in result.images]
+                lease.ensure_owned()
+            if len(validated) != request.count:
+                raise ValueError("模型返回图片数量与请求不一致")
+            run = run.transition(RunStatus.VALIDATING)
+            self.repository.save_claimed_run(run, worker_id, claim_epoch)
+            assets: list[CreatorImageAsset] = []
+            for index, image in enumerate(validated, start=1):
+                asset_id = new_id("image")
+                partition = hashlib.sha256(run.workspace_id.encode()).hexdigest()[:16]
+                storage_key = f"{partition}/{asset_id}{image.extension}"
+                staged = storage.create_staging_path()
+                try:
+                    staged.write_bytes(image.data)
+                    storage.commit(staged, storage_key)
+                    committed.append(storage_key)
+                finally:
+                    storage.discard(staged)
+                assets.append(CreatorImageAsset(
+                    id=asset_id, workspace_id=run.workspace_id, project_id=run.project_id,
+                    run_id=run.id, version=index,
+                    mime_type=image.mime_type, byte_size=len(image.data), width=image.width,
+                    height=image.height, sha256=image.sha256, storage_key=storage_key,
+                    source_url_host=image.source_host, evidence=asdict(result.evidence),
+                    created_at=utc_now(),
+                ))
+            run = run.transition(RunStatus.PASSED)
+            self.repository.complete_run_with_images(run, assets, worker_id, claim_epoch)
+            return run
+        except Exception as exc:
+            for storage_key in committed:
+                storage.delete(storage_key)
+            persisted = self.repository.get_run(run.id)
+            if persisted and persisted.status is RunStatus.CANCELLED:
+                return persisted
+            if run.status not in {RunStatus.PASSED, RunStatus.FAILED, RunStatus.CANCELLED}:
+                run = run.transition(RunStatus.FAILED, error_code=type(exc).__name__, error_message=str(exc))
+                self.repository.save_claimed_run(run, worker_id, claim_epoch)
+            return run
     def execute_run(self, run_id: str, *, worker_id: str = "inline-worker") -> Run:
         run = self.repository.get_run(run_id)
         if not run:

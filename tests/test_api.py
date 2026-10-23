@@ -71,6 +71,7 @@ def test_sse_reconnect_header_is_allowed_by_cors() -> None:
 
 def test_creator_model_capabilities_are_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
     payload = _client().get("/api/creator/model-capabilities").json()
     assert payload["text_ready"] is False
     assert payload["default_model"] == "本地演示"
@@ -78,6 +79,8 @@ def test_creator_model_capabilities_are_explicit(monkeypatch: pytest.MonkeyPatch
     local = next(option for option in payload["options"] if option["id"] == "本地演示")
     assert local["kind"] == "deterministic_demo"
     assert "非 AI" in local["label"]
+    assert payload["image"]["status"] == "blocked"
+    assert payload["image"]["reference_editing"]["available"] is False
 
 
 def test_project_brief_run_http_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -341,6 +344,22 @@ def test_activated_creator_can_use_creator_api_without_workspace_editor_role(mon
     assert capabilities.status_code == 200
     assert project.status_code == 201
     assert repository.get_membership_role("user_a", "ws_a") == "viewer"
+
+
+def test_non_creator_cannot_access_creator_image_capability(monkeypatch) -> None:
+    secret = "test-secret-that-is-at-least-32-characters-long"
+    monkeypatch.setenv("HAHA_AUTH_MODE", "jwt")
+    monkeypatch.setenv("HAHA_JWT_SECRET", secret)
+    repository = SQLiteCreatorRepository(":memory:")
+    repository.ensure_identity("user_a", "ws_a", role="viewer")
+    client = _client(repository)
+
+    response = client.get(
+        "/api/creator/model-capabilities",
+        headers={"Authorization": f"Bearer {_jwt(secret, repository, role='viewer')}"},
+    )
+
+    assert response.status_code == 403
 
 
 def test_production_authentication_fails_closed(monkeypatch) -> None:

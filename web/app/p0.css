@@ -6,19 +6,30 @@
 
 .workPanel {
   grid-column: 1;
+  order: 1;
   min-height: 440px;
   scroll-margin-top: 150px;
 }
 
 .reviewPanel {
   grid-column: 2;
+  order: 1;
   min-height: 440px;
   scroll-margin-top: 150px;
 }
 
 .controlConsole {
   grid-column: 1 / -1;
+  order: 2;
   scroll-margin-top: 150px;
+}
+
+.creatorImageStudio {
+  order: 3;
+}
+
+.operationsAnchor {
+  order: 4;
 }
 
 .emptyState {
@@ -341,8 +352,13 @@
     order: 3;
   }
 
-  .operationsAnchor {
+  .creatorImageStudio {
+    grid-column: 1;
     order: 4;
+  }
+
+  .operationsAnchor {
+    order: 5;
   }
 
   .runProgress ol {

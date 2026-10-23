@@ -40,7 +40,11 @@ def _execute_creator_run(run_id: str) -> None:
         run_id=run_id,
         worker_id=worker_id,
     )
-    run = service.execute_run(run_id, worker_id=worker_id)
+    run = (
+        service.execute_image_run(run_id, worker_id=worker_id)
+        if service.repository.get_image_request(run_id)
+        else service.execute_run(run_id, worker_id=worker_id)
+    )
     retryable = run.error_code in {
         "TimeoutError",
         "URLError",

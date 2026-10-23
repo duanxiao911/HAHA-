@@ -236,6 +236,8 @@ export type RunResult = {
   updated_at?: string;
   script: null | { payload: JsonObject; evidence: JsonObject };
   latest_revision?: null | ScriptRevision;
+  image_request?: null | { prompt: string; size: string; count: number; watermark: boolean };
+  image_assets?: CreatorImageAsset[];
 };
 
 export type ScriptRevision = {
@@ -249,6 +251,18 @@ export type CreatorModelCapabilities = {
   default_model: string;
   options: { id: string; label: string; kind: "real_api" | "deterministic_demo"; available: boolean; notice: string }[];
   generation_limit: { max_output_tokens: number; calls_per_run: number };
+  image: {
+    available: boolean; status: "available" | "blocked"; model: string; reason: string;
+    sizes: string[]; max_images_per_run: number;
+    reference_editing: { available: false; reason: string };
+  };
+};
+
+export type CreatorImageAsset = {
+  id: string; project_id: string; run_id: string; version: number; mime_type: string;
+  byte_size: number; width: number; height: number; sha256: string; url: string;
+  evidence: { provider?: string; model?: string; request_id?: string; latency_ms?: number };
+  created_at: string;
 };
 
 export type RunEvent = {
@@ -535,6 +549,16 @@ export async function createRun(projectId: string, briefId: string, modelPrefere
 
 export async function getRun(runId: string): Promise<RunResult> {
   return request(`/api/runs/${runId}`, { headers: headers() });
+}
+
+export async function createImageRun(payload: {
+  source_run_id: string; prompt: string; negative_prompt: string;
+  size: "1K" | "2K" | "4K"; count: number; watermark: boolean;
+  reference_asset_ids: string[];
+}): Promise<{ id: string }> {
+  return request("/api/creator/image-runs", {
+    method: "POST", headers: headers(crypto.randomUUID()), body: JSON.stringify(payload),
+  });
 }
 
 export async function cancelRun(runId: string): Promise<RunResult> {

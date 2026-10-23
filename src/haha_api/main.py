@@ -159,6 +159,17 @@ class ScriptRevisionReview(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
+class ImageRunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_run_id: str = Field(min_length=1, max_length=64)
+    prompt: str = Field(min_length=1, max_length=4000)
+    negative_prompt: str = Field(default="", max_length=2000)
+    size: str = Field(default="2K", pattern="^(1K|2K|4K)$")
+    count: int = Field(default=1, ge=1, le=4)
+    watermark: bool = True
+    reference_asset_ids: list[str] = Field(default_factory=list, max_length=4)
+
+
 class RoleApplicationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     role: str = Field(min_length=3, max_length=32)
@@ -423,6 +434,9 @@ def create_app(
         active_repository
     )
     active_media_storage = media_storage or community_service.media_storage
+    creator_media_storage = FileSystemMediaStorage(
+        os.getenv("HAHA_CREATOR_MEDIA_ROOT", "data/creator-media")
+    )
     commerce_service = CommerceService(
         active_commerce_repository, active_repository, commerce_advisor,
         media_storage=active_media_storage,
@@ -628,7 +642,11 @@ def create_app(
         )
 
     def execute_run_locally(run_id: str) -> None:
-        completed = service.execute_run(run_id)
+        completed = (
+            service.execute_image_run(run_id)
+            if active_repository.get_image_request(run_id)
+            else service.execute_run(run_id)
+        )
         if completed.status.value == "FAILED":
             active_repository.record_failed_job(completed.id, completed.error_code or "run_failed")
 
@@ -747,6 +765,15 @@ def create_app(
                 },
             ],
             "generation_limit": {"max_output_tokens": 4096, "calls_per_run": 1},
+            "image": {
+                "available": router_status.image_ready,
+                "status": "available" if router_status.image_ready else "blocked",
+                "model": router_status.image_model,
+                "reason": "" if router_status.image_ready else "ARK_API_KEY 未配置，真实图片生成不可用。",
+                "sizes": ["1K", "2K", "4K"],
+                "max_images_per_run": 4,
+                "reference_editing": {"available": False, "reason": "供应商账号能力尚未真实实测"},
+            },
         }
 
     @application.post("/api/projects/{project_id}/briefs", status_code=status.HTTP_201_CREATED)
@@ -816,7 +843,78 @@ def create_app(
         result["script"] = asdict(script) if script else None
         revision = active_repository.get_latest_script_revision(run_id)
         result["latest_revision"] = asdict(revision) if revision else None
+        image_request = active_repository.get_image_request(run_id)
+        result["image_request"] = asdict(image_request) if image_request else None
+        result["image_assets"] = [
+            {**asdict(asset), "url": f"/api/creator/image-assets/{asset.id}/content"}
+            for asset in active_repository.list_image_assets(run.project_id)
+            if asset.run_id == run_id
+        ] if image_request else []
         return result
+
+    @application.post("/api/creator/image-runs", status_code=status.HTTP_202_ACCEPTED)
+    def create_image_run(
+        payload: ImageRunCreate,
+        background_tasks: BackgroundTasks,
+        principal: Principal = Depends(resolve_membership),
+        idempotency_key: str = Header(alias="Idempotency-Key", min_length=8, max_length=200),
+    ) -> dict[str, object]:
+        require_creator_access(principal)
+        source = active_repository.get_run(payload.source_run_id)
+        if not source:
+            raise HTTPException(status_code=404, detail="来源脚本运行不存在")
+        require_project_access(principal, source.workspace_id)
+        if not get_model_router().status().image_ready:
+            raise HTTPException(status_code=503, detail="ARK_API_KEY 未配置，真实图片生成不可用")
+        try:
+            run, created = service.create_image_run(
+                workspace_id=principal.workspace_id, source_run_id=payload.source_run_id,
+                prompt=payload.prompt, negative_prompt=payload.negative_prompt,
+                size=payload.size, count=payload.count, watermark=payload.watermark,
+                reference_asset_ids=tuple(payload.reference_asset_ids),
+                idempotency_key=idempotency_key, user_id=principal.user_id,
+            )
+        except IdempotencyConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        queued = created and enqueue_run(run.id, request_id_context.get())
+        if created and not queued:
+            background_tasks.add_task(execute_run_locally, run.id)
+        return {**asdict(run), "created": created, "execution": "worker" if queued else "local-background"}
+
+    @application.get("/api/projects/{project_id}/image-assets")
+    def list_creator_image_assets(
+        project_id: str, principal: Principal = Depends(resolve_membership)
+    ) -> dict[str, object]:
+        project = active_repository.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        require_project_access(principal, project.workspace_id)
+        require_creator_access(principal)
+        items = [
+            {**asdict(asset), "url": f"/api/creator/image-assets/{asset.id}/content"}
+            for asset in active_repository.list_image_assets(project_id)
+        ]
+        return {"items": items, "count": len(items)}
+
+    @application.get("/api/creator/image-assets/{asset_id}/content")
+    def get_creator_image_asset(
+        asset_id: str, principal: Principal = Depends(resolve_membership)
+    ) -> FileResponse:
+        asset = active_repository.get_image_asset(asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="图片资产不存在")
+        require_project_access(principal, asset.workspace_id)
+        require_creator_access(principal)
+        try:
+            path = creator_media_storage.path_for(asset.storage_key)
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail="图片文件不存在") from exc
+        return FileResponse(
+            path, media_type=asset.mime_type,
+            headers={"ETag": f'"{asset.sha256}"', "Cache-Control": "private, no-store"},
+        )
 
     @application.post("/api/runs/{run_id}/script-revisions", status_code=status.HTTP_201_CREATED)
     def create_script_revision(

@@ -70,6 +70,10 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+      ARK_API_KEY: ${ARK_API_KEY:-}
+      SEEDREAM_BASE_URL: ${SEEDREAM_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      SEEDREAM_MODEL: ${SEEDREAM_MODEL:-doubao-seedream-4.5}
+      HAHA_CREATOR_MEDIA_ROOT: /var/lib/haha/community-media/creator
       HAHA_TUTOR_REQUEST_LIMIT_24H: ${HAHA_TUTOR_REQUEST_LIMIT_24H:-20}
     volumes:
       - media-data:/var/lib/haha/community-media
@@ -96,6 +100,12 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+      ARK_API_KEY: ${ARK_API_KEY:-}
+      SEEDREAM_BASE_URL: ${SEEDREAM_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      SEEDREAM_MODEL: ${SEEDREAM_MODEL:-doubao-seedream-4.5}
+      HAHA_CREATOR_MEDIA_ROOT: /var/lib/haha/community-media/creator
+    volumes:
+      - media-data:/var/lib/haha/community-media
     healthcheck:
       test: ["CMD", "python", "-c", "import os; from pathlib import Path; from redis import Redis; assert b'dramatiq' in Path('/proc/1/cmdline').read_bytes(); assert Redis.from_url(os.environ['REDIS_URL']).ping()"]
       interval: 30s

@@ -17,7 +17,9 @@ from uuid import uuid4
 from haha_auth.domain import AuthAuditEvent, AuthCredential, AuthSession
 from haha_core.domain import (
     BriefVersion,
+    CreatorImageAsset,
     FailedJob,
+    ImageGenerationRequest,
     Project,
     Run,
     RunStatus,
@@ -116,6 +118,20 @@ class CreatorRepository(Protocol):
     def save_script_revision(self, revision: ScriptRevision) -> None: ...
 
     def get_latest_script_revision(self, run_id: str) -> ScriptRevision | None: ...
+
+    def save_image_request(self, request: ImageGenerationRequest) -> None: ...
+
+    def save_image_run(self, run: Run, request: ImageGenerationRequest) -> None: ...
+
+    def get_image_request(self, run_id: str) -> ImageGenerationRequest | None: ...
+
+    def list_image_assets(self, project_id: str) -> list[CreatorImageAsset]: ...
+
+    def get_image_asset(self, asset_id: str) -> CreatorImageAsset | None: ...
+
+    def complete_run_with_images(
+        self, run: Run, assets: list[CreatorImageAsset], worker_id: str, claim_epoch: int
+    ) -> None: ...
 
     def complete_run_with_script(self, run: Run, script: ScriptVersion, worker_id: str, claim_epoch: int) -> None: ...
 
@@ -531,6 +547,27 @@ class SQLiteCreatorRepository:
                 );
                 CREATE INDEX IF NOT EXISTS ix_script_revisions_run_updated
                     ON script_revisions(run_id, updated_at);
+                CREATE TABLE IF NOT EXISTS image_generation_requests (
+                    run_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, source_run_id TEXT NOT NULL,
+                    prompt TEXT NOT NULL, negative_prompt TEXT NOT NULL DEFAULT '', size TEXT NOT NULL,
+                    count INTEGER NOT NULL, watermark INTEGER NOT NULL,
+                    reference_asset_ids_json TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES runs(id), FOREIGN KEY(project_id) REFERENCES projects(id),
+                    FOREIGN KEY(source_run_id) REFERENCES runs(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_image_generation_requests_project_created
+                    ON image_generation_requests(project_id, created_at);
+                CREATE TABLE IF NOT EXISTS creator_image_assets (
+                    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL, version INTEGER NOT NULL, mime_type TEXT NOT NULL,
+                    byte_size INTEGER NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL, storage_key TEXT NOT NULL UNIQUE, source_url_host TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                    UNIQUE(run_id, version), FOREIGN KEY(project_id) REFERENCES projects(id),
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_creator_image_assets_project_created
+                    ON creator_image_assets(project_id, created_at);
                 CREATE TABLE IF NOT EXISTS failed_jobs (
                     id TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE, reason TEXT NOT NULL,
                     created_at TEXT NOT NULL, resolved_at TEXT NOT NULL DEFAULT '',
@@ -2071,6 +2108,104 @@ class SQLiteCreatorRepository:
             created_at=row["created_at"], updated_at=row["updated_at"],
             lock_version=row["lock_version"],
         )
+
+    def save_image_request(self, request: ImageGenerationRequest) -> None:
+        try:
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    "INSERT INTO image_generation_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (request.run_id, request.project_id, request.source_run_id, request.prompt,
+                     request.negative_prompt, request.size, request.count, int(request.watermark),
+                     json.dumps(request.reference_asset_ids), request.created_by, request.created_at),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise RepositoryConflictError("image request conflict") from exc
+
+    def save_image_run(self, run: Run, request: ImageGenerationRequest) -> None:
+        values = (run.id, run.workspace_id, run.project_id, run.brief_version_id,
+                  run.status.value, run.model_preference, run.idempotency_key,
+                  run.request_fingerprint, run.attempt, run.error_code, run.error_message,
+                  run.created_at, run.updated_at, run.claimed_by, run.claimed_at,
+                  run.lease_until, run.heartbeat_at, run.claim_epoch, run.lock_version)
+        try:
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    values,
+                )
+                connection.execute(
+                    "INSERT INTO image_generation_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (request.run_id, request.project_id, request.source_run_id, request.prompt,
+                     request.negative_prompt, request.size, request.count, int(request.watermark),
+                     json.dumps(request.reference_asset_ids), request.created_by, request.created_at),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise RepositoryConflictError("image run conflict") from exc
+
+    def get_image_request(self, run_id: str) -> ImageGenerationRequest | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM image_generation_requests WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        if not row:
+            return None
+        return ImageGenerationRequest(
+            run_id=row["run_id"], project_id=row["project_id"], source_run_id=row["source_run_id"],
+            prompt=row["prompt"], negative_prompt=row["negative_prompt"], size=row["size"],
+            count=row["count"], watermark=bool(row["watermark"]),
+            reference_asset_ids=tuple(json.loads(row["reference_asset_ids_json"])),
+            created_by=row["created_by"], created_at=row["created_at"],
+        )
+
+    def list_image_assets(self, project_id: str) -> list[CreatorImageAsset]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM creator_image_assets WHERE project_id = ? ORDER BY created_at DESC, version DESC",
+                (project_id,),
+            ).fetchall()
+        return [self._to_image_asset(row) for row in rows]
+
+    def get_image_asset(self, asset_id: str) -> CreatorImageAsset | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM creator_image_assets WHERE id = ?", (asset_id,)
+            ).fetchone()
+        return self._to_image_asset(row) if row else None
+
+    @staticmethod
+    def _to_image_asset(row: sqlite3.Row) -> CreatorImageAsset:
+        return CreatorImageAsset(
+            id=row["id"], workspace_id=row["workspace_id"], project_id=row["project_id"],
+            run_id=row["run_id"], version=row["version"], mime_type=row["mime_type"],
+            byte_size=row["byte_size"], width=row["width"], height=row["height"],
+            sha256=row["sha256"], storage_key=row["storage_key"],
+            source_url_host=row["source_url_host"], evidence=json.loads(row["evidence_json"]),
+            created_at=row["created_at"],
+        )
+
+    def complete_run_with_images(
+        self, run: Run, assets: list[CreatorImageAsset], worker_id: str, claim_epoch: int
+    ) -> None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with closing(self._connect()) as connection, connection:
+            for asset in assets:
+                connection.execute(
+                    "INSERT INTO creator_image_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (asset.id, asset.workspace_id, asset.project_id, asset.run_id, asset.version,
+                     asset.mime_type, asset.byte_size, asset.width, asset.height, asset.sha256,
+                     asset.storage_key, asset.source_url_host,
+                     json.dumps(asset.evidence, ensure_ascii=False), asset.created_at),
+                )
+            cursor = connection.execute(
+                """UPDATE runs SET status = ?, error_code = '', error_message = ?, updated_at = ?,
+                   claimed_by = '', claimed_at = '', lease_until = '', heartbeat_at = '',
+                   lock_version = lock_version + 1 WHERE id = ? AND claimed_by = ? AND claim_epoch = ?
+                   AND lease_until != '' AND lease_until >= ? AND status != ?""",
+                (run.status.value, run.error_message, run.updated_at, run.id, worker_id,
+                 claim_epoch, now, RunStatus.CANCELLED.value),
+            )
+            if cursor.rowcount != 1:
+                raise RepositoryConflictError("cancelled run cannot be completed")
 
     def save_claimed_run(self, run: Run, worker_id: str, claim_epoch: int) -> None:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")

@@ -48,7 +48,8 @@ def repository() -> SQLAlchemyCreatorRepository:
     with repo.engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE script_revisions, script_versions, runs, brief_versions, projects, "
+                "TRUNCATE creator_image_assets, image_generation_requests, script_revisions, "
+                "script_versions, runs, brief_versions, projects, "
                 "memberships, users, workspaces CASCADE"
             )
         )
@@ -124,6 +125,41 @@ def test_postgres_script_revision_is_durable_and_concurrent_safe(repository) -> 
     assert restored is not None
     assert restored.id == winners[0].id
     assert restored.version == 1
+
+
+def test_postgres_image_run_request_is_atomic_and_idempotent(repository) -> None:
+    service, project, brief = _prepared_service(repository)
+    source, _ = service.create_run(
+        workspace_id="pg-workspace", project_id=project.id, brief_version_id=brief.id,
+        model_preference="本地演示", idempotency_key="postgres-image-source",
+    )
+    assert service.execute_run(source.id).status is RunStatus.PASSED
+    generated = repository.get_script_for_run(source.id)
+    assert generated is not None
+    revision = service.create_script_revision(
+        source.id,
+        payload={key: generated.payload[key] for key in ("title", "hook", "voiceover", "shots", "caption", "tags")},
+        expected_version=0, user_id="pg-user",
+    )
+    service.review_script_revision(
+        source.id, expected_version=revision.version, note="reviewed", user_id="pg-user"
+    )
+
+    def submit():
+        return service.create_image_run(
+            workspace_id="pg-workspace", source_run_id=source.id, prompt="剪纸纹样特写",
+            negative_prompt="文字", size="1K", count=1, watermark=True,
+            reference_asset_ids=(), idempotency_key="postgres-image-run", user_id="pg-user",
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: submit(), range(4)))
+    assert len({run.id for run, _ in results}) == 1
+    assert sum(1 for _, created in results if created) == 1
+    run_id = results[0][0].id
+    restored = SQLAlchemyCreatorRepository(POSTGRES_URL).get_image_request(run_id)
+    assert restored is not None
+    assert restored.prompt == "剪纸纹样特写"
 
 
 def test_postgres_identity_roles_applications_and_context_are_durable(repository) -> None:

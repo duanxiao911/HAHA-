@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     ForeignKey,
     ForeignKeyConstraint,
@@ -34,7 +35,9 @@ from sqlalchemy.pool import StaticPool
 from haha_auth.domain import AuthAuditEvent, AuthCredential, AuthSession
 from haha_core.domain import (
     BriefVersion,
+    CreatorImageAsset,
     FailedJob,
+    ImageGenerationRequest,
     Project,
     Run,
     RunStatus,
@@ -674,6 +677,34 @@ script_revisions = Table(
     Column("updated_at", String(40), nullable=False),
     Column("lock_version", Integer, nullable=False, server_default="1"),
     UniqueConstraint("run_id", "version", name="uq_script_revision_run_version"),
+)
+
+image_generation_requests = Table(
+    "image_generation_requests", metadata,
+    Column("run_id", String(64), ForeignKey("runs.id"), primary_key=True),
+    Column("project_id", String(64), ForeignKey("projects.id"), nullable=False, index=True),
+    Column("source_run_id", String(64), ForeignKey("runs.id"), nullable=False),
+    Column("prompt", String(4000), nullable=False),
+    Column("negative_prompt", String(2000), nullable=False, server_default=""),
+    Column("size", String(20), nullable=False), Column("count", Integer, nullable=False),
+    Column("watermark", Boolean, nullable=False),
+    Column("reference_asset_ids_json", JSON, nullable=False),
+    Column("created_by", String(200), nullable=False), Column("created_at", String(40), nullable=False),
+)
+
+creator_image_assets = Table(
+    "creator_image_assets", metadata,
+    Column("id", String(64), primary_key=True),
+    Column("workspace_id", String(100), nullable=False, index=True),
+    Column("project_id", String(64), ForeignKey("projects.id"), nullable=False, index=True),
+    Column("run_id", String(64), ForeignKey("runs.id"), nullable=False),
+    Column("version", Integer, nullable=False), Column("mime_type", String(100), nullable=False),
+    Column("byte_size", Integer, nullable=False), Column("width", Integer, nullable=False),
+    Column("height", Integer, nullable=False), Column("sha256", String(64), nullable=False),
+    Column("storage_key", String(500), nullable=False, unique=True),
+    Column("source_url_host", String(255), nullable=False), Column("evidence_json", JSON, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    UniqueConstraint("run_id", "version", name="uq_creator_image_run_version"),
 )
 
 failed_jobs = Table(
@@ -2598,6 +2629,112 @@ class SQLAlchemyCreatorRepository:
             created_at=row["created_at"], updated_at=row["updated_at"],
             lock_version=row["lock_version"],
         )
+
+    def save_image_request(self, request: ImageGenerationRequest) -> None:
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(image_generation_requests.insert().values(
+                    run_id=request.run_id, project_id=request.project_id,
+                    source_run_id=request.source_run_id, prompt=request.prompt,
+                    negative_prompt=request.negative_prompt, size=request.size, count=request.count,
+                    watermark=request.watermark,
+                    reference_asset_ids_json=list(request.reference_asset_ids),
+                    created_by=request.created_by, created_at=request.created_at,
+                ))
+        except IntegrityError as exc:
+            raise RepositoryConflictError("image request conflict") from exc
+
+    def save_image_run(self, run: Run, request: ImageGenerationRequest) -> None:
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(runs.insert().values(
+                    id=run.id, workspace_id=run.workspace_id, project_id=run.project_id,
+                    brief_version_id=run.brief_version_id, status=run.status.value,
+                    model_preference=run.model_preference, idempotency_key=run.idempotency_key,
+                    request_fingerprint=run.request_fingerprint, attempt=run.attempt,
+                    error_code=run.error_code, error_message=run.error_message,
+                    created_at=run.created_at, updated_at=run.updated_at,
+                    claimed_by=run.claimed_by, claimed_at=run.claimed_at,
+                    lease_until=run.lease_until, heartbeat_at=run.heartbeat_at,
+                    claim_epoch=run.claim_epoch, lock_version=run.lock_version,
+                ))
+                connection.execute(image_generation_requests.insert().values(
+                    run_id=request.run_id, project_id=request.project_id,
+                    source_run_id=request.source_run_id, prompt=request.prompt,
+                    negative_prompt=request.negative_prompt, size=request.size, count=request.count,
+                    watermark=request.watermark,
+                    reference_asset_ids_json=list(request.reference_asset_ids),
+                    created_by=request.created_by, created_at=request.created_at,
+                ))
+        except IntegrityError as exc:
+            raise RepositoryConflictError("image run conflict") from exc
+
+    def get_image_request(self, run_id: str) -> ImageGenerationRequest | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(image_generation_requests).where(image_generation_requests.c.run_id == run_id)
+            ).mappings().first()
+        if not row:
+            return None
+        return ImageGenerationRequest(
+            run_id=row["run_id"], project_id=row["project_id"], source_run_id=row["source_run_id"],
+            prompt=row["prompt"], negative_prompt=row["negative_prompt"], size=row["size"],
+            count=row["count"], watermark=row["watermark"],
+            reference_asset_ids=tuple(row["reference_asset_ids_json"]),
+            created_by=row["created_by"], created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _to_image_asset(row: Any) -> CreatorImageAsset:
+        return CreatorImageAsset(
+            id=row["id"], workspace_id=row["workspace_id"], project_id=row["project_id"],
+            run_id=row["run_id"], version=row["version"], mime_type=row["mime_type"],
+            byte_size=row["byte_size"], width=row["width"], height=row["height"],
+            sha256=row["sha256"], storage_key=row["storage_key"],
+            source_url_host=row["source_url_host"], evidence=row["evidence_json"],
+            created_at=row["created_at"],
+        )
+
+    def list_image_assets(self, project_id: str) -> list[CreatorImageAsset]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(creator_image_assets).where(creator_image_assets.c.project_id == project_id)
+                .order_by(creator_image_assets.c.created_at.desc(), creator_image_assets.c.version.desc())
+            ).mappings().all()
+        return [self._to_image_asset(row) for row in rows]
+
+    def get_image_asset(self, asset_id: str) -> CreatorImageAsset | None:
+        with self.engine.connect() as connection:
+            row = connection.execute(
+                select(creator_image_assets).where(creator_image_assets.c.id == asset_id)
+            ).mappings().first()
+        return self._to_image_asset(row) if row else None
+
+    def complete_run_with_images(
+        self, run: Run, assets: list[CreatorImageAsset], worker_id: str, claim_epoch: int
+    ) -> None:
+        now = datetime.now(UTC).isoformat(timespec="milliseconds")
+        with self.engine.begin() as connection:
+            for asset in assets:
+                connection.execute(creator_image_assets.insert().values(
+                    id=asset.id, workspace_id=asset.workspace_id, project_id=asset.project_id,
+                    run_id=asset.run_id, version=asset.version, mime_type=asset.mime_type,
+                    byte_size=asset.byte_size, width=asset.width, height=asset.height,
+                    sha256=asset.sha256, storage_key=asset.storage_key,
+                    source_url_host=asset.source_url_host, evidence_json=asset.evidence,
+                    created_at=asset.created_at,
+                ))
+            result = connection.execute(runs.update().where(
+                runs.c.id == run.id, runs.c.claimed_by == worker_id,
+                runs.c.claim_epoch == claim_epoch, runs.c.lease_until != "",
+                runs.c.lease_until >= now, runs.c.status != RunStatus.CANCELLED.value,
+            ).values(
+                status=run.status.value, error_code=run.error_code, error_message=run.error_message,
+                updated_at=run.updated_at, claimed_by="", claimed_at="", lease_until="",
+                heartbeat_at="", lock_version=runs.c.lock_version + 1,
+            ))
+            if result.rowcount != 1:
+                raise RepositoryConflictError("cancelled run cannot be completed")
 
     def save_claimed_run(self, run: Run, worker_id: str, claim_epoch: int) -> None:
         now = datetime.now(UTC).isoformat(timespec="milliseconds")

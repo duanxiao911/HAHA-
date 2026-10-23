@@ -241,3 +241,36 @@ class ScriptRevision:
     created_at: str
     updated_at: str
     lock_version: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class ImageGenerationRequest:
+    run_id: str
+    project_id: str
+    source_run_id: str
+    prompt: str
+    negative_prompt: str
+    size: str
+    count: int
+    watermark: bool
+    reference_asset_ids: tuple[str, ...]
+    created_by: str
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CreatorImageAsset:
+    id: str
+    workspace_id: str
+    project_id: str
+    run_id: str
+    version: int
+    mime_type: str
+    byte_size: int
+    width: int
+    height: int
+    sha256: str
+    storage_key: str
+    source_url_host: str
+    evidence: dict[str, Any]
+    created_at: str
