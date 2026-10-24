@@ -142,6 +142,15 @@ export function PlatformHome() {
           {signedOut ? <Link className="productButtonSecondary" href="/login">登录文化账户</Link> : null}
           {snapshot ? <span>{snapshot.growth.completed_units} 个学习节点 · {snapshot.footprint.watched_items} 条观看记录</span> : null}
         </div>
+        <nav className="platformHeroTools" aria-label="合作工具快捷入口">
+          <span>合作工具</span>
+          {externalTools.map((tool) => <a
+            href={tool.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            key={`hero-${tool.href}`}
+          >{tool.title} ↗</a>)}
+        </nav>
       </div>
       <aside className="platformToday" aria-label="今日账户状态">
         <header><div><small>TODAY</small><h2>今日概览</h2></div>{snapshot ? <span>连续 {snapshot.growth.current_streak} 天</span> : null}</header>
