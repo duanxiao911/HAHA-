@@ -54,6 +54,12 @@ test("root is a neutral platform home and community reuses the shared shell", ()
   assert.match(home, /非遗电商 · INTERNAL SANDBOX/);
   assert.match(home, /identity-conversion-guide/);
   assert.match(home, /浏览、学习与购物不需要切换身份/);
+  assert.match(home, /合作工具/);
+  assert.match(home, /https:\/\/zhu-ying\.vercel\.app\//);
+  assert.match(home, /http:\/\/203\.205\.91\.2:8000\//);
+  assert.match(home, /target="_blank"/);
+  assert.match(home, /rel="noopener noreferrer"/);
+  assert.match(home, /不共享 HAHA 登录状态/);
   assert.doesNotMatch(home, /switchIdentityContext/);
   assert.match(community, /<ProductFrame className="communityV2"/);
   assert.doesNotMatch(community, /className="globalHeader"/);

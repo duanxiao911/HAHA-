@@ -42,6 +42,25 @@ type ModuleCardProps = {
   className?: string;
 };
 
+const externalTools = [
+  {
+    href: "https://zhu-ying.vercel.app/",
+    mark: "旧",
+    title: "旧版 HAHA 平台",
+    description: "打开旧版平台，继续使用其中已经闭环的独立功能。",
+    connection: "HTTPS 外部站点",
+    tone: "legacy",
+  },
+  {
+    href: "http://203.205.91.2:8000/",
+    mark: "画",
+    title: "铁画定制工具",
+    description: "进入独立的铁画定制流程；当前工具使用非加密 HTTP 连接。",
+    connection: "HTTP 外部工具",
+    tone: "ironwork",
+  },
+] as const;
+
 function ModuleCard({ href, icon, title, description, status, statusTone = "ready", action, className = "" }: ModuleCardProps) {
   return <Link className={`platformModuleCard ${className}`.trim()} href={href}>
     <span className="platformModuleIcon" aria-hidden="true">{icon}</span>
@@ -151,6 +170,25 @@ export function PlatformHome() {
         <ModuleCard href="/learning" icon="学" title="AI 学习" description="学习路径、知识卡、测验、每日任务与成长记录。" status={aiTutorStatus} statusTone="bounded" action="进入学习" className="is-learning" />
         <ModuleCard href="/identity" icon="人" title="用户中心" description="管理个人资料、收藏、学习成长、消息与账户安全。" status={snapshot ? "账户已同步" : "统一账户"} action="管理账户" />
       </div>
+    </section>
+
+    <section className="platformExternalSection" aria-labelledby="platform-external-title">
+      <div className="platformSectionHeading"><div><small>PARTNER TOOLS</small><h2 id="platform-external-title">合作工具</h2></div><p>以下能力由已获授权的独立网站提供，将在新窗口打开，不共享 HAHA 登录状态。</p></div>
+      <div className="platformExternalGrid">
+        {externalTools.map((tool) => <a
+          className={`platformExternalCard is-${tool.tone}`}
+          href={tool.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`${tool.title}，在新窗口打开外部网站`}
+          key={tool.href}
+        >
+          <span className="platformExternalMark" aria-hidden="true">{tool.mark}</span>
+          <span className="platformExternalCopy"><small>{tool.connection}</small><strong>{tool.title}</strong><p>{tool.description}</p></span>
+          <span className="platformExternalAction">打开外部工具 ↗</span>
+        </a>)}
+      </div>
+      <p className="platformExternalNotice">离开 HAHA 后，外部网站的隐私政策、账户与数据保存规则独立适用。</p>
     </section>
 
     <section className="platformLowerGrid">
