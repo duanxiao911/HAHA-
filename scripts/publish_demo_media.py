@@ -41,6 +41,12 @@ def now() -> str:
 
 
 def grant_role(repository: object, user_id: str, role: str) -> None:
+    repository.ensure_identity(  # type: ignore[attr-defined]
+        user_id,
+        WORKSPACE_ID,
+        role="viewer",
+        workspace_name="HAHA 演示空间",
+    )
     identity = IdentityService(repository)  # type: ignore[arg-type]
     identity.bootstrap(user_id, WORKSPACE_ID)
     grants = repository.list_role_grants(user_id, WORKSPACE_ID)  # type: ignore[attr-defined]
