@@ -11,6 +11,16 @@ async function account(accessToken: string): Promise<Response> {
 }
 
 export async function GET(request: NextRequest) {
+  const recoveryRequested = request.nextUrl.searchParams.get("recover") === "confirm";
+  const fetchSite = request.headers.get("sec-fetch-site") ?? "none";
+  if (recoveryRequested && (fetchSite === "same-origin" || fetchSite === "none")) {
+    const response = NextResponse.redirect(
+      new URL("/login?logged-out=1", request.url),
+      303,
+    );
+    clearSessionCookies(response);
+    return response;
+  }
   let accessToken = request.cookies.get(ACCESS_COOKIE)?.value ?? "";
   const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value ?? "";
   let upstream = accessToken ? await account(accessToken) : null;
@@ -33,3 +43,4 @@ export async function GET(request: NextRequest) {
   ensureCsrfCookie(request, response);
   return response;
 }
+
