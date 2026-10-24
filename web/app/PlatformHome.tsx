@@ -45,19 +45,19 @@ type ModuleCardProps = {
 const externalTools = [
   {
     href: "https://zhu-ying.vercel.app/",
-    mark: "旧",
-    title: "旧版 HAHA 平台",
-    description: "打开旧版平台，继续使用其中已经闭环的独立功能。",
-    connection: "HTTPS 外部站点",
-    tone: "legacy",
+    mark: "画",
+    title: "铁画定制工具",
+    description: "进入独立的铁画定制流程，完成作品方案设计与定制。",
+    connection: "HTTPS 外部工具",
+    tone: "ironwork",
   },
   {
     href: "http://203.205.91.2:8000/",
-    mark: "画",
-    title: "铁画定制工具",
-    description: "进入独立的铁画定制流程；当前工具使用非加密 HTTP 连接。",
-    connection: "HTTP 外部工具",
-    tone: "ironwork",
+    mark: "商",
+    title: "电商平台",
+    description: "进入独立电商平台；当前站点使用非加密 HTTP 连接。",
+    connection: "HTTP 外部平台",
+    tone: "commerce",
   },
 ] as const;
 

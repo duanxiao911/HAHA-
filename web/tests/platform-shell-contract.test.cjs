@@ -59,6 +59,9 @@ test("root is a neutral platform home and community reuses the shared shell", ()
   assert.match(home, /platformHeroTools/);
   assert.match(home, /https:\/\/zhu-ying\.vercel\.app\//);
   assert.match(home, /http:\/\/203\.205\.91\.2:8000\//);
+  assert.match(home, /href: "https:\/\/zhu-ying\.vercel\.app\/",[\s\S]*?title: "铁画定制工具"/);
+  assert.match(home, /href: "http:\/\/203\.205\.91\.2:8000\/",[\s\S]*?title: "电商平台"/);
+  assert.doesNotMatch(home, /旧版 HAHA 平台/);
   assert.match(home, /target="_blank"/);
   assert.match(home, /rel="noopener noreferrer"/);
   assert.match(home, /不共享 HAHA 登录状态/);
